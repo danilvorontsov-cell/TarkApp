@@ -15,9 +15,24 @@ interface PhraseBuilderProps {
   playingId: string | null;
 }
 
-interface BankItem {
+interface SlotDef {
+  slotId: number;
+  expectedWord: string;
+}
+
+type Token =
+  | { type: 'text'; text: string }
+  | { type: 'slot'; slotId: number; expectedWord: string };
+
+interface SentenceDef {
+  sentenceIdx: number;
+  tokens: Token[];
+}
+
+interface BankWord {
   id: string;
   word: string;
+  isPlaced: boolean;
 }
 
 export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
@@ -27,47 +42,107 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
   onPlayAudio,
   playingId,
 }) => {
-  // Split template by 2 or more underscores (e.g. ___, ____, etc.)
-  const parts = useMemo(() => template.split(/_{2,}/), [template]);
-  const numSlots = Math.max(0, parts.length - 1);
+  const [selectedSlotId, setSelectedSlotId] = useState<number | null>(null);
+  const [slotsFilled, setSlotsFilled] = useState<Record<number, string>>({});
+  const [bankWords, setBankWords] = useState<BankWord[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const [slots, setSlots] = useState<(string | null)[]>([]);
-  const [availableWords, setAvailableWords] = useState<BankItem[]>([]);
+  // Parse template into sentences and tokens
+  const { sentences, allSlots } = useMemo(() => {
+    let globalSlotCounter = 0;
+    const slotsList: SlotDef[] = [];
+    const sentenceList: SentenceDef[] = [];
 
-  // Initialize slots and word bank whenever template or vocabulary changes
-  useEffect(() => {
-    setSlots(new Array(numSlots).fill(null));
+    // Split template into distinct sentences by . ! ? or newline
+    const rawSentences = template
+      .split(/(?<=[.!?])\s+|\n+/)
+      .filter((s) => s.trim().length > 0);
 
-    // Gather candidate words from vocabulary
-    const bank: BankItem[] = [];
-    vocabulary.forEach((item, idx) => {
-      const cleanTerm = item.est.trim();
-      if (cleanTerm) {
-        bank.push({ id: `vocab_${idx}`, word: cleanTerm });
-      }
-    });
+    const hasBrackets = /\[(.*?)\]/.test(template);
 
-    // If slots need more words, also extract words from vocabulary examples
-    if (bank.length < numSlots + 2) {
-      vocabulary.forEach((item, vIdx) => {
-        const exampleWords = item.example
-          .replace(/[«».,!?;:()]/g, '')
-          .split(/\s+/)
-          .filter((w) => w.length > 2 && !bank.some((b) => b.word.toLowerCase() === w.toLowerCase()));
-        
-        exampleWords.slice(0, 2).forEach((w, wIdx) => {
-          if (bank.length < numSlots + 3) {
-            bank.push({ id: `ex_${vIdx}_${wIdx}`, word: w });
+    rawSentences.forEach((rawSent, sIdx) => {
+      const tokens: Token[] = [];
+
+      if (hasBrackets) {
+        // Parse [word]
+        const parts = rawSent.split(/(\[.*?\])/);
+        parts.forEach((p) => {
+          if (!p) return;
+          const match = p.match(/^\[(.*?)\]$/);
+          if (match) {
+            const expectedWord = match[1].trim();
+            const slotId = globalSlotCounter++;
+            slotsList.push({ slotId, expectedWord });
+            tokens.push({ type: 'slot', slotId, expectedWord });
+          } else {
+            tokens.push({ type: 'text', text: p });
           }
         });
+      } else {
+        // Fallback: parse ___
+        const parts = rawSent.split(/(_{2,})/);
+        parts.forEach((p) => {
+          if (!p) return;
+          if (/^_{2,}$/.test(p)) {
+            const slotId = globalSlotCounter++;
+            // Map to vocabulary item if available
+            const expectedWord =
+              vocabulary[slotId % Math.max(1, vocabulary.length)]?.est.trim() || 'sõna';
+            slotsList.push({ slotId, expectedWord });
+            tokens.push({ type: 'slot', slotId, expectedWord });
+          } else {
+            tokens.push({ type: 'text', text: p });
+          }
+        });
+      }
+
+      sentenceList.push({ sentenceIdx: sIdx, tokens });
+    });
+
+    return { sentences: sentenceList, allSlots: slotsList };
+  }, [template, vocabulary]);
+
+  // Initialize or reset slots and bank words
+  useEffect(() => {
+    setSlotsFilled({});
+    setSelectedSlotId(allSlots.length > 0 ? allSlots[0].slotId : null);
+    setErrorMessage(null);
+
+    // Build the Word Bank
+    const bank: BankWord[] = [];
+
+    // 1. Add all expected words
+    allSlots.forEach((slot, i) => {
+      bank.push({
+        id: `expected_${slot.slotId}_${i}`,
+        word: slot.expectedWord,
+        isPlaced: false,
       });
+    });
+
+    // 2. Add 1-2 distractor words from vocabulary that are NOT already in expected words
+    const expectedLower = new Set(allSlots.map((s) => s.expectedWord.toLowerCase()));
+    let distractorsAdded = 0;
+
+    for (let i = 0; i < vocabulary.length && distractorsAdded < 2; i++) {
+      const vWord = vocabulary[i].est.trim();
+      if (vWord && !expectedLower.has(vWord.toLowerCase())) {
+        bank.push({
+          id: `distractor_${i}`,
+          word: vWord,
+          isPlaced: false,
+        });
+        distractorsAdded++;
+      }
     }
 
-    setAvailableWords(bank);
-  }, [template, vocabulary, numSlots]);
+    // 3. Shuffle the word bank so words aren't in trivial slot order
+    const shuffled = [...bank].sort(() => Math.random() - 0.5);
+    setBankWords(shuffled);
+  }, [template, vocabulary, allSlots]);
 
-  // If template has no blanks (numSlots === 0), render plain template with speaker
-  if (numSlots === 0) {
+  // If no slots exist, render plain template
+  if (allSlots.length === 0) {
     const isPlaying = playingId === 'answer_template';
     return (
       <View style={[styles.container, isJunior ? styles.containerJunior : styles.containerSenior]}>
@@ -85,61 +160,125 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
           </TouchableOpacity>
         </View>
         <Text style={[styles.plainText, isJunior && styles.plainTextJunior]}>
-          {template}
+          {template.replace(/\[|\]/g, '')}
         </Text>
       </View>
     );
   }
 
-  const handleSelectWord = (item: BankItem) => {
-    const firstEmptyIndex = slots.findIndex((s) => s === null);
-    if (firstEmptyIndex === -1) return; // All slots already filled
+  // Handle word selection from the Bank with strict pedagogical validation
+  const handleSelectWord = (item: BankWord) => {
+    setErrorMessage(null);
 
-    const updatedSlots = [...slots];
-    updatedSlots[firstEmptyIndex] = item.word;
-    setSlots(updatedSlots);
-    setAvailableWords((prev) => prev.filter((w) => w.id !== item.id));
+    // Determine target slot:
+    // If a slot is explicitly selected and empty:
+    let targetSlot = allSlots.find((s) => s.slotId === selectedSlotId && !slotsFilled[s.slotId]);
+
+    // If no slot is selected or the selected one is already filled, check first empty slot that expects this word
+    if (!targetSlot) {
+      targetSlot = allSlots.find(
+        (s) => !slotsFilled[s.slotId] && s.expectedWord.toLowerCase() === item.word.toLowerCase()
+      );
+    }
+
+    // If still none, check the first unfilled slot overall
+    if (!targetSlot) {
+      targetSlot = allSlots.find((s) => !slotsFilled[s.slotId]);
+    }
+
+    if (!targetSlot) {
+      return; // All slots already filled
+    }
+
+    // Validation check: Does this word match the target slot?
+    const isMatch = targetSlot.expectedWord.toLowerCase() === item.word.toLowerCase();
+
+    if (!isMatch) {
+      // Reject placement: word does not fit here by grammar/meaning!
+      setErrorMessage(`❌ Слово «${item.word}» не подходит сюда по смыслу. Попробуй другое!`);
+      // Auto-clear error after 3 seconds
+      setTimeout(() => setErrorMessage(null), 3000);
+      return;
+    }
+
+    // Successful placement!
+    setSlotsFilled((prev) => ({
+      ...prev,
+      [targetSlot!.slotId]: item.word,
+    }));
+
+    // Mark word as placed in the bank
+    setBankWords((prev) =>
+      prev.map((bw) => (bw.id === item.id ? { ...bw, isPlaced: true } : bw))
+    );
+
+    // Auto-advance selection to next empty slot
+    const nextEmpty = allSlots.find(
+      (s) => s.slotId !== targetSlot!.slotId && !slotsFilled[s.slotId]
+    );
+    setSelectedSlotId(nextEmpty ? nextEmpty.slotId : null);
   };
 
-  const handleRemoveFromSlot = (slotIdx: number) => {
-    const word = slots[slotIdx];
-    if (!word) return;
+  // Remove word from slot and return it to the bank
+  const handleRemoveFromSlot = (slotId: number) => {
+    const placedWord = slotsFilled[slotId];
+    if (!placedWord) {
+      setSelectedSlotId(slotId);
+      return;
+    }
 
-    const updatedSlots = [...slots];
-    updatedSlots[slotIdx] = null;
-    setSlots(updatedSlots);
+    setErrorMessage(null);
 
-    // Return word to the bank
-    setAvailableWords((prev) => [
-      ...prev,
-      { id: `returned_${Date.now()}_${Math.random()}`, word },
-    ]);
+    // Free the slot
+    setSlotsFilled((prev) => {
+      const updated = { ...prev };
+      delete updated[slotId];
+      return updated;
+    });
+
+    // Return the word to available bank
+    setBankWords((prev) => {
+      let returned = false;
+      return prev.map((bw) => {
+        if (!returned && bw.isPlaced && bw.word.toLowerCase() === placedWord.toLowerCase()) {
+          returned = true;
+          return { ...bw, isPlaced: false };
+        }
+        return bw;
+      });
+    });
+
+    setSelectedSlotId(slotId);
   };
 
   const handleResetSlots = () => {
-    const filledWords = slots.filter((s): s is string => s !== null);
-    const returnedItems = filledWords.map((word, i) => ({
-      id: `reset_${i}_${Date.now()}`,
-      word,
-    }));
-    setSlots(new Array(numSlots).fill(null));
-    setAvailableWords((prev) => [...prev, ...returnedItems]);
+    setSlotsFilled({});
+    setBankWords((prev) => prev.map((bw) => ({ ...bw, isPlaced: false })));
+    setSelectedSlotId(allSlots.length > 0 ? allSlots[0].slotId : null);
+    setErrorMessage(null);
   };
 
-  const isComplete = numSlots > 0 && slots.every((s) => s !== null && s !== '');
+  const isComplete =
+    allSlots.length > 0 && allSlots.every((s) => !!slotsFilled[s.slotId]);
 
+  // Build the complete phrase for audio pronunciation
   const getAssembledPhrase = (): string => {
     let result = '';
-    for (let i = 0; i < parts.length; i++) {
-      result += parts[i];
-      if (i < slots.length) {
-        result += slots[i] ? slots[i] : '___';
-      }
-    }
-    return result;
+    sentences.forEach((sentence) => {
+      sentence.tokens.forEach((token) => {
+        if (token.type === 'text') {
+          result += token.text;
+        } else {
+          result += slotsFilled[token.slotId] || token.expectedWord;
+        }
+      });
+      result += ' ';
+    });
+    return result.trim();
   };
 
   const isCompletedPlaying = playingId === 'answer_template_completed';
+  const availableBank = bankWords.filter((bw) => !bw.isPlaced);
 
   return (
     <View
@@ -154,7 +293,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
         <Text style={[styles.title, isJunior && styles.titleJunior]}>
           ✏️ Собери ответ на эстонском:
         </Text>
-        {slots.some((s) => s !== null) && (
+        {Object.keys(slotsFilled).length > 0 && (
           <TouchableOpacity style={styles.resetBtn} onPress={handleResetSlots}>
             <Text style={styles.resetBtnText}>↺ Сбросить</Text>
           </TouchableOpacity>
@@ -163,62 +302,82 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
 
       <Text style={styles.subtitleHint}>
         {isComplete
-          ? '🎉 Отлично! Фраза собрана. Послушай правильное произношение:'
-          : 'Нажимай на слова внизу, чтобы подставить их в пропуски:'}
+          ? '🎉 Отлично! Все слова подобраны верно. Послушай правильное произношение:'
+          : 'Подбирай подходящие по смыслу слова для каждого пропуска:'}
       </Text>
 
-      {/* Interactive Sentence with Slots */}
-      <View style={styles.sentenceWrapper}>
-        <View style={styles.sentenceRow}>
-          {parts.map((segment, idx) => {
-            const hasSlot = idx < numSlots;
-            const slotWord = hasSlot ? slots[idx] : null;
+      {/* Sentences Container with Fixed-Line Layout (No Jumping) */}
+      <View style={styles.sentencesCard}>
+        {sentences.map((sent) => (
+          <View key={sent.sentenceIdx} style={styles.sentenceLineBlock}>
+            <View style={styles.sentenceRow}>
+              {sent.tokens.map((token, tIdx) => {
+                if (token.type === 'text') {
+                  const cleanText = token.text;
+                  if (!cleanText) return null;
+                  return (
+                    <Text
+                      key={`t_${tIdx}`}
+                      style={[styles.sentenceText, isJunior && styles.sentenceTextJunior]}
+                    >
+                      {cleanText}
+                    </Text>
+                  );
+                }
 
-            return (
-              <React.Fragment key={idx}>
-                {segment.trim().length > 0 && (
-                  <Text style={[styles.sentenceText, isJunior && styles.sentenceTextJunior]}>
-                    {segment}
-                  </Text>
-                )}
-                {hasSlot && (
+                // Slot token
+                const isFilled = !!slotsFilled[token.slotId];
+                const filledWord = slotsFilled[token.slotId];
+                const isSelected = selectedSlotId === token.slotId;
+
+                return (
                   <TouchableOpacity
+                    key={`slot_${token.slotId}`}
                     style={[
-                      styles.slot,
-                      isJunior && styles.slotJunior,
-                      slotWord ? styles.slotFilled : styles.slotEmpty,
+                      styles.slotBox,
+                      isJunior && styles.slotBoxJunior,
+                      isFilled ? styles.slotFilled : styles.slotEmpty,
+                      isSelected && !isFilled && styles.slotSelected,
                       isComplete && styles.slotComplete,
                     ]}
-                    onPress={() => handleRemoveFromSlot(idx)}
-                    activeOpacity={slotWord ? 0.7 : 1}
+                    onPress={() => handleRemoveFromSlot(token.slotId)}
+                    activeOpacity={0.7}
                   >
                     <Text
                       style={[
                         styles.slotText,
                         isJunior && styles.slotTextJunior,
-                        slotWord ? styles.slotTextFilled : styles.slotTextEmpty,
+                        isFilled ? styles.slotTextFilled : styles.slotTextEmpty,
                       ]}
+                      numberOfLines={1}
                     >
-                      {slotWord ? `${slotWord} ✕` : `[ слот ${idx + 1} ]`}
+                      {isFilled ? `${filledWord} ✕` : `[ пропуск ${token.slotId + 1} ]`}
                     </Text>
                   </TouchableOpacity>
-                )}
-              </React.Fragment>
-            );
-          })}
-        </View>
+                );
+              })}
+            </View>
+          </View>
+        ))}
       </View>
+
+      {/* Semantic Validation Error Feedback */}
+      {errorMessage && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>{errorMessage}</Text>
+        </View>
+      )}
 
       {/* Word Bank / Chips */}
       <View style={styles.bankSection}>
-        <Text style={styles.bankLabel}>📦 Банк слов для подстановки:</Text>
-        {availableWords.length === 0 ? (
+        <Text style={styles.bankLabel}>📦 Банк слов (выбери подходящее):</Text>
+        {availableBank.length === 0 ? (
           <Text style={styles.bankEmptyText}>
-            Все слова расставлены по слотам! Нажми на слово в фразе, если хочешь вернуть его обратно.
+            ✓ Все слова расставлены по местам! Нажми на слово в предложении, если хочешь вернуть его.
           </Text>
         ) : (
           <View style={styles.chipsRow}>
-            {availableWords.map((item) => (
+            {availableBank.map((item) => (
               <TouchableOpacity
                 key={item.id}
                 style={[styles.chip, isJunior && styles.chipJunior]}
@@ -233,7 +392,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
         )}
       </View>
 
-      {/* Celebration & Audio Button when complete */}
+      {/* Audio Playback Button when Complete */}
       {isComplete && (
         <View style={styles.completeActionBox}>
           <TouchableOpacity
@@ -282,12 +441,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   title: {
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: '700',
     color: '#92400E',
   },
   titleJunior: {
-    fontSize: 14.5,
+    fontSize: 15,
     color: '#78350F',
   },
   resetBtn: {
@@ -297,12 +456,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   resetBtnText: {
-    fontSize: 11,
+    fontSize: 11.5,
     color: '#92400E',
     fontWeight: '600',
   },
   subtitleHint: {
-    fontSize: 11.5,
+    fontSize: 12,
     color: '#6B7280',
     marginBottom: 10,
   },
@@ -332,13 +491,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#92400E',
   },
-  sentenceWrapper: {
+  // Sentences Layout - fixed line per sentence to avoid jumping
+  sentencesCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 12,
-    marginBottom: 12,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: '#F3F4F6',
+  },
+  sentenceLineBlock: {
+    marginBottom: 8,
   },
   sentenceRow: {
     flexDirection: 'row',
@@ -348,23 +511,31 @@ const styles = StyleSheet.create({
   sentenceText: {
     fontSize: 14.5,
     color: '#1F2937',
-    lineHeight: 28,
+    lineHeight: 32,
+    marginRight: 4,
   },
   sentenceTextJunior: {
     fontSize: 16,
-    lineHeight: 30,
+    lineHeight: 34,
     fontWeight: '500',
   },
-  slot: {
-    paddingHorizontal: 9,
-    paddingVertical: 3,
+  // Stable slot box with min dimensions
+  slotBox: {
+    minWidth: 86,
+    minHeight: 32,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
     borderRadius: 8,
     marginHorizontal: 3,
     marginVertical: 2,
     borderWidth: 1.5,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  slotJunior: {
-    paddingHorizontal: 11,
+  slotBoxJunior: {
+    minWidth: 92,
+    minHeight: 36,
+    paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 10,
   },
@@ -373,9 +544,15 @@ const styles = StyleSheet.create({
     borderColor: '#9CA3AF',
     borderStyle: 'dashed',
   },
+  slotSelected: {
+    borderColor: '#3B82F6',
+    backgroundColor: '#EFF6FF',
+    borderStyle: 'solid',
+  },
   slotFilled: {
     backgroundColor: '#EFF6FF',
     borderColor: '#3B82F6',
+    borderStyle: 'solid',
   },
   slotComplete: {
     backgroundColor: '#D1FAE5',
@@ -395,11 +572,28 @@ const styles = StyleSheet.create({
   slotTextFilled: {
     color: '#1D4ED8',
   },
+  // Error Banner
+  errorBanner: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 8,
+  },
+  errorBannerText: {
+    fontSize: 12.5,
+    color: '#B91C1C',
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  // Word Bank
   bankSection: {
     marginTop: 2,
   },
   bankLabel: {
-    fontSize: 11.5,
+    fontSize: 12,
     fontWeight: '700',
     color: '#4B5563',
     marginBottom: 6,
@@ -443,6 +637,7 @@ const styles = StyleSheet.create({
     fontSize: 14.5,
     color: '#065F46',
   },
+  // Complete Button
   completeActionBox: {
     marginTop: 12,
     alignItems: 'center',

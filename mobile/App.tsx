@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -30,6 +30,14 @@ import { PhraseBuilder } from './src/components/PhraseBuilder';
 type TabType = 'study' | 'dictionary' | 'settings';
 type Tab2Mode = 'vocab' | 'history';
 
+interface SessionLesson {
+  id: string;
+  title: string;
+  analysis: PageAnalysisResponse;
+  imageUri: string | null;
+  timestamp: number;
+}
+
 export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>('study');
   const [tab2Mode, setTab2Mode] = useState<Tab2Mode>('vocab');
@@ -47,11 +55,13 @@ export default function App() {
   const [capturedImageUri, setCapturedImageUri] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<PageAnalysisResponse | null>(null);
+  const [sessionLessons, setSessionLessons] = useState<SessionLesson[]>([]);
   const [isSaved, setIsSaved] = useState(false);
   const [history, setHistory] = useState<SavedLessonCard[]>([]);
   const [savedVocab, setSavedVocab] = useState<VocabularyItem[]>([]);
   const [expandedWord, setExpandedWord] = useState<string | null>(null);
 
+  const scrollViewRef = useRef<React.ElementRef<typeof ScrollView>>(null);
   const isJunior = profile.tier === 'primary';
 
   useEffect(() => {
@@ -64,6 +74,26 @@ export default function App() {
 
     StorageService.getHistory().then((h) => {
       setHistory(h);
+      // Pre-fill today's session lessons from local history
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const todayItems: SessionLesson[] = h
+        .filter((c) => c.timestamp >= startOfToday.getTime())
+        .map((c) => ({
+          id: c.id,
+          title: c.task_title,
+          analysis: c.analysis,
+          imageUri: c.imageUri || null,
+          timestamp: c.timestamp,
+        }));
+
+      if (todayItems.length > 0) {
+        setSessionLessons(todayItems);
+        // Load the latest one into current view
+        setAnalysis(todayItems[0].analysis);
+        setCapturedImageUri(todayItems[0].imageUri);
+        setIsSaved(true);
+      }
     });
 
     StorageService.getSavedVocabulary().then((v) => {
@@ -74,6 +104,12 @@ export default function App() {
       stopTts();
     };
   }, []);
+
+  const scrollToTaskTop = () => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y: 70, animated: true });
+    }, 120);
+  };
 
   const handlePlayAudio = async (text: string, lang: 'ru' | 'et', id: string) => {
     try {
@@ -141,6 +177,59 @@ export default function App() {
     StorageService.saveProfile(updated);
   };
 
+  // Helper to persist to history and update session lessons list
+  const recordNewLesson = async (data: PageAnalysisResponse, imageUri: string | null) => {
+    const now = new Date();
+    const months = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+    const dateFormatted = `${now.getDate()} ${months[now.getMonth()]}, ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    let taskType = 'Koolitöö';
+    const titleLower = data.task_title.toLowerCase();
+    if (titleLower.startsWith('avastus:')) {
+      taskType = 'Maailma Avastaja';
+    } else if (titleLower.includes('loodus') || titleLower.includes('looma') || titleLower.includes('ilm')) {
+      taskType = 'Loodusõpetus';
+    }
+
+    const newId = `card_${Date.now()}`;
+    const card: SavedLessonCard = {
+      id: newId,
+      timestamp: Date.now(),
+      dateFormatted,
+      grade: profile.grade,
+      tier: profile.tier,
+      task_title: data.task_title,
+      task_type: taskType,
+      analysis: data,
+      imageUri: imageUri || undefined,
+    };
+
+    // Auto-save to AsyncStorage
+    await StorageService.saveLessonToHistory(card);
+    setIsSaved(true);
+
+    const updatedHistory = await StorageService.getHistory();
+    setHistory(updatedHistory);
+    const updatedVocab = await StorageService.getSavedVocabulary();
+    setSavedVocab(updatedVocab);
+
+    // Update today's session lessons list
+    const newSessionItem: SessionLesson = {
+      id: newId,
+      title: data.task_title,
+      analysis: data,
+      imageUri,
+      timestamp: Date.now(),
+    };
+
+    setSessionLessons((prev) => {
+      const filtered = prev.filter((p) => p.title !== data.task_title);
+      return [newSessionItem, ...filtered];
+    });
+
+    scrollToTaskTop();
+  };
+
   const processImageAnalysis = async (asset: ImagePicker.ImagePickerAsset) => {
     setLoading(true);
     setLoadingStep('Разбираем материал...');
@@ -176,8 +265,7 @@ export default function App() {
       }
 
       setAnalysis(data);
-      setIsSaved(false);
-      StorageService.isLessonSaved(data.task_title).then(setIsSaved);
+      await recordNewLesson(data, asset.uri);
     } catch (err: any) {
       Alert.alert(
         'Ошибка анализа страницы',
@@ -275,8 +363,7 @@ export default function App() {
 
       const data: PageAnalysisResponse = await res.json();
       setAnalysis(data);
-      setIsSaved(false);
-      StorageService.isLessonSaved(data.task_title).then(setIsSaved);
+      await recordNewLesson(data, null);
     } catch (err: any) {
       Alert.alert(
         'TarkApp',
@@ -330,11 +417,19 @@ export default function App() {
     }
   };
 
+  const handleSelectSessionLesson = (item: SessionLesson) => {
+    setAnalysis(item.analysis);
+    setCapturedImageUri(item.imageUri);
+    setIsSaved(true);
+    scrollToTaskTop();
+  };
+
   const handleOpenHistoryItem = (item: SavedLessonCard) => {
     setAnalysis(item.analysis);
     setCapturedImageUri(item.imageUri || null);
     setIsSaved(true);
     setCurrentTab('study');
+    scrollToTaskTop();
   };
 
   const handleDeleteHistoryItem = async (id: string) => {
@@ -376,6 +471,9 @@ export default function App() {
             await StorageService.clearAll();
             setHistory([]);
             setSavedVocab([]);
+            setSessionLessons([]);
+            setAnalysis(null);
+            setCapturedImageUri(null);
             setIsSaved(false);
             Alert.alert('Готово', 'История и словарик очищены.');
           },
@@ -424,8 +522,71 @@ export default function App() {
         </Text>
       </View>
 
+      {/* Сегодняшний урок - Session Carousel Bar */}
+      {sessionLessons.length > 0 && (
+        <View style={[styles.todaySection, isJunior && styles.todaySectionJunior]}>
+          <View style={styles.todayHeaderRow}>
+            <Text style={[styles.todayTitle, isJunior && styles.todayTitleJunior]}>
+              🎒 Сегодняшний урок ({sessionLessons.length})
+            </Text>
+            <Text style={styles.todaySubtitle}>Нажми на карточку, чтобы переключить задание</Text>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.todayCarousel}
+          >
+            {sessionLessons.map((item, idx) => {
+              const isActive = analysis?.task_title === item.title;
+              return (
+                <TouchableOpacity
+                  key={item.id}
+                  style={[
+                    styles.todayCard,
+                    isJunior && styles.todayCardJunior,
+                    isActive && (isJunior ? styles.todayCardActiveJunior : styles.todayCardActiveSenior),
+                  ]}
+                  onPress={() => handleSelectSessionLesson(item)}
+                  activeOpacity={0.8}
+                >
+                  {item.imageUri ? (
+                    <Image source={{ uri: item.imageUri }} style={styles.todayThumbnail} resizeMode="cover" />
+                  ) : (
+                    <View style={styles.todayThumbPlaceholder}>
+                      <Text style={styles.todayThumbPlaceholderText}>📖</Text>
+                    </View>
+                  )}
+                  <View style={styles.todayCardInfo}>
+                    <View style={styles.todayCardBadgeRow}>
+                      <View style={[styles.todayBadge, isActive && styles.todayBadgeActive]}>
+                        <Text style={[styles.todayBadgeText, isActive && styles.todayBadgeTextActive]}>
+                          № {sessionLessons.length - idx}
+                        </Text>
+                      </View>
+                      {isActive && (
+                        <Text style={styles.todayActiveDot}>● Активно</Text>
+                      )}
+                    </View>
+                    <Text
+                      style={[
+                        styles.todayCardTitle,
+                        isJunior && styles.todayCardTitleJunior,
+                        isActive && styles.todayCardTitleActive,
+                      ]}
+                      numberOfLines={2}
+                    >
+                      {item.title}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
       {/* Welcome banner if no analysis yet */}
-      {!analysis && !loading && (
+      {!analysis && !loading && sessionLessons.length === 0 && (
         <View style={[styles.welcomeCard, isJunior ? styles.welcomeCardJunior : styles.welcomeCardSenior]}>
           <Text style={styles.welcomeIcon}>📖 🇪🇪</Text>
           <Text style={[styles.welcomeTitle, isJunior && styles.welcomeTitleJunior]}>
@@ -437,12 +598,12 @@ export default function App() {
         </View>
       )}
 
-      {/* Photo Preview Thumbnail if user took a photo */}
+      {/* Photo Preview Thumbnail if active task has an image */}
       {capturedImageUri && (
         <View style={[styles.previewCard, isJunior && styles.previewCardJunior]}>
           <Image source={{ uri: capturedImageUri }} style={styles.previewImage} resizeMode="cover" />
           <View style={styles.previewContent}>
-            <Text style={styles.previewLabel}>📸 Снимок учебного материала</Text>
+            <Text style={styles.previewLabel}>📸 Снимок текущего материала</Text>
             <TouchableOpacity
               style={styles.retakeBtn}
               onPress={handleTakePhoto}
@@ -599,27 +760,28 @@ export default function App() {
             </Text>
           </View>
 
-          {/* Vocabulary */}
+          {/* Vocabulary with Word and Example Pronunciation */}
           <View style={styles.section}>
             <Text style={[styles.sectionHeader, isJunior && styles.sectionHeaderJunior]}>
               📚 Словарь урока (Sõnastik)
             </Text>
             {analysis.vocabulary.map((v, idx) => {
               const isVocabPlaying = playingId === `vocab_${idx}`;
+              const isExPlaying = playingId === `vocab_ex_${idx}`;
               return (
                 <View key={idx} style={[styles.vocabItem, isJunior && styles.vocabItemJunior]}>
                   <View style={styles.vocabRow}>
                     <Text style={[styles.vocabEst, isJunior && styles.vocabEstJunior]}>
                       {v.est}
                     </Text>
-                    {/* Speaker button for Estonian pronunciation */}
+                    {/* Speaker button for Estonian word */}
                     <TouchableOpacity
                       style={[
                         styles.vocabSpeakerBtn,
                         isVocabPlaying && styles.vocabSpeakerBtnActive,
                       ]}
                       onPress={() => handlePlayAudio(v.est, 'et', `vocab_${idx}`)}
-                      accessibilityLabel={`Озвучить ${v.est} на эстонском`}
+                      accessibilityLabel={`Озвучить слово ${v.est}`}
                     >
                       <Text style={styles.vocabSpeakerIcon}>
                         {isVocabPlaying ? '⏹' : '🔊'}
@@ -627,7 +789,25 @@ export default function App() {
                     </TouchableOpacity>
                     <Text style={styles.vocabRu}>— {v.ru}</Text>
                   </View>
-                  <Text style={styles.vocabExample}>«{v.example}»</Text>
+
+                  {/* Estonian Example sentence row with dedicated speaker button */}
+                  <View style={styles.vocabExampleRow}>
+                    <TouchableOpacity
+                      style={[
+                        styles.vocabExampleSpeakerBtn,
+                        isExPlaying && styles.vocabSpeakerBtnActive,
+                      ]}
+                      onPress={() => handlePlayAudio(v.example, 'et', `vocab_ex_${idx}`)}
+                      accessibilityLabel={`Озвучить пример предложения ${v.example}`}
+                    >
+                      <Text style={styles.vocabExampleSpeakerIcon}>
+                        {isExPlaying ? '⏹' : '🔊'}
+                      </Text>
+                    </TouchableOpacity>
+                    <Text style={[styles.vocabExample, isJunior && styles.vocabExampleJunior]}>
+                      «{v.example}»
+                    </Text>
+                  </View>
                 </View>
               );
             })}
@@ -660,7 +840,7 @@ export default function App() {
             </Text>
           </View>
 
-          {/* Interactive Phrase Builder with Word Bank */}
+          {/* Interactive Phrase Builder with Word Bank & Semantic Slot Matching */}
           <PhraseBuilder
             template={analysis.answer_template}
             vocabulary={analysis.vocabulary}
@@ -812,7 +992,7 @@ export default function App() {
               <Text style={styles.emptyIcon}>📖</Text>
               <Text style={styles.emptyTitle}>Словарик пока пуст</Text>
               <Text style={styles.emptyText}>
-                Разбирай страницы учебников и сохраняй уроки — все эстонские слова с переводом, примерами и озвучкой автоматически появятся здесь!
+                Разбирай страницы учебников — все эстонские слова с переводом, примерами и озвучкой автоматически сохраняются здесь!
               </Text>
             </View>
           ) : (
@@ -823,6 +1003,7 @@ export default function App() {
               {savedVocab.map((item, idx) => {
                 const isExpanded = expandedWord === item.est;
                 const isPlaying = playingId === `saved_vocab_${item.est}`;
+                const isExPlaying = playingId === `saved_ex_${item.est}`;
 
                 return (
                   <TouchableOpacity
@@ -861,7 +1042,20 @@ export default function App() {
 
                     {isExpanded && item.example ? (
                       <View style={styles.vocabCardExampleBox}>
-                        <Text style={styles.vocabCardExampleLabel}>Пример в предложении:</Text>
+                        <View style={styles.vocabCardExampleHeader}>
+                          <Text style={styles.vocabCardExampleLabel}>Пример в предложении:</Text>
+                          <TouchableOpacity
+                            style={[
+                              styles.vocabExampleSpeakerBtn,
+                              isExPlaying && styles.vocabSpeakerBtnActive,
+                            ]}
+                            onPress={() => handlePlayAudio(item.example, 'et', `saved_ex_${item.est}`)}
+                          >
+                            <Text style={styles.vocabExampleSpeakerIcon}>
+                              {isExPlaying ? '⏹' : '🔊'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
                         <Text style={styles.vocabCardExampleText}>«{item.example}»</Text>
                       </View>
                     ) : null}
@@ -881,7 +1075,7 @@ export default function App() {
               <Text style={styles.emptyIcon}>🕒</Text>
               <Text style={styles.emptyTitle}>История уроков пуста</Text>
               <Text style={styles.emptyText}>
-                Когда ты сфотографируешь задание, нажми кнопку «⭐ Сохранить в историю» внизу карточки, чтобы сохранить разбор!
+                Когда ты сфотографируешь задание, разбор автоматически сохранится в историю для быстрого повторения!
               </Text>
             </View>
           ) : (
@@ -949,33 +1143,33 @@ export default function App() {
       <View style={[styles.card, isJunior ? styles.cardJunior : styles.cardSenior]}>
         <View style={styles.cardHeaderRow}>
           <Text style={[styles.cardTitle, isJunior && styles.cardTitleJunior]}>
-            👤 Профиль ученика
+            👤 Имя и класс ученика
           </Text>
           <View style={[styles.tierTag, isJunior ? styles.tierTagJunior : styles.tierTagSenior]}>
-            <Text style={[styles.tierTagText, isJunior ? styles.tierTagTextJunior : styles.tierTagTextSenior]}>
-              {isJunior ? '1–4 кл.' : profile.tier === 'middle' ? '5–9 кл.' : '10–12 кл.'}
+            <Text style={[styles.tierTagText, isJunior && styles.tierTagTextJunior]}>
+              {getTierBadgeText(profile.tier)}
             </Text>
           </View>
         </View>
-
         <Text style={styles.caption}>
-          Данные хранятся только на этом устройстве без регистрации и Smart-ID
+          ИИ TarkApp адаптирует сложность объяснений и голос под класс ребёнка.
         </Text>
 
-        {/* Nickname */}
         <View style={styles.inputRow}>
-          <Text style={[styles.label, isJunior && styles.labelJunior]}>Твое имя:</Text>
+          <Text style={[styles.label, isJunior && styles.labelJunior]}>
+            Как называть ученика:
+          </Text>
           <TextInput
             style={[styles.textInput, isJunior && styles.textInputJunior]}
-            value={profile.nickname}
+            value={profile.nickname || ''}
             onChangeText={updateNickname}
-            placeholder="Как тебя называть"
+            placeholder="Например: Алекс"
+            placeholderTextColor="#9CA3AF"
           />
         </View>
 
-        {/* Grade selection */}
         <Text style={[styles.label, isJunior && styles.labelJunior]}>
-          Класс: <Text style={styles.bold}>{profile.grade}</Text> ({getTierBadgeText(profile.tier)})
+          Класс в эстонской школе: <Text style={styles.bold}>{profile.grade}</Text>
         </Text>
         <View style={styles.gradeGrid}>
           {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((g) => {
@@ -1004,32 +1198,32 @@ export default function App() {
           })}
         </View>
 
-        {/* Free-form Interests Input */}
+        {/* Interests */}
         <View style={styles.interestsSection}>
           <Text style={[styles.label, isJunior && styles.labelJunior]}>
-            🎯 Твои любимые темы и увлечения:
+            Увлечения и интересы (для понятных примеров):
           </Text>
           <TextInput
             style={[styles.textInput, styles.interestsInput, isJunior && styles.textInputJunior]}
             value={interestsText}
             onChangeText={handleInterestsChange}
-            placeholder="Minecraft, LEGO, футбол, котики, Brawl Stars..."
+            placeholder="Minecraft, LEGO, футбол, котики..."
+            placeholderTextColor="#9CA3AF"
             multiline
           />
           <Text style={[styles.interestsHint, isJunior && styles.interestsHintJunior]}>
-            «Чем больше любимых тем и увлечений ты укажешь, тем интереснее и понятнее будут примеры! Ты сможешь изменить или дополнить их в любой момент в настройках».
+            💡 Разделяй запятыми. ИИ объяснит абстрактные эстонские правила через аналогии с любимыми играми и хобби.
           </Text>
 
-          {/* Quick Suggestions Pills */}
-          <Text style={styles.suggestionsTitle}>Быстро добавить увлечение:</Text>
+          <Text style={styles.suggestionsTitle}>Быстрые подсказки по возрасту:</Text>
           <View style={styles.suggestionsGrid}>
-            {currentSuggestions.map((item) => {
+            {currentSuggestions.map((item, idx) => {
               const isSelected = (profile.interests || []).some(
                 (i) => i.toLowerCase() === item.toLowerCase()
               );
               return (
                 <TouchableOpacity
-                  key={item}
+                  key={idx}
                   style={[
                     styles.suggestionChip,
                     isSelected && styles.suggestionChipSelected,
@@ -1042,7 +1236,8 @@ export default function App() {
                       isSelected && styles.suggestionTextSelected,
                     ]}
                   >
-                    {isSelected ? `✓ ${item}` : `+ ${item}`}
+                    {isSelected ? '✓ ' : '+ '}
+                    {item}
                   </Text>
                 </TouchableOpacity>
               );
@@ -1078,7 +1273,7 @@ export default function App() {
       <StatusBar style="dark" />
 
       {/* Main Content Area */}
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView ref={scrollViewRef} contentContainerStyle={styles.container}>
         {currentTab === 'study' && renderStudyTab()}
         {currentTab === 'dictionary' && renderDictionaryTab()}
         {currentTab === 'settings' && renderSettingsTab()}
@@ -1209,6 +1404,139 @@ const styles = StyleSheet.create({
   pupilPillTextJunior: {
     color: '#065F46',
   },
+
+  // Today's Lesson Carousel Bar
+  todaySection: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  todaySectionJunior: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#A7F3D0',
+    borderRadius: 18,
+  },
+  todayHeaderRow: {
+    marginBottom: 10,
+    paddingHorizontal: 4,
+  },
+  todayTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1E293B',
+  },
+  todayTitleJunior: {
+    fontSize: 18,
+    color: '#065F46',
+  },
+  todaySubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  todayCarousel: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+  },
+  todayCard: {
+    width: 210,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    padding: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  todayCardJunior: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#D1FAE5',
+    borderRadius: 14,
+  },
+  todayCardActiveJunior: {
+    borderColor: '#059669',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 2,
+  },
+  todayCardActiveSenior: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 2,
+  },
+  todayThumbnail: {
+    width: 52,
+    height: 52,
+    borderRadius: 8,
+    backgroundColor: '#E2E8F0',
+  },
+  todayThumbPlaceholder: {
+    width: 52,
+    height: 52,
+    borderRadius: 8,
+    backgroundColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  todayThumbPlaceholderText: {
+    fontSize: 22,
+  },
+  todayCardInfo: {
+    flex: 1,
+    marginLeft: 8,
+    justifyContent: 'center',
+  },
+  todayCardBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 3,
+  },
+  todayBadge: {
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  todayBadgeActive: {
+    backgroundColor: '#059669',
+  },
+  todayBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  todayBadgeTextActive: {
+    color: '#FFFFFF',
+  },
+  todayActiveDot: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  todayCardTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+    lineHeight: 16,
+  },
+  todayCardTitleJunior: {
+    fontSize: 13,
+    color: '#064E3B',
+  },
+  todayCardTitleActive: {
+    fontWeight: 'bold',
+    color: '#065F46',
+  },
+
   welcomeCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
@@ -1763,10 +2091,37 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     flexShrink: 1,
   },
+  vocabExampleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  vocabExampleSpeakerBtn: {
+    backgroundColor: '#E0E7FF',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginRight: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  vocabExampleSpeakerIcon: {
+    fontSize: 11,
+  },
   vocabExample: {
-    fontSize: 12,
-    color: '#6B7280',
+    fontSize: 12.5,
+    color: '#475569',
     fontStyle: 'italic',
+    flex: 1,
+  },
+  vocabExampleJunior: {
+    fontSize: 13.5,
+    color: '#1E293B',
+    lineHeight: 18,
   },
   instructionText: {
     fontSize: 14,
@@ -1993,11 +2348,16 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 8,
   },
+  vocabCardExampleHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
   vocabCardExampleLabel: {
     fontSize: 11,
     fontWeight: '600',
     color: '#64748B',
-    marginBottom: 2,
   },
   vocabCardExampleText: {
     fontSize: 12.5,
