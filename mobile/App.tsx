@@ -7,10 +7,15 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
-  SafeAreaView,
   Alert,
   Image,
+  Platform,
+  StatusBar as RNStatusBar,
 } from 'react-native';
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -38,7 +43,8 @@ interface SessionLesson {
   timestamp: number;
 }
 
-export default function App() {
+function MainApp() {
+  const insets = useSafeAreaInsets();
   const [currentTab, setCurrentTab] = useState<TabType>('study');
   const [tab2Mode, setTab2Mode] = useState<Tab2Mode>('vocab');
 
@@ -107,7 +113,7 @@ export default function App() {
 
   const scrollToTaskTop = () => {
     setTimeout(() => {
-      scrollViewRef.current?.scrollTo({ y: 70, animated: true });
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
     }, 120);
   };
 
@@ -1268,19 +1274,59 @@ export default function App() {
     </View>
   );
 
+  // Compute safe native insets across all phone models (Dynamic Island, camera punch-hole, 3-button nav)
+  const topInset = Math.max(
+    insets.top,
+    Platform.OS === 'android' ? (RNStatusBar.currentHeight || 28) : 0,
+    24
+  );
+
+  const bottomInset = Math.max(
+    insets.bottom,
+    Platform.OS === 'android' ? 16 : 10
+  );
+
   return (
-    <SafeAreaView style={[styles.safeArea, isJunior ? styles.safeAreaJunior : styles.safeAreaSenior]}>
+    <View
+      style={[
+        styles.safeArea,
+        isJunior ? styles.safeAreaJunior : styles.safeAreaSenior,
+        {
+          paddingTop: topInset + 6,
+          paddingLeft: insets.left,
+          paddingRight: insets.right,
+        },
+      ]}
+    >
       <StatusBar style="dark" />
 
       {/* Main Content Area */}
-      <ScrollView ref={scrollViewRef} contentContainerStyle={styles.container}>
+      <ScrollView
+        ref={scrollViewRef}
+        contentContainerStyle={[
+          styles.container,
+          {
+            paddingBottom: 76 + bottomInset,
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
         {currentTab === 'study' && renderStudyTab()}
         {currentTab === 'dictionary' && renderDictionaryTab()}
         {currentTab === 'settings' && renderSettingsTab()}
       </ScrollView>
 
-      {/* Persistent Bottom Tab Bar */}
-      <View style={[styles.bottomTabBar, isJunior ? styles.bottomTabBarJunior : styles.bottomTabBarSenior]}>
+      {/* Persistent Bottom Tab Bar with Dynamic Native Bottom Inset */}
+      <View
+        style={[
+          styles.bottomTabBar,
+          isJunior ? styles.bottomTabBarJunior : styles.bottomTabBarSenior,
+          {
+            paddingBottom: bottomInset,
+            height: 58 + bottomInset,
+          },
+        ]}
+      >
         <TouchableOpacity
           style={[styles.tabItem, currentTab === 'study' && styles.tabItemActive]}
           onPress={() => setCurrentTab('study')}
@@ -1333,7 +1379,15 @@ export default function App() {
           </Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </View>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <MainApp />
+    </SafeAreaProvider>
   );
 }
 
@@ -2485,7 +2539,6 @@ const styles = StyleSheet.create({
   // Bottom Tab Bar
   bottomTabBar: {
     flexDirection: 'row',
-    height: 64,
     borderTopWidth: 1,
     alignItems: 'center',
     justifyContent: 'space-around',
