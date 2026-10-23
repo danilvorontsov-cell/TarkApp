@@ -1,0 +1,49 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+mobile/.env
+mobile/.env.*
+!mobile/.env.example
+
+# Dependencies
+node_modules/
+mobile/node_modules/
+.pnp
+.pnp.js
+
+# Testing & Caches
+coverage/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Expo
+.expo/
+mobile/.expo/
+dist/
+web-build/
+
+# Native builds
+*.orig.*
+android/
+ios/
+
+# Python
+backend/.venv/
+.venv/
+env/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
