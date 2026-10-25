@@ -35,6 +35,45 @@ interface BankWord {
   isPlaced: boolean;
 }
 
+/**
+ * Normalizes text for Estonian TTS synthesis:
+ * - Extracts clean text / slot values
+ * - Eliminates stray cross / multiplication marks (×, ✕, ✖, *)
+ * - Eliminates brackets and placeholder markers
+ * - Eliminates dots directly following integer numbers (e.g. "12." -> "12")
+ *   so cardinal numbers (12 -> kaksteist) are NOT mistakenly read as ordinals (kahdestoistkümnes).
+ * - Separates punctuation directly in contact with numbers
+ * - Normalizes whitespace
+ */
+export const normalizeTextForTTS = (text: string): string => {
+  if (!text) return '';
+
+  let normalized = text;
+
+  // 1. Remove multiplication and cross symbols (×, ✕, ✖, *)
+  normalized = normalized.replace(/[\u00d7\u2715\u2716*]/g, ' ');
+
+  // 2. Remove brackets, braces, parentheses
+  normalized = normalized.replace(/[\[\]{}()]/g, ' ');
+
+  // 3. Remove placeholder underscores
+  normalized = normalized.replace(/_{2,}/g, ' ');
+
+  // 4. Detach / remove dots directly after numbers so "12." is not synthesized as ordinal ("kaheteistkümnes")
+  normalized = normalized.replace(/(\b\d+)\s*\.(?!\d)/g, '$1 ');
+
+  // 5. Separate other punctuation directly in contact with numbers
+  normalized = normalized.replace(/(\d+)([,!?;:])/g, '$1 $2');
+  normalized = normalized.replace(/([,!?;:])(\d+)/g, '$1 $2');
+
+  // 6. Separate hyphens/dashes attached to numbers
+  normalized = normalized.replace(/(\d+)[-–—]+/g, '$1 ');
+  normalized = normalized.replace(/[-–—]+(\d+)/g, ' $1');
+
+  // 7. Collapse excess spaces
+  return normalized.replace(/\s+/g, ' ').trim();
+};
+
 export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
   template,
   vocabulary,
@@ -152,7 +191,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
           </Text>
           <TouchableOpacity
             style={[styles.audioBtn, isPlaying && styles.audioBtnActive]}
-            onPress={() => onPlayAudio(template, 'et', 'answer_template')}
+            onPress={() => onPlayAudio(normalizeTextForTTS(template), 'et', 'answer_template')}
           >
             <Text style={styles.audioBtnText}>
               {isPlaying ? '⏹ Стоп' : '🔊 Озвучить (et)'}
@@ -267,14 +306,20 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
     sentences.forEach((sentence) => {
       sentence.tokens.forEach((token) => {
         if (token.type === 'text') {
-          result += token.text;
+          // Use clean pure text value without stray symbols or brackets
+          const cleanText = (token.text || '').replace(/[\u00d7\u2715\u2716*\[\]{}]/g, ' ');
+          result += cleanText;
         } else {
-          result += slotsFilled[token.slotId] || token.expectedWord;
+          // Use clean pure slot value without stray symbols or brackets
+          const slotVal = (slotsFilled[token.slotId] || token.expectedWord || '')
+            .replace(/[\u00d7\u2715\u2716*\[\]{}]/g, ' ')
+            .trim();
+          result += ` ${slotVal} `;
         }
       });
       result += ' ';
     });
-    return result.trim();
+    return normalizeTextForTTS(result);
   };
 
   const isCompletedPlaying = playingId === 'answer_template_completed';
@@ -340,8 +385,13 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
                       isSelected && !isFilled && styles.slotSelected,
                       isComplete && styles.slotComplete,
                     ]}
-                    onPress={() => handleRemoveFromSlot(token.slotId)}
-                    activeOpacity={0.7}
+                    onPress={() => {
+                      if (!isFilled) {
+                        setSelectedSlotId(token.slotId);
+                      }
+                    }}
+                    disabled={isFilled}
+                    activeOpacity={isFilled ? 1 : 0.7}
                   >
                     <Text
                       style={[
@@ -351,7 +401,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
                       ]}
                       numberOfLines={1}
                     >
-                      {isFilled ? `${filledWord} ✕` : `[ пропуск ${token.slotId + 1} ]`}
+                      {isFilled ? filledWord : `[ пропуск ${token.slotId + 1} ]`}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -373,7 +423,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
         <Text style={styles.bankLabel}>📦 Банк слов (выбери подходящее):</Text>
         {availableBank.length === 0 ? (
           <Text style={styles.bankEmptyText}>
-            ✓ Все слова расставлены по местам! Нажми на слово в предложении, если хочешь вернуть его.
+            ✓ Все слова расставлены по местам!
           </Text>
         ) : (
           <View style={styles.chipsRow}>

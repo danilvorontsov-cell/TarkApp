@@ -16,6 +16,28 @@ DEFAULT_VOICE = "ru-RU-DmitryNeural"
 ESTONIAN_VOICE = "et-EE-KertNeural"
 
 
+def normalize_text_for_estonian_tts(text: str) -> str:
+    """
+    Нормализует эстонский текст для Edge-TTS:
+    - Удаляет крестики и спецсимволы умножения (×, ✕, ✖, *).
+    - Удаляет скобки [ ], { }, ( ).
+    - Исключает знаки препинания непосредственно встык с числами,
+      особенно точку после целых чисел (12. -> 12), из-за которой
+      количественные числительные ошибочно распознаются синтезатором как порядковые.
+    - Разделяет пробелом знаки препинания и дефисы встык с числами.
+    """
+    if not text:
+        return ""
+    t = re.sub(r'[\u00d7\u2715\u2716*]', ' ', text)
+    t = re.sub(r'[\[\]{}()]', ' ', t)
+    t = re.sub(r'(\b\d+)\s*\.(?!\d)', r'\1 ', t)
+    t = re.sub(r'(\d+)([,!?;:])', r'\1 \2', t)
+    t = re.sub(r'([,!?;:])(\d+)', r'\1 \2', t)
+    t = re.sub(r'(\d+)[-–—]+', r'\1 ', t)
+    t = re.sub(r'[-–—]+(\d+)', r' \1', t)
+    return re.sub(r'\s+', ' ', t).strip()
+
+
 def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
     """
     Разбивает текст на сегменты (фрагмент, голос):
@@ -44,7 +66,9 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
         if is_quoted:
             inner_text = stripped[1:-1].strip()
             if inner_text:
-                segments.append((inner_text, ESTONIAN_VOICE))
+                norm_est = normalize_text_for_estonian_tts(inner_text)
+                if norm_est:
+                    segments.append((norm_est, ESTONIAN_VOICE))
         else:
             # Если фрагмент содержит слова или буквы
             if re.search(r'\w', stripped):
@@ -68,6 +92,8 @@ async def synthesize_segment(text: str, voice: str, delay: float = 0.0) -> bytes
         await asyncio.sleep(delay)
 
     clean_text = text.strip()
+    if "et-EE" in voice:
+        clean_text = normalize_text_for_estonian_tts(clean_text)
     if not clean_text:
         return b""
 
@@ -130,6 +156,8 @@ async def generate_speech_stream(
         return
 
     clean_text = text.strip()
+    if "et-EE" in voice:
+        clean_text = normalize_text_for_estonian_tts(clean_text)
     volume = "+20%" if "et-EE" in voice else "+0%"
     logger.info(
         f"Generating TTS stream with voice '{voice}', volume '{volume}' for text ({len(clean_text)} chars)"
