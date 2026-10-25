@@ -77,6 +77,31 @@ def test_voice_tts_et(client):
     assert len(response.content) > 0
 
 
+def test_voice_tts_bilingual(client):
+    response = client.get(
+        "/api/v1/voice/tts",
+        params={"text": "Ответ: \"tere\"", "bilingual": "true"},
+    )
+    assert response.status_code == 200
+    assert "audio/mpeg" in response.headers.get("content-type", "")
+    assert len(response.content) > 0
+
+
+def test_bilingual_parser():
+    from app.services.tts_service import parse_bilingual_segments
+    text = "Найди слово: «koolikott» и скажи «tere»."
+    segments = parse_bilingual_segments(text)
+    assert len(segments) == 4
+    assert segments[0][0] == "Найди слово:"
+    assert segments[0][1] == "ru-RU-DmitryNeural"
+    assert segments[1][0] == "koolikott"
+    assert segments[1][1] == "et-EE-KertNeural"
+    assert segments[2][0] == "и скажи"
+    assert segments[2][1] == "ru-RU-DmitryNeural"
+    assert segments[3][0] == "tere"
+    assert segments[3][1] == "et-EE-KertNeural"
+
+
 def test_voice_tts_empty_text(client):
     response = client.get("/api/v1/voice/tts?text=&lang=ru")
     assert response.status_code in (400, 422)

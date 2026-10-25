@@ -29,6 +29,7 @@ import {
 } from './src/types';
 import { StorageService } from './src/services/storage';
 import { playTts, stopTts } from './src/services/audioPlayer';
+import { AudioQueueManager } from './src/services/audioQueueManager';
 import { API_BASE_URL, analyzePage } from './src/services/api';
 import { PhraseBuilder } from './src/components/PhraseBuilder';
 
@@ -60,6 +61,7 @@ function MainApp() {
   const [loadingStep, setLoadingStep] = useState('');
   const [capturedImageUri, setCapturedImageUri] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<PageAnalysisResponse | null>(null);
   const [sessionLessons, setSessionLessons] = useState<SessionLesson[]>([]);
   const [isSaved, setIsSaved] = useState(false);
@@ -99,6 +101,8 @@ function MainApp() {
         setAnalysis(todayItems[0].analysis);
         setCapturedImageUri(todayItems[0].imageUri);
         setIsSaved(true);
+        // Start background prefetch for latest today lesson
+        AudioQueueManager.prefetchLessonAudio(todayItems[0].analysis, API_BASE_URL);
       }
     });
 
@@ -106,7 +110,13 @@ function MainApp() {
       setSavedVocab(v);
     });
 
+    const unsubAudio = AudioQueueManager.subscribe((state) => {
+      setPlayingId(state.playingId);
+      setLoadingAudioId(state.loadingAudioId);
+    });
+
     return () => {
+      unsubAudio();
       stopTts();
     };
   }, []);
@@ -117,25 +127,30 @@ function MainApp() {
     }, 120);
   };
 
-  const handlePlayAudio = async (text: string, lang: 'ru' | 'et', id: string) => {
+  const handlePlayAudio = async (
+    text: string,
+    lang: 'ru' | 'et',
+    id: string,
+    bilingual: boolean = false
+  ) => {
     try {
-      if (playingId === id) {
-        await stopTts();
-        setPlayingId(null);
-        return;
-      }
-
-      await playTts(text, lang, id, {
-        onStart: () => setPlayingId(id),
-        onFinish: () => setPlayingId(null),
-        onError: () => {
-          setPlayingId(null);
-          Alert.alert('Аудио', 'Не удалось воспроизвести аудиопоток. Проверьте подключение к бэкенду.');
+      await AudioQueueManager.playOrEnqueue(
+        id,
+        text,
+        lang,
+        bilingual,
+        {
+          onError: () => {
+            Alert.alert(
+              'Аудио',
+              'Не удалось загрузить аудиофайл. Проверьте подключение к бэкенду.'
+            );
+          },
         },
-      });
+        API_BASE_URL
+      );
     } catch (err: any) {
-      setPlayingId(null);
-      Alert.alert('Аудио', `Ошибка воспроизведения: ${err?.message || 'Сбой сети'}`);
+      Alert.alert('Аудио', `Ошибка: ${err?.message || 'Сбой сети'}`);
     }
   };
 
@@ -232,6 +247,10 @@ function MainApp() {
       const filtered = prev.filter((p) => p.title !== data.task_title);
       return [newSessionItem, ...filtered];
     });
+
+    // Start background sequential audio prefetching with priority queue
+    AudioQueueManager.clearQueue();
+    AudioQueueManager.prefetchLessonAudio(data, API_BASE_URL);
 
     scrollToTaskTop();
   };
@@ -427,6 +446,8 @@ function MainApp() {
     setAnalysis(item.analysis);
     setCapturedImageUri(item.imageUri);
     setIsSaved(true);
+    AudioQueueManager.clearQueue();
+    AudioQueueManager.prefetchLessonAudio(item.analysis, API_BASE_URL);
     scrollToTaskTop();
   };
 
@@ -435,6 +456,8 @@ function MainApp() {
     setCapturedImageUri(item.imageUri || null);
     setIsSaved(true);
     setCurrentTab('study');
+    AudioQueueManager.clearQueue();
+    AudioQueueManager.prefetchLessonAudio(item.analysis, API_BASE_URL);
     scrollToTaskTop();
   };
 
@@ -475,6 +498,7 @@ function MainApp() {
           style: 'destructive',
           onPress: async () => {
             await StorageService.clearAll();
+            AudioQueueManager.clearQueue();
             setHistory([]);
             setSavedVocab([]);
             setSessionLessons([]);
@@ -717,7 +741,11 @@ function MainApp() {
               <View style={styles.voiceHeroHeader}>
                 <Text style={styles.voiceHeroBadge}>🎧 ДЛЯ 1–4 КЛАССОВ</Text>
                 <Text style={styles.voiceHeroTitle}>
-                  {playingId === 'voice_prompt' ? '🔊 Воспроизведение...' : 'Послушай подсказку голосом:'}
+                  {loadingAudioId === 'voice_prompt'
+                    ? '⏳ Подготовка подсказки...'
+                    : playingId === 'voice_prompt'
+                    ? '🔊 Воспроизведение...'
+                    : 'Послушай подсказку голосом:'}
                 </Text>
               </View>
               <Text style={styles.voiceScriptJunior}>
@@ -732,9 +760,18 @@ function MainApp() {
                   handlePlayAudio(analysis.voice_prompt_script, 'ru', 'voice_prompt')
                 }
               >
-                <Text style={styles.voiceBigPlayText}>
-                  {playingId === 'voice_prompt' ? '⏹ ОСТАНОВИТЬ ОЗВУЧКУ' : '▶ СЛУШАТЬ ПОДСКАЗКУ'}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                  {loadingAudioId === 'voice_prompt' && (
+                    <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 8 }} />
+                  )}
+                  <Text style={styles.voiceBigPlayText}>
+                    {loadingAudioId === 'voice_prompt'
+                      ? 'ЗАГРУЗКА ЗВУКА...'
+                      : playingId === 'voice_prompt'
+                      ? '⏹ ОСТАНОВИТЬ ОЗВУЧКУ'
+                      : '▶ СЛУШАТЬ ПОДСКАЗКУ'}
+                  </Text>
+                </View>
               </TouchableOpacity>
             </View>
           )}
@@ -756,9 +793,18 @@ function MainApp() {
                 }
                 accessibilityLabel="Озвучить суть темы"
               >
-                <Text style={[styles.sectionAudioBtnText, isJunior && styles.sectionAudioBtnTextJunior]}>
-                  {playingId === 'theme_explanation' ? '⏹ Стоп' : '🔊 Озвучить'}
-                </Text>
+                {loadingAudioId === 'theme_explanation' ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color={isJunior ? '#065F46' : '#1D4ED8'} />
+                    <Text style={[styles.sectionAudioBtnText, isJunior && styles.sectionAudioBtnTextJunior, { marginLeft: 4 }]}>
+                      Загрузка...
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={[styles.sectionAudioBtnText, isJunior && styles.sectionAudioBtnTextJunior]}>
+                    {playingId === 'theme_explanation' ? '⏹ Стоп' : '🔊 Озвучить'}
+                  </Text>
+                )}
               </TouchableOpacity>
             </View>
             <Text style={[styles.explanationText, isJunior && styles.explanationTextJunior]}>
@@ -789,9 +835,13 @@ function MainApp() {
                       onPress={() => handlePlayAudio(v.est, 'et', `vocab_${idx}`)}
                       accessibilityLabel={`Озвучить слово ${v.est}`}
                     >
-                      <Text style={styles.vocabSpeakerIcon}>
-                        {isVocabPlaying ? '⏹' : '🔊'}
-                      </Text>
+                      {loadingAudioId === `vocab_${idx}` ? (
+                        <ActivityIndicator size="small" color="#4F46E5" style={{ transform: [{ scale: 0.7 }] }} />
+                      ) : (
+                        <Text style={styles.vocabSpeakerIcon}>
+                          {isVocabPlaying ? '⏹' : '🔊'}
+                        </Text>
+                      )}
                     </TouchableOpacity>
                     <Text style={styles.vocabRu}>— {v.ru}</Text>
                   </View>
@@ -806,9 +856,13 @@ function MainApp() {
                       onPress={() => handlePlayAudio(v.example, 'et', `vocab_ex_${idx}`)}
                       accessibilityLabel={`Озвучить пример предложения ${v.example}`}
                     >
-                      <Text style={styles.vocabExampleSpeakerIcon}>
-                        {isExPlaying ? '⏹' : '🔊'}
-                      </Text>
+                      {loadingAudioId === `vocab_ex_${idx}` ? (
+                        <ActivityIndicator size="small" color="#4F46E5" style={{ transform: [{ scale: 0.7 }] }} />
+                      ) : (
+                        <Text style={styles.vocabExampleSpeakerIcon}>
+                          {isExPlaying ? '⏹' : '🔊'}
+                        </Text>
+                      )}
                     </TouchableOpacity>
                     <Text style={[styles.vocabExample, isJunior && styles.vocabExampleJunior]}>
                       «{v.example}»
@@ -832,13 +886,22 @@ function MainApp() {
                   playingId === 'how_to_answer' && styles.sectionAudioBtnActive,
                 ]}
                 onPress={() =>
-                  handlePlayAudio(analysis.how_to_answer, 'ru', 'how_to_answer')
+                  handlePlayAudio(analysis.how_to_answer, 'ru', 'how_to_answer', true)
                 }
                 accessibilityLabel="Озвучить решение"
               >
-                <Text style={[styles.sectionAudioBtnText, isJunior && styles.sectionAudioBtnTextJunior]}>
-                  {playingId === 'how_to_answer' ? '⏹ Стоп' : '🔊 Озвучить'}
-                </Text>
+                {loadingAudioId === 'how_to_answer' ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color={isJunior ? '#065F46' : '#1D4ED8'} />
+                    <Text style={[styles.sectionAudioBtnText, isJunior && styles.sectionAudioBtnTextJunior, { marginLeft: 4 }]}>
+                      Загрузка...
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={[styles.sectionAudioBtnText, isJunior && styles.sectionAudioBtnTextJunior]}>
+                    {playingId === 'how_to_answer' ? '⏹ Стоп' : '🔊 Озвучить'}
+                  </Text>
+                )}
               </TouchableOpacity>
             </View>
             <Text style={[styles.instructionText, isJunior && styles.instructionTextJunior]}>
@@ -859,7 +922,11 @@ function MainApp() {
           {!isJunior && (
             <View style={styles.seniorVoiceBox}>
               <Text style={styles.seniorVoiceLabel}>
-                {playingId === 'senior_voice' ? '🔊 Воспроизведение...' : '🔊 Аудио-подсказка к уроку:'}
+                {loadingAudioId === 'senior_voice'
+                  ? '⏳ Загрузка аудио...'
+                  : playingId === 'senior_voice'
+                  ? '🔊 Воспроизведение...'
+                  : '🔊 Аудио-подсказка к уроку:'}
               </Text>
               <Text style={styles.seniorVoiceScript}>{analysis.voice_prompt_script}</Text>
               <TouchableOpacity
@@ -871,9 +938,18 @@ function MainApp() {
                   handlePlayAudio(analysis.voice_prompt_script, 'ru', 'senior_voice')
                 }
               >
-                <Text style={styles.seniorVoiceButtonText}>
-                  {playingId === 'senior_voice' ? '⏹ Остановить' : '▶ Озвучить тезисы'}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  {loadingAudioId === 'senior_voice' && (
+                    <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 6 }} />
+                  )}
+                  <Text style={styles.seniorVoiceButtonText}>
+                    {loadingAudioId === 'senior_voice'
+                      ? 'Загрузка...'
+                      : playingId === 'senior_voice'
+                      ? '⏹ Остановить'
+                      : '▶ Озвучить тезисы'}
+                  </Text>
+                </View>
               </TouchableOpacity>
             </View>
           )}
@@ -1031,9 +1107,13 @@ function MainApp() {
                           style={[styles.vocabCardSpeaker, isPlaying && styles.vocabCardSpeakerActive]}
                           onPress={() => handlePlayAudio(item.est, 'et', `saved_vocab_${item.est}`)}
                         >
-                          <Text style={styles.vocabCardSpeakerIcon}>
-                            {isPlaying ? '⏹' : '🔊'}
-                          </Text>
+                          {loadingAudioId === `saved_vocab_${item.est}` ? (
+                            <ActivityIndicator size="small" color="#4F46E5" style={{ transform: [{ scale: 0.7 }] }} />
+                          ) : (
+                            <Text style={styles.vocabCardSpeakerIcon}>
+                              {isPlaying ? '⏹' : '🔊'}
+                            </Text>
+                          )}
                         </TouchableOpacity>
                       </View>
                       <TouchableOpacity
@@ -1057,9 +1137,13 @@ function MainApp() {
                             ]}
                             onPress={() => handlePlayAudio(item.example, 'et', `saved_ex_${item.est}`)}
                           >
-                            <Text style={styles.vocabExampleSpeakerIcon}>
-                              {isExPlaying ? '⏹' : '🔊'}
-                            </Text>
+                            {loadingAudioId === `saved_ex_${item.est}` ? (
+                              <ActivityIndicator size="small" color="#4F46E5" style={{ transform: [{ scale: 0.7 }] }} />
+                            ) : (
+                              <Text style={styles.vocabExampleSpeakerIcon}>
+                                {isExPlaying ? '⏹' : '🔊'}
+                              </Text>
+                            )}
                           </TouchableOpacity>
                         </View>
                         <Text style={styles.vocabCardExampleText}>«{item.example}»</Text>

@@ -12,7 +12,7 @@ if sys.platform == "win32":
 SERVER_URL = "http://127.0.0.1:8080/api/v1/analyze-page"
 
 
-def test_object(image_path: str, interests: str = "Minecraft, LEGO, котики"):
+def run_test_object(image_path: str, interests: str = "Minecraft, LEGO, котики"):
     filename = os.path.basename(image_path)
     print("\n" + "=" * 70)
     print(f"ТЕСТИРОВАНИЕ РЕЖИМА B (Maailma Avastaja): {filename}")
@@ -68,10 +68,10 @@ def main():
     mug_path = os.path.join(os.path.dirname(__file__), "tests", "coffee_mug.jpg")
 
     if os.path.exists(cat_path):
-        test_object(cat_path, interests="Minecraft, котики, игры")
+        run_test_object(cat_path, interests="Minecraft, котики, игры")
 
     if os.path.exists(mug_path):
-        test_object(mug_path, interests="LEGO, чай, Minecraft")
+        run_test_object(mug_path, interests="LEGO, чай, Minecraft")
 
 
 if __name__ == "__main__":

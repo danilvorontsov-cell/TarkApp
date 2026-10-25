@@ -87,8 +87,14 @@ export async function playTts(
 
   await ensureAudioMode();
 
-  const encodedText = encodeURIComponent(text.trim());
-  const url = `${baseUrl}/api/v1/voice/tts?text=${encodedText}&lang=${lang}`;
+  const isDirectUri =
+    text.startsWith('file://') ||
+    text.startsWith('http://') ||
+    text.startsWith('https://');
+
+  const url = isDirectUri
+    ? text
+    : `${baseUrl}/api/v1/voice/tts?text=${encodeURIComponent(text.trim())}&lang=${lang}`;
 
   try {
     callbacks?.onStart?.();
