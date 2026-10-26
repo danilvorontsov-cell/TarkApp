@@ -305,13 +305,15 @@ class AudioQueueManagerClass {
         this.flushCallbacks(item);
         return true;
       } else {
+        const fileSize = (downloadedInfo.exists && typeof (downloadedInfo as any).size === 'number') ? (downloadedInfo as any).size : 0;
+        console.warn(`[AudioQueue] Download invalid for ${item.id}: HTTP status ${result.status}, size: ${fileSize} bytes`);
         if (downloadedInfo.exists) {
           await FileSystem.deleteAsync(targetFile, { idempotent: true });
         }
         item.status = 'ERROR';
         this.currentDownloadingId = null;
         this.notify();
-        this.flushErrorCallbacks(item, new Error('Download returned invalid audio size'));
+        this.flushErrorCallbacks(item, new Error(`Download returned HTTP ${result.status}, size: ${fileSize}`));
         return false;
       }
     } catch (downloadErr: any) {
