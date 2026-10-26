@@ -28,6 +28,7 @@ class AudioQueueManagerClass {
   private isProcessing: boolean = false;
   private currentDownloadingId: string | null = null;
   private pendingUserPlayId: string | null = null;
+  private currentlyPlayingId: string | null = null;
   private listeners: Set<QueueListener> = new Set();
   private cacheDir: string = `${FileSystem.cacheDirectory || ''}tarkapp_audio/`;
   private dirInitialized: boolean = false;
@@ -86,8 +87,10 @@ class AudioQueueManagerClass {
       itemStatuses[id] = item.status;
     });
 
+    const activePlayId = this.currentlyPlayingId || getCurrentPlayingId();
+
     const state = {
-      playingId: getCurrentPlayingId(),
+      playingId: activePlayId,
       loadingAudioId: this.pendingUserPlayId,
       itemStatuses,
     };
@@ -383,8 +386,10 @@ class AudioQueueManagerClass {
     const cleanText = this.normalizeText(text);
 
     // 1. Toggle off if already playing this id
-    if (getCurrentPlayingId() === id) {
+    if (this.currentlyPlayingId === id || getCurrentPlayingId() === id) {
       await stopTts();
+      this.currentlyPlayingId = null;
+      this.pendingUserPlayId = null;
       callbacks?.onFinish?.();
       this.notify();
       return;
@@ -392,6 +397,7 @@ class AudioQueueManagerClass {
 
     // Stop whatever else was playing
     await stopTts();
+    this.currentlyPlayingId = null;
 
     // Check existing item in queue
     let item = this.queue.get(id);
@@ -419,18 +425,23 @@ class AudioQueueManagerClass {
     // CASE A: Item is READY on disk -> Instant audio playback!
     if (item && item.status === 'READY' && item.localUri) {
       this.pendingUserPlayId = null;
-      this.notify();
+      this.currentlyPlayingId = id;
+      this.notify(); // Immediately change UI to playing state
 
       await playTts(item.localUri, lang, id, {
         onStart: () => {
+          this.currentlyPlayingId = id;
+          this.pendingUserPlayId = null;
           this.notify();
           callbacks?.onStart?.();
         },
         onFinish: () => {
+          this.currentlyPlayingId = null;
           this.notify();
           callbacks?.onFinish?.();
         },
         onError: (err) => {
+          this.currentlyPlayingId = null;
           this.notify();
           callbacks?.onError?.(err);
         },
@@ -457,19 +468,24 @@ class AudioQueueManagerClass {
       if (this.pendingUserPlayId !== id) {
         return;
       }
+      this.currentlyPlayingId = id;
       this.pendingUserPlayId = null;
-      this.notify();
+      this.notify(); // Immediately change UI to playing state
 
       await playTts(localUri, lang, id, {
         onStart: () => {
+          this.currentlyPlayingId = id;
+          this.pendingUserPlayId = null;
           this.notify();
           callbacks?.onStart?.();
         },
         onFinish: () => {
+          this.currentlyPlayingId = null;
           this.notify();
           callbacks?.onFinish?.();
         },
         onError: (err) => {
+          this.currentlyPlayingId = null;
           this.notify();
           callbacks?.onError?.(err);
         },
@@ -480,26 +496,31 @@ class AudioQueueManagerClass {
     item.onErrorCallbacks.push(async (err) => {
       if (this.pendingUserPlayId === id) {
         console.warn(`[AudioQueue] Local download failed for ${id}, falling back to live direct stream:`, err);
+        this.currentlyPlayingId = id;
+        this.pendingUserPlayId = null;
+        this.notify();
+
         try {
           await playTts(cleanText, lang, id, {
             onStart: () => {
+              this.currentlyPlayingId = id;
               this.pendingUserPlayId = null;
               this.notify();
               callbacks?.onStart?.();
             },
             onFinish: () => {
-              this.pendingUserPlayId = null;
+              this.currentlyPlayingId = null;
               this.notify();
               callbacks?.onFinish?.();
             },
             onError: (playErr) => {
-              this.pendingUserPlayId = null;
+              this.currentlyPlayingId = null;
               this.notify();
               callbacks?.onError?.(playErr);
             },
           }, baseUrl);
         } catch (streamingErr) {
-          this.pendingUserPlayId = null;
+          this.currentlyPlayingId = null;
           this.notify();
           callbacks?.onError?.(streamingErr);
         }
@@ -520,6 +541,7 @@ class AudioQueueManagerClass {
   public clearQueue() {
     this.queue.clear();
     this.pendingUserPlayId = null;
+    this.currentlyPlayingId = null;
     this.isProcessing = false;
     this.currentDownloadingId = null;
     this.notify();

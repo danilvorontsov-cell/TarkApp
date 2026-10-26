@@ -4,6 +4,7 @@ import {
   Text,
   View,
   TouchableOpacity,
+  ActivityIndicator,
 } from 'react-native';
 import { VocabularyItem } from '../types';
 
@@ -13,6 +14,7 @@ interface PhraseBuilderProps {
   isJunior: boolean;
   onPlayAudio: (text: string, lang: 'ru' | 'et', id: string) => void;
   playingId: string | null;
+  loadingAudioId?: string | null;
 }
 
 interface SlotDef {
@@ -80,6 +82,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
   isJunior,
   onPlayAudio,
   playingId,
+  loadingAudioId,
 }) => {
   const [selectedSlotId, setSelectedSlotId] = useState<number | null>(null);
   const [slotsFilled, setSlotsFilled] = useState<Record<number, string>>({});
@@ -183,6 +186,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
   // If no slots exist, render plain template
   if (allSlots.length === 0) {
     const isPlaying = playingId === 'answer_template';
+    const isLoading = loadingAudioId === 'answer_template';
     return (
       <View style={[styles.container, isJunior ? styles.containerJunior : styles.containerSenior]}>
         <View style={styles.headerRow}>
@@ -192,10 +196,16 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
           <TouchableOpacity
             style={[styles.audioBtn, isPlaying && styles.audioBtnActive]}
             onPress={() => onPlayAudio(normalizeTextForTTS(template), 'et', 'answer_template')}
+            disabled={isLoading}
           >
-            <Text style={styles.audioBtnText}>
-              {isPlaying ? '⏹ Стоп' : '🔊 Озвучить (et)'}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {isLoading && (
+                <ActivityIndicator size="small" color="#92400E" style={{ marginRight: 6 }} />
+              )}
+              <Text style={styles.audioBtnText}>
+                {isLoading ? 'Загрузка...' : isPlaying ? '⏹ Стоп' : '🔊 Озвучить (et)'}
+              </Text>
+            </View>
           </TouchableOpacity>
         </View>
         <Text style={[styles.plainText, isJunior && styles.plainTextJunior]}>
@@ -323,6 +333,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
   };
 
   const isCompletedPlaying = playingId === 'answer_template_completed';
+  const isCompletedLoading = loadingAudioId === 'answer_template_completed';
   const availableBank = bankWords.filter((bw) => !bw.isPlaced);
 
   return (
@@ -452,10 +463,21 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
               isCompletedPlaying && styles.listenCompletedBtnActive,
             ]}
             onPress={() => onPlayAudio(getAssembledPhrase(), 'et', 'answer_template_completed')}
+            disabled={isCompletedLoading}
+            activeOpacity={0.8}
           >
-            <Text style={styles.listenCompletedBtnText}>
-              {isCompletedPlaying ? '⏹ Остановить' : '🔊 Послушать свой ответ'}
-            </Text>
+            <View style={styles.listenBtnContent}>
+              {isCompletedLoading ? (
+                <>
+                  <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 8 }} />
+                  <Text style={styles.listenCompletedBtnText}>Загрузка аудио...</Text>
+                </>
+              ) : (
+                <Text style={styles.listenCompletedBtnText}>
+                  {isCompletedPlaying ? '⏹ Остановить' : '🔊 Послушать свой ответ'}
+                </Text>
+              )}
+            </View>
           </TouchableOpacity>
         </View>
       )}
@@ -716,5 +738,10 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: 'bold',
+  },
+  listenBtnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

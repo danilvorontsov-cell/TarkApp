@@ -916,6 +916,7 @@ function MainApp() {
             isJunior={isJunior}
             onPlayAudio={handlePlayAudio}
             playingId={playingId}
+            loadingAudioId={loadingAudioId}
           />
 
           {/* Compact Audio Button for Senior (5-12) */}

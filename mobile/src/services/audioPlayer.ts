@@ -33,6 +33,8 @@ async function ensureAudioMode() {
  * Stops and releases any currently playing audio player.
  */
 export async function stopTts(): Promise<void> {
+  currentPlayingId = null;
+
   if (activeSubscription) {
     try {
       activeSubscription.remove();
@@ -52,7 +54,6 @@ export async function stopTts(): Promise<void> {
       console.warn('Error releasing audio player:', e);
     }
     activePlayer = null;
-    currentPlayingId = null;
   }
 }
 
@@ -97,11 +98,12 @@ export async function playTts(
     : `${baseUrl}/api/v1/voice/tts?text=${encodeURIComponent(text.trim())}&lang=${lang}`;
 
   try {
-    callbacks?.onStart?.();
     currentPlayingId = playbackId;
 
     const player = createAudioPlayer(url);
     activePlayer = player;
+
+    callbacks?.onStart?.();
 
     activeSubscription = player.addListener('playbackStatusUpdate', (status: AudioStatus) => {
       if (status.didJustFinish) {
