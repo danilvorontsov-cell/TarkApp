@@ -19,8 +19,8 @@ router = APIRouter(prefix="/api/v1/voice", tags=["Voice TTS"])
     summary="Потоковый синтез речи (Edge-TTS In-Memory с поддержкой двуязычной склейки)",
     description=(
         "Синтезирует аудио на лету без сохранения временных файлов на диск. "
-        "Поддерживает русский язык (ru-RU-DmitryNeural) для подсказок, "
-        "эстонский язык (et-EE-KertNeural) для терминов учебника, "
+        "Поддерживает русский язык (ru-RU-SvetlanaNeural с автоматическим fallback) для подсказок, "
+        "эстонский язык (et-EE-KertNeural / et-EE-AnuNeural) для терминов учебника, "
         "а также двуязычную склейку (bilingual=true) для блоков с эстонскими цитатами в кавычках."
     ),
     response_class=StreamingResponse,

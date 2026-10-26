@@ -7,13 +7,23 @@ import edge_tts
 logger = logging.getLogger(__name__)
 
 # Supported voice mappings
+# ru-RU-SvetlanaNeural: максимально стабильный, чистый и надежный русский голос (Edge-TTS не сбрасывает соединение)
+# et-EE-KertNeural: четкий мужской эстонский голос (+20% громкости)
 VOICE_MAP = {
-    "ru": "ru-RU-DmitryNeural",   # Дружелюбный мужской голос для подсказок и объяснений
-    "et": "et-EE-KertNeural",      # Четкий голос для эстонских академических терминов
+    "ru": "ru-RU-SvetlanaNeural",
+    "et": "et-EE-KertNeural",
 }
 
-DEFAULT_VOICE = "ru-RU-DmitryNeural"
+DEFAULT_VOICE = "ru-RU-SvetlanaNeural"
 ESTONIAN_VOICE = "et-EE-KertNeural"
+
+# Карта резервных голосов для отказоустойчивости при сетевых сбоях Edge-TTS
+VOICE_FALLBACK_MAP = {
+    "ru-RU-SvetlanaNeural": "ru-RU-DmitryNeural",
+    "ru-RU-DmitryNeural": "ru-RU-SvetlanaNeural",
+    "et-EE-KertNeural": "et-EE-AnuNeural",
+    "et-EE-AnuNeural": "et-EE-KertNeural",
+}
 
 
 def normalize_text_for_estonian_tts(text: str) -> str:
@@ -86,7 +96,8 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
 
 async def synthesize_segment(text: str, voice: str, delay: float = 0.0) -> bytes:
     """
-    Синтезирует один фрагмент в байты MP3 с защитой от сбоев и возможностью паузы delay.
+    Синтезирует один фрагмент в байты MP3 с защитой от сбоев, повторными попытками
+    и автоматическим fallback на резервный голос.
     """
     if delay > 0:
         await asyncio.sleep(delay)
@@ -97,49 +108,31 @@ async def synthesize_segment(text: str, voice: str, delay: float = 0.0) -> bytes
     if not clean_text:
         return b""
 
-    volume = "+20%" if "et-EE" in voice else "+0%"
+    # Список кандидатов: [основной голос, резервный голос]
+    fallback_voice = VOICE_FALLBACK_MAP.get(voice)
+    candidates = [voice]
+    if fallback_voice and fallback_voice != voice:
+        candidates.append(fallback_voice)
 
-    for attempt in range(2):
-        try:
-            communicate = edge_tts.Communicate(text=clean_text, voice=voice, volume=volume)
-            chunks = []
-            async for chunk in communicate.stream():
-                if chunk.get("type") == "audio":
-                    data = chunk.get("data")
-                    if data:
-                        chunks.append(data)
-            audio_bytes = b"".join(chunks)
-            if audio_bytes:
-                return audio_bytes
-
-            # Если вернулось пусто с повышенной громкостью, пробуем со стандартной
-            if volume != "+0%":
-                communicate = edge_tts.Communicate(text=clean_text, voice=voice, volume="+0%")
+    for cand_voice in candidates:
+        volume = "+20%" if "et-EE" in cand_voice else "+0%"
+        for vol in ([volume, "+0%"] if volume != "+0%" else ["+0%"]):
+            try:
+                communicate = edge_tts.Communicate(text=clean_text, voice=cand_voice, volume=vol)
                 chunks = []
                 async for chunk in communicate.stream():
-                    if chunk.get("type") == "audio":
-                        data = chunk.get("data")
-                        if data:
-                            chunks.append(data)
-                return b"".join(chunks)
+                    if chunk.get("type") == "audio" and chunk.get("data"):
+                        chunks.append(chunk["data"])
+                audio_bytes = b"".join(chunks)
+                if audio_bytes:
+                    return audio_bytes
+            except Exception as e:
+                logger.warning(
+                    f"Segment synthesis attempt failed for voice '{cand_voice}', vol '{vol}': {e}"
+                )
+                await asyncio.sleep(0.08)
 
-        except Exception as e:
-            if attempt == 1:
-                # Вторая попытка: пробуем с громкостью +0%
-                try:
-                    communicate = edge_tts.Communicate(text=clean_text, voice=voice, volume="+0%")
-                    chunks = []
-                    async for chunk in communicate.stream():
-                        if chunk.get("type") == "audio":
-                            data = chunk.get("data")
-                            if data:
-                                chunks.append(data)
-                    return b"".join(chunks)
-                except Exception:
-                    logger.warning(f"Segment synthesis error for '{clean_text[:30]}...' ({voice}): {e}")
-                    raise
-            await asyncio.sleep(0.08)
-
+    logger.error(f"Failed to synthesize segment for text: '{clean_text[:40]}...' with all candidate voices.")
     return b""
 
 
@@ -149,7 +142,7 @@ async def generate_speech_stream(
 ) -> AsyncGenerator[bytes, None]:
     """
     Streams synthesized speech chunks directly from memory without saving temporary files to disk.
-    Zero-Disk In-Memory Streaming via Edge-TTS.
+    Zero-Disk In-Memory Streaming via Edge-TTS с автоматическим fallback на резервный голос.
     """
     if not text or not text.strip():
         logger.warning("generate_speech_stream called with empty text")
@@ -158,46 +151,40 @@ async def generate_speech_stream(
     clean_text = text.strip()
     if "et-EE" in voice:
         clean_text = normalize_text_for_estonian_tts(clean_text)
-    volume = "+20%" if "et-EE" in voice else "+0%"
-    logger.info(
-        f"Generating TTS stream with voice '{voice}', volume '{volume}' for text ({len(clean_text)} chars)"
-    )
 
-    for attempt in range(2):
-        try:
-            communicate = edge_tts.Communicate(text=clean_text, voice=voice, volume=volume)
-            has_audio = False
-            async for chunk in communicate.stream():
-                if chunk.get("type") == "audio":
-                    data = chunk.get("data")
-                    if data:
-                        has_audio = True
-                        yield data
-            if has_audio:
-                return
+    # Список кандидатов для озвучки (основной + резервный)
+    fallback_voice = VOICE_FALLBACK_MAP.get(voice)
+    candidates = [voice]
+    if fallback_voice and fallback_voice != voice:
+        candidates.append(fallback_voice)
+    if DEFAULT_VOICE not in candidates:
+        candidates.append(DEFAULT_VOICE)
 
-            if volume != "+0%":
-                volume = "+0%"
-                continue
-        except Exception as e:
-            if attempt == 0:
-                logger.warning(f"TTS stream attempt 1 failed: {e}. Retrying after 0.15s...")
-                volume = "+0%"
-                await asyncio.sleep(0.15)
-                continue
-            # Если эстонский голос не ответил, используем надежный fallback на голос Дмитрия
-            if voice != DEFAULT_VOICE:
-                logger.warning(f"Voice {voice} failed completely: {e}. Executing fallback to {DEFAULT_VOICE}")
-                try:
-                    communicate = edge_tts.Communicate(text=clean_text, voice=DEFAULT_VOICE, volume="+0%")
-                    async for chunk in communicate.stream():
-                        if chunk.get("type") == "audio" and chunk.get("data"):
-                            yield chunk["data"]
+    for cand_voice in candidates:
+        volume = "+20%" if "et-EE" in cand_voice else "+0%"
+        logger.info(
+            f"Generating TTS stream with voice '{cand_voice}', volume '{volume}' for text ({len(clean_text)} chars)"
+        )
+        for vol in ([volume, "+0%"] if volume != "+0%" else ["+0%"]):
+            try:
+                communicate = edge_tts.Communicate(text=clean_text, voice=cand_voice, volume=vol)
+                chunks_buffer: List[bytes] = []
+                async for chunk in communicate.stream():
+                    if chunk.get("type") == "audio" and chunk.get("data"):
+                        chunks_buffer.append(chunk["data"])
+
+                if chunks_buffer:
+                    for chunk_data in chunks_buffer:
+                        yield chunk_data
                     return
-                except Exception as fb_err:
-                    logger.error(f"Fallback to {DEFAULT_VOICE} also failed: {fb_err}", exc_info=True)
-            logger.error(f"Error streaming TTS with voice {voice}: {e}", exc_info=True)
-            raise
+
+            except Exception as e:
+                logger.warning(
+                    f"TTS stream candidate '{cand_voice}' (vol '{vol}') failed: {e}. Trying next option..."
+                )
+                await asyncio.sleep(0.1)
+
+    logger.error(f"All TTS candidates failed for text: {clean_text[:50]}...")
 
 
 async def generate_bilingual_speech_stream(

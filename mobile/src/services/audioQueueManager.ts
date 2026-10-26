@@ -31,6 +31,7 @@ class AudioQueueManagerClass {
   private listeners: Set<QueueListener> = new Set();
   private cacheDir: string = `${FileSystem.cacheDirectory || ''}tarkapp_audio/`;
   private dirInitialized: boolean = false;
+  private readonly MIN_AUDIO_BYTES: number = 800; // Minimum size for valid MP3 speech
 
   constructor() {
     this.ensureCacheDir();
@@ -42,6 +43,16 @@ class AudioQueueManagerClass {
       const dirInfo = await FileSystem.getInfoAsync(this.cacheDir);
       if (!dirInfo.exists) {
         await FileSystem.makeDirectoryAsync(this.cacheDir, { intermediates: true });
+      } else {
+        // Clean up any 0-byte or corrupted leftover files from previous network interruptions
+        const files = await FileSystem.readDirectoryAsync(this.cacheDir);
+        for (const file of files) {
+          const filePath = `${this.cacheDir}${file}`;
+          const info = await FileSystem.getInfoAsync(filePath);
+          if (info.exists && typeof (info as any).size === 'number' && (info as any).size < this.MIN_AUDIO_BYTES) {
+            await FileSystem.deleteAsync(filePath, { idempotent: true });
+          }
+        }
       }
       this.dirInitialized = true;
     } catch (e) {
@@ -247,27 +258,44 @@ class AudioQueueManagerClass {
         const targetFile = this.getFilePath(currentItem.text, currentItem.lang, currentItem.bilingual);
 
         try {
-          // Check if file is already cached on disk
+          // Check if valid non-empty audio file is already cached on disk
           const info = await FileSystem.getInfoAsync(targetFile);
-          if (info.exists && (info as any).size > 0) {
+          if (info.exists && typeof (info as any).size === 'number' && (info as any).size >= this.MIN_AUDIO_BYTES) {
             currentItem.status = 'READY';
             currentItem.localUri = targetFile;
           } else {
+            if (info.exists) {
+              await FileSystem.deleteAsync(targetFile, { idempotent: true });
+            }
+
             // Build TTS API endpoint URL
             const encodedText = encodeURIComponent(currentItem.text.trim());
             const bilingualParam = currentItem.bilingual ? '&bilingual=true' : '';
             const downloadUrl = `${baseUrl}/api/v1/voice/tts?text=${encodedText}&lang=${currentItem.lang}${bilingualParam}`;
 
             const result = await FileSystem.downloadAsync(downloadUrl, targetFile);
-            if (result.status === 200) {
+            const downloadedInfo = await FileSystem.getInfoAsync(targetFile);
+
+            if (
+              result.status === 200 &&
+              downloadedInfo.exists &&
+              typeof (downloadedInfo as any).size === 'number' &&
+              (downloadedInfo as any).size >= this.MIN_AUDIO_BYTES
+            ) {
               currentItem.status = 'READY';
               currentItem.localUri = targetFile;
             } else {
+              if (downloadedInfo.exists) {
+                await FileSystem.deleteAsync(targetFile, { idempotent: true });
+              }
               currentItem.status = 'ERROR';
             }
           }
         } catch (downloadErr) {
           console.warn(`[AudioQueue] Background prefetch failed silently for ${currentItem.id}:`, downloadErr);
+          try {
+            await FileSystem.deleteAsync(targetFile, { idempotent: true });
+          } catch {}
           currentItem.status = 'ERROR';
         }
 
@@ -341,11 +369,11 @@ class AudioQueueManagerClass {
     let item = this.queue.get(id);
     const targetFile = this.getFilePath(text, lang, bilingual);
 
-    // Fast check: is it already on disk?
+    // Fast check: is it already on disk and non-empty?
     if (!item || item.status !== 'READY') {
       try {
         const info = await FileSystem.getInfoAsync(targetFile);
-        if (info.exists && (info as any).size > 0) {
+        if (info.exists && typeof (info as any).size === 'number' && (info as any).size >= this.MIN_AUDIO_BYTES) {
           if (!item) {
             this.upsertItem({ id, text, lang, bilingual, priority: 0 });
             item = this.queue.get(id);
@@ -354,6 +382,8 @@ class AudioQueueManagerClass {
             item.status = 'READY';
             item.localUri = targetFile;
           }
+        } else if (info.exists) {
+          await FileSystem.deleteAsync(targetFile, { idempotent: true });
         }
       } catch {}
     }
