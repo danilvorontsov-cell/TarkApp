@@ -60,17 +60,23 @@ class AudioQueueManagerClass {
     }
   }
 
+  public normalizeText(str: string): string {
+    if (!str) return '';
+    return str.replace(/^[«"“„\s]+|[»"”\s]+$/g, '').trim();
+  }
+
   private getHash(str: string): string {
     let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      hash = (hash << 5) - hash + str.charCodeAt(i);
+    const clean = this.normalizeText(str);
+    for (let i = 0; i < clean.length; i++) {
+      hash = (hash << 5) - hash + clean.charCodeAt(i);
       hash |= 0;
     }
     return Math.abs(hash).toString(36);
   }
 
   private getFilePath(text: string, lang: string, bilingual: boolean): string {
-    const key = `${lang}_${bilingual ? 'bi' : 'mono'}_${this.getHash(text.trim())}`;
+    const key = `${lang}_${bilingual ? 'bi' : 'mono'}_${this.getHash(text)}`;
     return `${this.cacheDir}${key}.mp3`;
   }
 
@@ -199,13 +205,12 @@ class AudioQueueManagerClass {
     bilingual: boolean;
     priority: number;
   }) {
+    const cleanText = this.normalizeText(params.text);
     const existing = this.queue.get(params.id);
-    const targetFile = this.getFilePath(params.text, params.lang, params.bilingual);
 
     if (existing) {
-      // If text changed, update text and reset status
-      if (existing.text !== params.text) {
-        existing.text = params.text;
+      if (existing.text !== cleanText) {
+        existing.text = cleanText;
         existing.status = 'QUEUED';
         existing.localUri = undefined;
       }
@@ -215,7 +220,7 @@ class AudioQueueManagerClass {
 
     this.queue.set(params.id, {
       id: params.id,
-      text: params.text,
+      text: cleanText,
       lang: params.lang,
       bilingual: params.bilingual,
       priority: params.priority,
@@ -226,8 +231,101 @@ class AudioQueueManagerClass {
     });
   }
 
+  private flushCallbacks(item: AudioQueueItem) {
+    if (item.status === 'READY' && item.localUri) {
+      const callbacks = [...item.onReadyCallbacks];
+      item.onReadyCallbacks = [];
+      callbacks.forEach((cb) => {
+        try {
+          cb(item.localUri!);
+        } catch (err) {
+          console.warn('Error in onReadyCallback:', err);
+        }
+      });
+    }
+  }
+
+  private flushErrorCallbacks(item: AudioQueueItem, err: any) {
+    const errCallbacks = [...item.onErrorCallbacks];
+    item.onErrorCallbacks = [];
+    errCallbacks.forEach((cb) => {
+      try {
+        cb(err);
+      } catch (e) {
+        console.warn('Error in onErrorCallback:', e);
+      }
+    });
+  }
+
   /**
-   * Main sequential processing loop
+   * Downloads a single audio item to disk cache.
+   * Notifies onReadyCallbacks on success, onErrorCallbacks on failure.
+   */
+  public async downloadItem(item: AudioQueueItem, baseUrl: string = API_BASE_URL): Promise<boolean> {
+    const targetFile = this.getFilePath(item.text, item.lang, item.bilingual);
+    this.currentDownloadingId = item.id;
+    item.status = 'LOADING';
+    this.notify();
+
+    try {
+      const info = await FileSystem.getInfoAsync(targetFile);
+      if (info.exists && typeof (info as any).size === 'number' && (info as any).size >= this.MIN_AUDIO_BYTES) {
+        item.status = 'READY';
+        item.localUri = targetFile;
+        this.currentDownloadingId = null;
+        this.notify();
+        this.flushCallbacks(item);
+        return true;
+      }
+
+      if (info.exists) {
+        await FileSystem.deleteAsync(targetFile, { idempotent: true });
+      }
+
+      const encodedText = encodeURIComponent(item.text);
+      const bilingualParam = item.bilingual ? '&bilingual=true' : '';
+      const downloadUrl = `${baseUrl}/api/v1/voice/tts?text=${encodedText}&lang=${item.lang}${bilingualParam}`;
+
+      const result = await FileSystem.downloadAsync(downloadUrl, targetFile);
+      const downloadedInfo = await FileSystem.getInfoAsync(targetFile);
+
+      if (
+        result.status === 200 &&
+        downloadedInfo.exists &&
+        typeof (downloadedInfo as any).size === 'number' &&
+        (downloadedInfo as any).size >= this.MIN_AUDIO_BYTES
+      ) {
+        item.status = 'READY';
+        item.localUri = targetFile;
+        this.currentDownloadingId = null;
+        this.notify();
+        this.flushCallbacks(item);
+        return true;
+      } else {
+        if (downloadedInfo.exists) {
+          await FileSystem.deleteAsync(targetFile, { idempotent: true });
+        }
+        item.status = 'ERROR';
+        this.currentDownloadingId = null;
+        this.notify();
+        this.flushErrorCallbacks(item, new Error('Download returned invalid audio size'));
+        return false;
+      }
+    } catch (downloadErr: any) {
+      console.warn(`[AudioQueue] Download failed for ${item.id}:`, downloadErr);
+      try {
+        await FileSystem.deleteAsync(targetFile, { idempotent: true });
+      } catch {}
+      item.status = 'ERROR';
+      this.currentDownloadingId = null;
+      this.notify();
+      this.flushErrorCallbacks(item, downloadErr);
+      return false;
+    }
+  }
+
+  /**
+   * Main sequential background processing loop
    */
   private async processQueue(baseUrl: string = API_BASE_URL) {
     if (this.isProcessing) return;
@@ -235,7 +333,7 @@ class AudioQueueManagerClass {
 
     try {
       while (true) {
-        // Find next eligible item by priority (0 first, then 1, 2, 3, 4)
+        // Find next eligible queued item by priority (0 first, then 1, 2, 3, 4)
         let bestItem: AudioQueueItem | null = null;
         for (const item of this.queue.values()) {
           if (item.status === 'QUEUED') {
@@ -250,86 +348,13 @@ class AudioQueueManagerClass {
           break;
         }
 
-        const currentItem = bestItem;
-        this.currentDownloadingId = currentItem.id;
-        currentItem.status = 'LOADING';
-        this.notify();
+        await this.downloadItem(bestItem, baseUrl);
 
-        const targetFile = this.getFilePath(currentItem.text, currentItem.lang, currentItem.bilingual);
-
-        try {
-          // Check if valid non-empty audio file is already cached on disk
-          const info = await FileSystem.getInfoAsync(targetFile);
-          if (info.exists && typeof (info as any).size === 'number' && (info as any).size >= this.MIN_AUDIO_BYTES) {
-            currentItem.status = 'READY';
-            currentItem.localUri = targetFile;
-          } else {
-            if (info.exists) {
-              await FileSystem.deleteAsync(targetFile, { idempotent: true });
-            }
-
-            // Build TTS API endpoint URL
-            const encodedText = encodeURIComponent(currentItem.text.trim());
-            const bilingualParam = currentItem.bilingual ? '&bilingual=true' : '';
-            const downloadUrl = `${baseUrl}/api/v1/voice/tts?text=${encodedText}&lang=${currentItem.lang}${bilingualParam}`;
-
-            const result = await FileSystem.downloadAsync(downloadUrl, targetFile);
-            const downloadedInfo = await FileSystem.getInfoAsync(targetFile);
-
-            if (
-              result.status === 200 &&
-              downloadedInfo.exists &&
-              typeof (downloadedInfo as any).size === 'number' &&
-              (downloadedInfo as any).size >= this.MIN_AUDIO_BYTES
-            ) {
-              currentItem.status = 'READY';
-              currentItem.localUri = targetFile;
-            } else {
-              if (downloadedInfo.exists) {
-                await FileSystem.deleteAsync(targetFile, { idempotent: true });
-              }
-              currentItem.status = 'ERROR';
-            }
-          }
-        } catch (downloadErr) {
-          console.warn(`[AudioQueue] Background prefetch failed silently for ${currentItem.id}:`, downloadErr);
-          try {
-            await FileSystem.deleteAsync(targetFile, { idempotent: true });
-          } catch {}
-          currentItem.status = 'ERROR';
-        }
-
-        // Notify callbacks if user was waiting for this item
-        if (currentItem.status === 'READY' && currentItem.localUri) {
-          const callbacks = [...currentItem.onReadyCallbacks];
-          currentItem.onReadyCallbacks = [];
-          callbacks.forEach((cb) => {
-            try {
-              cb(currentItem.localUri!);
-            } catch (err) {
-              console.warn('Error in onReadyCallback:', err);
-            }
-          });
-        } else if (currentItem.status === 'ERROR') {
-          const errCallbacks = [...currentItem.onErrorCallbacks];
-          currentItem.onErrorCallbacks = [];
-          errCallbacks.forEach((cb) => {
-            try {
-              cb(new Error(`Failed to download audio for ${currentItem.id}`));
-            } catch (err) {
-              console.warn('Error in onErrorCallback:', err);
-            }
-          });
-        }
-
-        this.currentDownloadingId = null;
-        this.notify();
-
-        // Sequential delay:
-        // Priorities 1, 2, 3: 350ms delay
-        // Priority 4: 300ms delay
-        // Urgent user request (priority 0): no extra delay
-        const delayMs = currentItem.priority === 4 ? 300 : currentItem.priority > 0 ? 350 : 50;
+        // Relaxed sequential delay between background items to prevent Edge-TTS socket congestion:
+        // Priority 0 (urgent): 50ms
+        // Priorities 1-3: 400ms
+        // Priority 4 (vocabulary): 500ms
+        const delayMs = bestItem.priority === 0 ? 50 : bestItem.priority === 4 ? 500 : 400;
         await new Promise((r) => setTimeout(r, delayMs));
       }
     } finally {
@@ -343,8 +368,9 @@ class AudioQueueManagerClass {
    * Handles user tapping an audio play button:
    * 1. If currently playing this id -> toggle stop.
    * 2. If already READY -> plays instantly from local cache.
-   * 3. If LOADING or QUEUED -> elevates to top priority (0), shows spinner, plays as soon as bytes arrive.
-   * 4. If IDLE or ERROR -> enqueues at priority 0, starts immediate download & play without duplicates.
+   * 3. If LOADING or QUEUED -> elevates to top priority (0), shows spinner, triggers immediate download.
+   * 4. If IDLE or ERROR -> enqueues at priority 0, starts immediate download.
+   * 5. If local caching fails -> seamlessly falls back to direct live audio streaming (never shows error alert).
    */
   public async playOrEnqueue(
     id: string,
@@ -354,6 +380,8 @@ class AudioQueueManagerClass {
     callbacks?: AudioPlaybackCallbacks,
     baseUrl: string = API_BASE_URL
   ) {
+    const cleanText = this.normalizeText(text);
+
     // 1. Toggle off if already playing this id
     if (getCurrentPlayingId() === id) {
       await stopTts();
@@ -367,7 +395,7 @@ class AudioQueueManagerClass {
 
     // Check existing item in queue
     let item = this.queue.get(id);
-    const targetFile = this.getFilePath(text, lang, bilingual);
+    const targetFile = this.getFilePath(cleanText, lang, bilingual);
 
     // Fast check: is it already on disk and non-empty?
     if (!item || item.status !== 'READY') {
@@ -375,7 +403,7 @@ class AudioQueueManagerClass {
         const info = await FileSystem.getInfoAsync(targetFile);
         if (info.exists && typeof (info as any).size === 'number' && (info as any).size >= this.MIN_AUDIO_BYTES) {
           if (!item) {
-            this.upsertItem({ id, text, lang, bilingual, priority: 0 });
+            this.upsertItem({ id, text: cleanText, lang, bilingual, priority: 0 });
             item = this.queue.get(id);
           }
           if (item) {
@@ -415,7 +443,7 @@ class AudioQueueManagerClass {
     this.notify();
 
     if (!item) {
-      this.upsertItem({ id, text, lang, bilingual, priority: 0 });
+      this.upsertItem({ id, text: cleanText, lang, bilingual, priority: 0 });
       item = this.queue.get(id)!;
     } else {
       item.priority = 0; // Jump to the front of the queue
@@ -427,7 +455,6 @@ class AudioQueueManagerClass {
     // Register playback trigger when file is ready
     item.onReadyCallbacks.push(async (localUri: string) => {
       if (this.pendingUserPlayId !== id) {
-        // User clicked something else in the meantime
         return;
       }
       this.pendingUserPlayId = null;
@@ -449,16 +476,42 @@ class AudioQueueManagerClass {
       }, baseUrl);
     });
 
-    item.onErrorCallbacks.push((err) => {
+    // Fallback: If downloading to disk fails, stream live directly via playTts
+    item.onErrorCallbacks.push(async (err) => {
       if (this.pendingUserPlayId === id) {
-        this.pendingUserPlayId = null;
-        this.notify();
-        callbacks?.onError?.(err);
+        console.warn(`[AudioQueue] Local download failed for ${id}, falling back to live direct stream:`, err);
+        try {
+          await playTts(cleanText, lang, id, {
+            onStart: () => {
+              this.pendingUserPlayId = null;
+              this.notify();
+              callbacks?.onStart?.();
+            },
+            onFinish: () => {
+              this.pendingUserPlayId = null;
+              this.notify();
+              callbacks?.onFinish?.();
+            },
+            onError: (playErr) => {
+              this.pendingUserPlayId = null;
+              this.notify();
+              callbacks?.onError?.(playErr);
+            },
+          }, baseUrl);
+        } catch (streamingErr) {
+          this.pendingUserPlayId = null;
+          this.notify();
+          callbacks?.onError?.(streamingErr);
+        }
       }
     });
 
-    // Kick processing loop immediately
-    this.processQueue(baseUrl);
+    // If not currently downloading this item, trigger immediate download
+    if (this.currentDownloadingId !== id) {
+      this.downloadItem(item, baseUrl);
+    } else {
+      this.processQueue(baseUrl);
+    }
   }
 
   /**

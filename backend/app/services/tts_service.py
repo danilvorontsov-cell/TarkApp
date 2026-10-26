@@ -25,6 +25,10 @@ VOICE_FALLBACK_MAP = {
     "et-EE-AnuNeural": "et-EE-KertNeural",
 }
 
+# Глобальный асинхронный мьютекс для сериализации WebSocket-запросов к Microsoft Edge-TTS
+# Защищает от ошибки NoAudioReceived при одновременных параллельных запросах
+_tts_lock = asyncio.Lock()
+
 
 def normalize_text_for_estonian_tts(text: str) -> str:
     """
@@ -118,11 +122,12 @@ async def synthesize_segment(text: str, voice: str, delay: float = 0.0) -> bytes
         volume = "+20%" if "et-EE" in cand_voice else "+0%"
         for vol in ([volume, "+0%"] if volume != "+0%" else ["+0%"]):
             try:
-                communicate = edge_tts.Communicate(text=clean_text, voice=cand_voice, volume=vol)
-                chunks = []
-                async for chunk in communicate.stream():
-                    if chunk.get("type") == "audio" and chunk.get("data"):
-                        chunks.append(chunk["data"])
+                chunks: List[bytes] = []
+                async with _tts_lock:
+                    communicate = edge_tts.Communicate(text=clean_text, voice=cand_voice, volume=vol)
+                    async for chunk in communicate.stream():
+                        if chunk.get("type") == "audio" and chunk.get("data"):
+                            chunks.append(chunk["data"])
                 audio_bytes = b"".join(chunks)
                 if audio_bytes:
                     return audio_bytes
@@ -152,13 +157,11 @@ async def generate_speech_stream(
     if "et-EE" in voice:
         clean_text = normalize_text_for_estonian_tts(clean_text)
 
-    # Список кандидатов для озвучки (основной + резервный)
+    # Список кандидатов для озвучки (только в рамках того же языка!)
     fallback_voice = VOICE_FALLBACK_MAP.get(voice)
     candidates = [voice]
     if fallback_voice and fallback_voice != voice:
         candidates.append(fallback_voice)
-    if DEFAULT_VOICE not in candidates:
-        candidates.append(DEFAULT_VOICE)
 
     for cand_voice in candidates:
         volume = "+20%" if "et-EE" in cand_voice else "+0%"
@@ -167,11 +170,12 @@ async def generate_speech_stream(
         )
         for vol in ([volume, "+0%"] if volume != "+0%" else ["+0%"]):
             try:
-                communicate = edge_tts.Communicate(text=clean_text, voice=cand_voice, volume=vol)
                 chunks_buffer: List[bytes] = []
-                async for chunk in communicate.stream():
-                    if chunk.get("type") == "audio" and chunk.get("data"):
-                        chunks_buffer.append(chunk["data"])
+                async with _tts_lock:
+                    communicate = edge_tts.Communicate(text=clean_text, voice=cand_voice, volume=vol)
+                    async for chunk in communicate.stream():
+                        if chunk.get("type") == "audio" and chunk.get("data"):
+                            chunks_buffer.append(chunk["data"])
 
                 if chunks_buffer:
                     for chunk_data in chunks_buffer:
