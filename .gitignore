@@ -21,6 +21,12 @@ coverage/
 .coverage
 htmlcov/
 
+# Logs
+*.log
+logs/
+backend/logs/*.log
+!backend/logs/.gitkeep
+
 # Expo
 .expo/
 mobile/.expo/

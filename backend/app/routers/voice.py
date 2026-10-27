@@ -1,12 +1,11 @@
 import logging
 from fastapi import APIRouter, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response
 
 from app.services.tts_service import (
     DEFAULT_VOICE,
     VOICE_MAP,
-    generate_speech_stream,
-    generate_bilingual_speech_stream,
+    get_or_synthesize_audio,
 )
 
 logger = logging.getLogger(__name__)
@@ -16,18 +15,18 @@ router = APIRouter(prefix="/api/v1/voice", tags=["Voice TTS"])
 
 @router.get(
     "/tts",
-    summary="Потоковый синтез речи (Edge-TTS In-Memory с поддержкой двуязычной склейки)",
+    summary="Синтез речи (Edge-TTS с мгновенным кэшированием и поддержкой двуязычной склейки)",
     description=(
-        "Синтезирует аудио на лету без сохранения временных файлов на диск. "
+        "Синтезирует аудио на лету с кэшированием в памяти и дедупликацией in-flight запросов. "
         "Поддерживает русский язык (ru-RU-SvetlanaNeural с автоматическим fallback) для подсказок, "
         "эстонский язык (et-EE-KertNeural / et-EE-AnuNeural) для терминов учебника, "
         "а также двуязычную склейку (bilingual=true) для блоков с эстонскими цитатами в кавычках."
     ),
-    response_class=StreamingResponse,
+    response_class=Response,
     responses={
         200: {
             "content": {"audio/mpeg": {}},
-            "description": "Потоковый MP3-аудиопоток",
+            "description": "MP3-аудиопоток с точным Content-Length",
         }
     },
 )
@@ -47,20 +46,29 @@ async def text_to_speech(
 
     try:
         if is_bilingual:
-            audio_stream = generate_bilingual_speech_stream(clean_text)
+            audio_bytes = await get_or_synthesize_audio(clean_text, voice=DEFAULT_VOICE, bilingual=True)
         else:
             voice = VOICE_MAP.get(lang.lower(), DEFAULT_VOICE)
-            audio_stream = generate_speech_stream(clean_text, voice=voice)
+            audio_bytes = await get_or_synthesize_audio(clean_text, voice=voice, bilingual=False)
 
-        return StreamingResponse(
-            audio_stream,
+        if not audio_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Не удалось синтезировать аудиопоток.",
+            )
+
+        return Response(
+            content=audio_bytes,
             media_type="audio/mpeg",
             headers={
                 "Accept-Ranges": "bytes",
+                "Content-Length": str(len(audio_bytes)),
                 "Content-Disposition": 'inline; filename="tts.mp3"',
-                "Cache-Control": "public, max-age=3600",
+                "Cache-Control": "public, max-age=86400",
             },
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"TTS endpoint error: {e}", exc_info=True)
         raise HTTPException(

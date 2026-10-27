@@ -145,8 +145,10 @@ class PageAnalysisResponse(BaseModel):
 
 
 class AnalyzePageJsonRequest(BaseModel):
-    image_base64: str = Field(..., description="Изображение страницы учебника в формате base64")
+    image_base64: Optional[str] = Field(default=None, description="Изображение страницы учебника в формате base64 (одиночное)")
+    images_base64: Optional[List[str]] = Field(default=None, description="Список изображений нескольких страниц учебника/тетради в формате base64")
     mime_type: str = Field(default="image/jpeg", description="MIME тип изображения (image/jpeg, image/png)")
+    mime_types: Optional[List[str]] = Field(default=None, description="Список MIME типов изображений")
     grade: int = Field(default=3, ge=1, le=12)
     tier: Optional[AgeTier] = None
     interests: Optional[Union[List[str], str]] = Field(
@@ -155,3 +157,17 @@ class AnalyzePageJsonRequest(BaseModel):
     )
     theme_interest: Optional[str] = None  # Для обратной совместимости
     nickname: Optional[str] = "Друг"
+
+
+class MoreExamplesRequest(BaseModel):
+    task_title: str = Field(..., description="Тема урока")
+    theme_explanation: Optional[str] = Field(default="", description="Суть темы")
+    vocabulary: List[VocabularyItem] = Field(default_factory=list, description="Словарь урока")
+    current_template: str = Field(default="", description="Текущий речевой каркас")
+    grade: int = Field(default=3, ge=1, le=12)
+    tier: Optional[AgeTier] = None
+
+
+class MoreExamplesResponse(BaseModel):
+    templates: List[str] = Field(default_factory=list, description="Новые примеры с пропусками [слово]")
+

@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from google import genai
 from google.genai import types
@@ -11,6 +11,7 @@ from app.config import settings
 from app.models.page_analysis import (
     AgeTier,
     AGE_TIER_DEFAULT_INTERESTS,
+    MoreExamplesResponse,
     PageAnalysisResponse,
     UserProfile,
     VocabularyItem,
@@ -29,14 +30,15 @@ class GeminiTutorService:
         self.model = model or settings.GEMINI_MODEL
         self._client: Optional[genai.Client] = None
 
-        if self._is_valid_key(self.api_key):
+    @property
+    def client(self) -> Optional[genai.Client]:
+        if self._client is None and self._is_valid_key(self.api_key):
             try:
                 self._client = genai.Client(api_key=self.api_key)
                 logger.info(f"Initialized Google GenAI client with model: {self.model}")
             except Exception as e:
                 logger.warning(f"Failed to initialize GenAI client: {e}. Will use mock mode.")
-        else:
-            logger.info("No valid GEMINI_API_KEY provided. Running in pedagogical mock mode.")
+        return self._client
 
     @staticmethod
     def _is_valid_key(key: Optional[str]) -> bool:
@@ -49,22 +51,42 @@ class GeminiTutorService:
 
     async def analyze_page(
         self,
-        image_bytes: bytes,
-        mime_type: str,
-        profile: UserProfile,
+        image_bytes: Optional[bytes] = None,
+        mime_type: str = "image/jpeg",
+        profile: UserProfile = None,
+        images: Optional[List[Tuple[bytes, str]]] = None,
     ) -> PageAnalysisResponse:
-        """Analyzes a textbook/workbook page image using Gemini Vision and adapts it to the student."""
+        """Analyzes one or multiple textbook/workbook page images using Gemini Vision and adapts it to the student."""
         # Use mock mode if client is not configured
-        if not self._client:
+        if not self.client:
             logger.info("Using pedagogical fallback generator (mock mode)")
             return self._generate_mock_adaptation(profile)
 
+        img_list: List[Tuple[bytes, str]] = []
+        if images and len(images) > 0:
+            img_list = images
+        elif image_bytes:
+            img_list = [(image_bytes, mime_type)]
+        else:
+            raise ValueError("No images provided for analysis")
+
         user_prompt = build_tutor_user_prompt(profile)
+        if len(img_list) > 1:
+            user_prompt += (
+                f"\n\n[ВАЖНО ДЛЯ АНАЛИЗА: Ученик прикрепил {len(img_list)} страницы/фото учебных материалов "
+                f"(например, разворот учебника или теорию и тетрадь с упражнением). "
+                f"Объедини их общий контекст, найди связь между теорией и заданиями, "
+                f"выдели главную тему урока и разбери задания со всех страниц!]"
+            )
 
         try:
             # Call Google GenAI SDK with structured response schema
+            image_parts = [
+                types.Part.from_bytes(data=ib, mime_type=mt)
+                for ib, mt in img_list
+            ]
             contents = [
-                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                *image_parts,
                 user_prompt,
             ]
 
@@ -75,7 +97,7 @@ class GeminiTutorService:
                 temperature=0.2,
             )
 
-            response = self._client.models.generate_content(
+            response = self.client.models.generate_content(
                 model=self.model,
                 contents=contents,
                 config=config,
@@ -299,6 +321,120 @@ class GeminiTutorService:
                     "тезис, обоснование и вывод. Используйте формулировки из шаблона для аргументации."
                 )
             )
+
+    async def generate_more_examples(
+        self,
+        task_title: str,
+        theme_explanation: str,
+        vocabulary: list,
+        current_template: str,
+        grade: int = 3,
+        tier: Optional[AgeTier] = None,
+    ) -> list:
+        resolved_tier = tier or AgeTier.from_grade(grade)
+        if not self.client:
+            logger.info("Generating mock practice examples")
+            return self._generate_mock_more_examples(task_title, vocabulary, current_template, resolved_tier)
+
+        vocab_lines = "\n".join(f"- {getattr(v, 'est', str(v))}: {getattr(v, 'ru', '')}" for v in vocabulary)
+        prompt = f"""Ты — TarkApp, адаптационный тьютор эстонского языка для русскоязычных школьников в Эстонии.
+Ученик ({grade} класс, {resolved_tier.value}) выполняет интерактивное упражнение «Собери ответ на эстонском».
+Тема урока: {task_title}
+Словарь урока:
+{vocab_lines}
+Текущий пример: {current_template}
+
+Задача: сгенерируй 2-3 новых разнообразных эстонских примера предложений для закрепления материала и отработки лексики.
+ПРАВИЛА:
+1. Предложения должны быть на грамотном, естественном эстонском языке, соответствующем {grade} классу.
+2. Пропуски для интерактивной вставки слов ОБЯЗАТЕЛЬНО оформляй в квадратных скобках [слово].
+   Например: "See on [kass], ta on väga [pehme]." или "Looduses on [taimed] ja [loomad]."
+3. Слова в скобках [слово] должны быть точными словами, которые ученик вставит в пропуск (словарные термины урока или ключевые слова).
+4. Каждое предложение должно содержать от 1 до 3 пропусков [слово].
+5. Предложения не должны повторять текущий пример.
+
+Верни строго JSON объект структуры:
+{{
+  "templates": [
+    "первый новый пример с [пропусками]",
+    "второй новый пример с [пропусками]"
+  ]
+}}
+Никакого лишнего текста вне JSON."""
+
+        try:
+            config = types.GenerateContentConfig(
+                system_instruction=ESTONIAN_TUTOR_SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                response_schema=MoreExamplesResponse,
+                temperature=0.3,
+            )
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=[prompt],
+                config=config,
+            )
+            if hasattr(response, "parsed") and isinstance(response.parsed, MoreExamplesResponse):
+                return response.parsed.templates
+
+            raw_text = response.text or ""
+            cleaned = raw_text.strip()
+            if cleaned.startswith("```"):
+                cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+                cleaned = re.sub(r"\s*```$", "", cleaned)
+                cleaned = cleaned.strip()
+            data = json.loads(cleaned)
+            return data.get("templates", [])
+        except Exception as e:
+            logger.warning(f"Error calling Gemini for more examples: {e}. Using fallback.")
+            return self._generate_mock_more_examples(task_title, vocabulary, current_template, resolved_tier)
+
+    def _generate_mock_more_examples(
+        self,
+        task_title: str,
+        vocabulary: list,
+        current_template: str,
+        tier: AgeTier,
+    ) -> list:
+        words = [getattr(v, 'est', str(v)).strip() for v in vocabulary if getattr(v, 'est', str(v)).strip()]
+        if not words:
+            words = ["õige", "vastus", "sõna"]
+
+        w1 = words[0]
+        w2 = words[1] if len(words) > 1 else words[0]
+        w3 = words[2] if len(words) > 2 else words[-1]
+
+        title_lower = task_title.lower()
+        if "liit" in title_lower or "arv" in title_lower or "summa" in title_lower or "math" in title_lower:
+            return [
+                f"Liidame kokku [{w1}] ja [{w2}], et leida õige lahendus.",
+                f"Kui tehe on valmis, siis [{w1}] on võrdne vastusega.",
+                f"Tunnis arvutame hoolega: vastus on [{w3}].",
+            ]
+        elif "foto" in title_lower or "taim" in title_lower or "loodus" in title_lower or "bio" in title_lower:
+            return [
+                f"Looduses vajab taim eluks [{w1}] ja päikest.",
+                f"Uurime lähemalt: protsessi käigus tekib [{w2}].",
+                f"Rohelises lehes toimub oluline muutus, kus osaleb [{w3}].",
+            ]
+        elif tier == AgeTier.PRIMARY:
+            return [
+                f"Mina tean, et see on [{w1}].",
+                f"Meie koolitunnis uurime sõna [{w2}].",
+                f"See on väga tore ja [{w3}].",
+            ]
+        elif tier == AgeTier.MIDDLE:
+            return [
+                f"Tunni teema selgitab, kuidas toimib [{w1}].",
+                f"Ülesande lahendamiseks on vaja tunda mõistet [{w2}].",
+                f"Õige vastuse aluseks on [{w3}].",
+            ]
+        else:
+            return [
+                f"Tuginedes analüüsile, saab esile tuua mõiste [{w1}].",
+                f"Uurimistöö käigus kinnitati, et oluline tegur on [{w2}].",
+                f"Järeldusena võib väita, et süsteemi aluseks on [{w3}].",
+            ]
 
 
 # Singleton instance

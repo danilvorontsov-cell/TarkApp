@@ -7,6 +7,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { VocabularyItem } from '../types';
+import { fetchMoreExamples } from '../services/api';
+import { Theme } from '../theme/colors';
 
 interface PhraseBuilderProps {
   template: string;
@@ -15,6 +17,10 @@ interface PhraseBuilderProps {
   onPlayAudio: (text: string, lang: 'ru' | 'et', id: string) => void;
   playingId: string | null;
   loadingAudioId?: string | null;
+  taskTitle?: string;
+  themeExplanation?: string;
+  grade?: number;
+  tier?: string;
 }
 
 interface SlotDef {
@@ -83,24 +89,40 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
   onPlayAudio,
   playingId,
   loadingAudioId,
+  taskTitle,
+  themeExplanation,
+  grade,
+  tier,
 }) => {
+  const [examples, setExamples] = useState<string[]>([template]);
+  const [currentIdx, setCurrentIdx] = useState<number>(0);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+
+  // Sync if parent template changes (e.g. user selected another lesson)
+  useEffect(() => {
+    setExamples([template]);
+    setCurrentIdx(0);
+  }, [template]);
+
+  const activeTemplate = examples[currentIdx] || template;
+
   const [selectedSlotId, setSelectedSlotId] = useState<number | null>(null);
   const [slotsFilled, setSlotsFilled] = useState<Record<number, string>>({});
   const [bankWords, setBankWords] = useState<BankWord[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Parse template into sentences and tokens
+  // Parse activeTemplate into sentences and tokens
   const { sentences, allSlots } = useMemo(() => {
     let globalSlotCounter = 0;
     const slotsList: SlotDef[] = [];
     const sentenceList: SentenceDef[] = [];
 
     // Split template into distinct sentences by . ! ? or newline
-    const rawSentences = template
+    const rawSentences = activeTemplate
       .split(/(?<=[.!?])\s+|\n+/)
       .filter((s) => s.trim().length > 0);
 
-    const hasBrackets = /\[(.*?)\]/.test(template);
+    const hasBrackets = /\[(.*?)\]/.test(activeTemplate);
 
     rawSentences.forEach((rawSent, sIdx) => {
       const tokens: Token[] = [];
@@ -142,7 +164,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
     });
 
     return { sentences: sentenceList, allSlots: slotsList };
-  }, [template, vocabulary]);
+  }, [activeTemplate, vocabulary]);
 
   // Initialize or reset slots and bank words
   useEffect(() => {
@@ -181,7 +203,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
     // 3. Shuffle the word bank so words aren't in trivial slot order
     const shuffled = [...bank].sort(() => Math.random() - 0.5);
     setBankWords(shuffled);
-  }, [template, vocabulary, allSlots]);
+  }, [activeTemplate, vocabulary, allSlots]);
 
   // If no slots exist, render plain template
   if (allSlots.length === 0) {
@@ -307,6 +329,52 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
     setErrorMessage(null);
   };
 
+  const generateLocalFallbackExample = () => {
+    const words = vocabulary.map((v) => v.est.trim()).filter(Boolean);
+    const w1 = words[0] || 'õige';
+    const w2 = words[1] || words[0] || 'sõna';
+    const w3 = words[2] || words[0] || 'vastus';
+    const fallbackList = [
+      `Mina tean, et see on [${w1}].`,
+      `Koolitunnis uurime sõna [${w2}].`,
+      `Meie ülesande vastus on [${w1}].`,
+      `Õpetaja räägib, et [${w2}] ja [${w3}] on tähtsad.`,
+    ];
+    const candidate = fallbackList.find((f) => !examples.includes(f)) || fallbackList[examples.length % fallbackList.length];
+    setExamples((prev) => [...prev, candidate]);
+    setCurrentIdx(examples.length);
+  };
+
+  const handleFetchMoreExamples = async () => {
+    if (isLoadingMore) return;
+    setIsLoadingMore(true);
+    setErrorMessage(null);
+
+    try {
+      const newTemplates = await fetchMoreExamples({
+        task_title: taskTitle || 'Koolitöö',
+        theme_explanation: themeExplanation || '',
+        vocabulary,
+        current_template: activeTemplate,
+        grade: grade || (isJunior ? 3 : 7),
+        tier: tier || (isJunior ? 'primary' : 'middle'),
+      });
+
+      if (newTemplates && newTemplates.length > 0) {
+        const fresh = newTemplates.filter((t) => !examples.includes(t));
+        const toAdd = fresh.length > 0 ? fresh : newTemplates;
+        setExamples((prev) => [...prev, ...toAdd]);
+        setCurrentIdx(examples.length);
+      } else {
+        generateLocalFallbackExample();
+      }
+    } catch (e) {
+      generateLocalFallbackExample();
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
   const isComplete =
     allSlots.length > 0 && allSlots.every((s) => !!slotsFilled[s.slotId]);
 
@@ -347,7 +415,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
       {/* Header */}
       <View style={styles.headerRow}>
         <Text style={[styles.title, isJunior && styles.titleJunior]}>
-          ✏️ Собери ответ на эстонском:
+          ✏️ Собери ответ на эстонском{examples.length > 1 ? ` (${currentIdx + 1}/${examples.length})` : ''}:
         </Text>
         {Object.keys(slotsFilled).length > 0 && (
           <TouchableOpacity style={styles.resetBtn} onPress={handleResetSlots}>
@@ -481,96 +549,151 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
           </TouchableOpacity>
         </View>
       )}
+
+      {/* More Examples Section */}
+      <View style={styles.moreExamplesContainer}>
+        <TouchableOpacity
+          style={[
+            styles.moreExamplesBtn,
+            isJunior ? styles.moreExamplesBtnJunior : styles.moreExamplesBtnSenior,
+            isLoadingMore && styles.moreExamplesBtnDisabled,
+          ]}
+          onPress={handleFetchMoreExamples}
+          disabled={isLoadingMore}
+          activeOpacity={0.8}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+            {isLoadingMore ? (
+              <>
+                <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.moreExamplesBtnText}>Генерируем новый пример...</Text>
+              </>
+            ) : (
+              <Text style={styles.moreExamplesBtnText}>
+                ✨ Еще примеры {examples.length > 1 ? `(${currentIdx + 1}/${examples.length})` : 'для тренировки'}
+              </Text>
+            )}
+          </View>
+        </TouchableOpacity>
+
+        {/* Example Switcher if more than 1 example */}
+        {examples.length > 1 && (
+          <View style={styles.examplePaginationRow}>
+            {examples.map((_, idx) => (
+              <TouchableOpacity
+                key={`ex_dot_${idx}`}
+                style={[
+                  styles.exampleDot,
+                  currentIdx === idx && (isJunior ? styles.exampleDotActiveJunior : styles.exampleDotActiveSenior),
+                ]}
+                onPress={() => setCurrentIdx(idx)}
+              >
+                <Text
+                  style={[
+                    styles.exampleDotText,
+                    currentIdx === idx && styles.exampleDotTextActive,
+                  ]}
+                >
+                  {idx + 1}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    borderRadius: 14,
-    padding: 14,
-    marginTop: 12,
-    borderWidth: 1.5,
+    backgroundColor: Theme.colors.surface,
+    borderColor: Theme.colors.border,
+    borderWidth: 1,
+    borderRadius: Theme.radius.card,
+    padding: 16,
+    marginTop: 14,
+    ...Theme.shadow.card,
   },
   containerJunior: {
-    backgroundColor: '#FFFBEB',
-    borderColor: '#FDE68A',
-    borderRadius: 18,
+    backgroundColor: Theme.colors.surface,
+    borderColor: Theme.colors.border,
+    borderRadius: Theme.radius.card,
   },
   containerSenior: {
-    backgroundColor: '#F8FAFC',
-    borderColor: '#E2E8F0',
-    borderRadius: 12,
+    backgroundColor: Theme.colors.surface,
+    borderColor: Theme.colors.border,
+    borderRadius: Theme.radius.card,
   },
   containerComplete: {
-    borderColor: '#10B981',
-    backgroundColor: '#ECFDF5',
+    borderColor: Theme.colors.slotSuccessBorder,
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   title: {
-    fontSize: 13.5,
-    fontWeight: '700',
-    color: '#92400E',
+    fontSize: 16,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
   },
   titleJunior: {
-    fontSize: 15,
-    color: '#78350F',
+    fontSize: 17,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
   },
   resetBtn: {
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+    backgroundColor: Theme.colors.surfaceAlt,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: Theme.radius.badge,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
   },
   resetBtnText: {
-    fontSize: 11.5,
-    color: '#92400E',
+    fontSize: 12,
+    color: Theme.colors.textSecondary,
     fontWeight: '600',
   },
   subtitleHint: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginBottom: 10,
+    fontSize: 13,
+    color: Theme.colors.textSecondary,
+    marginBottom: 12,
+    lineHeight: 18,
   },
   plainText: {
-    fontSize: 14,
+    fontSize: 14.5,
     fontWeight: '600',
-    color: '#78350F',
-    lineHeight: 20,
+    color: Theme.colors.textPrimary,
+    lineHeight: 22,
   },
   plainTextJunior: {
-    fontSize: 15.5,
+    fontSize: 16,
   },
   audioBtn: {
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
+    backgroundColor: Theme.colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: Theme.radius.chip,
   },
   audioBtnActive: {
-    backgroundColor: '#FEE2E2',
-    borderColor: '#FCA5A5',
+    backgroundColor: Theme.colors.primaryPressed,
   },
   audioBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#92400E',
+    color: Theme.colors.onPrimaryText,
   },
   // Sentences Layout - fixed line per sentence to avoid jumping
   sentencesCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: Theme.colors.surfaceAlt,
     borderRadius: 12,
     padding: 12,
-    marginBottom: 10,
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#F3F4F6',
+    borderColor: Theme.colors.border,
   },
   sentenceLineBlock: {
     marginBottom: 8,
@@ -581,167 +704,231 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   sentenceText: {
-    fontSize: 14.5,
-    color: '#1F2937',
-    lineHeight: 32,
+    fontSize: 15,
+    color: Theme.colors.textPrimary,
+    lineHeight: 34,
     marginRight: 4,
   },
   sentenceTextJunior: {
-    fontSize: 16,
-    lineHeight: 34,
+    fontSize: 16.5,
+    lineHeight: 36,
     fontWeight: '500',
   },
   // Stable slot box with min dimensions
   slotBox: {
-    minWidth: 86,
-    minHeight: 32,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+    minWidth: 88,
+    minHeight: 34,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
     borderRadius: 8,
     marginHorizontal: 3,
     marginVertical: 2,
-    borderWidth: 1.5,
     justifyContent: 'center',
     alignItems: 'center',
   },
   slotBoxJunior: {
-    minWidth: 92,
-    minHeight: 36,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    minWidth: 96,
+    minHeight: 38,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
     borderRadius: 10,
   },
   slotEmpty: {
-    backgroundColor: '#F3F4F6',
-    borderColor: '#9CA3AF',
+    backgroundColor: Theme.colors.slotEmptyBg,
+    borderColor: Theme.colors.slotEmptyBorder,
     borderStyle: 'dashed',
+    borderWidth: 1.5,
   },
   slotSelected: {
-    borderColor: '#3B82F6',
-    backgroundColor: '#EFF6FF',
+    borderColor: Theme.colors.voiceButton,
+    backgroundColor: 'rgba(99, 102, 241, 0.08)',
     borderStyle: 'solid',
+    borderWidth: 1.5,
   },
   slotFilled: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#3B82F6',
+    backgroundColor: Theme.colors.slotSuccessBg,
+    borderColor: Theme.colors.slotSuccessBorder,
     borderStyle: 'solid',
+    borderWidth: 1.5,
   },
   slotComplete: {
-    backgroundColor: '#D1FAE5',
-    borderColor: '#10B981',
+    backgroundColor: Theme.colors.slotSuccessBg,
+    borderColor: Theme.colors.slotSuccessBorder,
+    borderStyle: 'solid',
+    borderWidth: 1.5,
   },
   slotText: {
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: '700',
   },
   slotTextJunior: {
-    fontSize: 14.5,
+    fontSize: 15,
   },
   slotTextEmpty: {
-    color: '#6B7280',
+    color: Theme.colors.textSecondary,
     fontStyle: 'italic',
   },
   slotTextFilled: {
-    color: '#1D4ED8',
+    color: Theme.colors.slotSuccessText,
   },
   // Error Banner
   errorBanner: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: Theme.colors.slotErrorBg,
     borderWidth: 1,
-    borderColor: '#FCA5A5',
+    borderColor: '#FECACA',
     borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 10,
   },
   errorBannerText: {
     fontSize: 12.5,
-    color: '#B91C1C',
+    color: Theme.colors.slotErrorText,
     fontWeight: '600',
     textAlign: 'center',
   },
   // Word Bank
   bankSection: {
-    marginTop: 2,
+    marginTop: 4,
   },
   bankLabel: {
-    fontSize: 12,
+    fontSize: 12.5,
     fontWeight: '700',
-    color: '#4B5563',
-    marginBottom: 6,
+    color: Theme.colors.textPrimary,
+    marginBottom: 8,
   },
   bankEmptyText: {
-    fontSize: 12,
-    color: '#059669',
+    fontSize: 13,
+    color: Theme.colors.slotSuccessText,
     fontStyle: 'italic',
     paddingVertical: 4,
   },
   chipsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 6,
+    gap: 8,
   },
   chip: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#3B82F6',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
+    backgroundColor: Theme.colors.surface,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: Theme.radius.chip,
+    ...Theme.shadow.chip,
   },
   chipJunior: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#059669',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 14,
+    backgroundColor: Theme.colors.surface,
+    borderColor: Theme.colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: Theme.radius.chip,
+    ...Theme.shadow.chip,
   },
   chipText: {
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: '700',
-    color: '#1D4ED8',
+    color: Theme.colors.textPrimary,
   },
   chipTextJunior: {
-    fontSize: 14.5,
-    color: '#065F46',
+    fontSize: 15,
+    color: Theme.colors.textPrimary,
   },
   // Complete Button
   completeActionBox: {
-    marginTop: 12,
+    marginTop: 14,
     alignItems: 'center',
   },
   listenCompletedBtn: {
-    backgroundColor: '#059669',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 14,
+    backgroundColor: Theme.colors.voiceButton,
+    paddingVertical: 13,
+    paddingHorizontal: 22,
+    borderRadius: Theme.radius.button,
     alignItems: 'center',
     width: '100%',
-    shadowColor: '#059669',
-    shadowOpacity: 0.35,
-    shadowRadius: 6,
-    elevation: 3,
+    ...Theme.shadow.card,
   },
   listenCompletedBtnJunior: {
     paddingVertical: 14,
-    borderRadius: 18,
+    borderRadius: Theme.radius.button,
   },
   listenCompletedBtnActive: {
-    backgroundColor: '#DC2626',
-    shadowColor: '#DC2626',
+    backgroundColor: Theme.colors.voiceButtonPressed,
   },
   listenCompletedBtnText: {
     color: '#FFFFFF',
     fontSize: 15,
-    fontWeight: 'bold',
+    fontWeight: '700',
   },
   listenBtnContent: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // More Examples Button & Switcher
+  moreExamplesContainer: {
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: Theme.colors.border,
+    alignItems: 'center',
+    width: '100%',
+  },
+  moreExamplesBtn: {
+    backgroundColor: Theme.colors.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: Theme.radius.button,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Theme.shadow.card,
+  },
+  moreExamplesBtnJunior: {
+    backgroundColor: Theme.colors.primary,
+  },
+  moreExamplesBtnSenior: {
+    backgroundColor: Theme.colors.primary,
+  },
+  moreExamplesBtnDisabled: {
+    opacity: 0.65,
+  },
+  moreExamplesBtnText: {
+    color: Theme.colors.onPrimaryText,
+    fontSize: 14.5,
+    fontWeight: '700',
+  },
+  examplePaginationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+    gap: 8,
+  },
+  exampleDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  exampleDotActiveJunior: {
+    backgroundColor: Theme.colors.primary,
+    borderColor: Theme.colors.primary,
+  },
+  exampleDotActiveSenior: {
+    backgroundColor: Theme.colors.primary,
+    borderColor: Theme.colors.primary,
+  },
+  exampleDotText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Theme.colors.textSecondary,
+  },
+  exampleDotTextActive: {
+    color: Theme.colors.onPrimaryText,
   },
 });

@@ -32,6 +32,7 @@ export interface SavedLessonCard {
   task_type?: 'Koolitöö' | 'Loodusõpetus' | 'Maailma Avastaja' | string;
   analysis: PageAnalysisResponse;
   imageUri?: string;
+  imageUris?: string[];
 }
 
 export function getTierFromGrade(grade: number): AgeTier {

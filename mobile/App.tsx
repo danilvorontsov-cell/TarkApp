@@ -10,6 +10,7 @@ import {
   Alert,
   Image,
   Platform,
+  PanResponder,
   StatusBar as RNStatusBar,
 } from 'react-native';
 import {
@@ -30,10 +31,25 @@ import {
 import { StorageService } from './src/services/storage';
 import { playTts, stopTts } from './src/services/audioPlayer';
 import { AudioQueueManager } from './src/services/audioQueueManager';
-import { API_BASE_URL, analyzePage } from './src/services/api';
+import {
+  API_BASE_URL,
+  analyzePage,
+  analyzePageJson,
+  analyzePagesJson,
+  ImagePayload,
+  formatFriendlyErrorMessage,
+} from './src/services/api';
 import { PhraseBuilder } from './src/components/PhraseBuilder';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
+import { initSentry } from './src/services/sentry';
+import { Theme } from './src/theme/colors';
+import { DrawerMenu, DrawerTabType } from './src/components/DrawerMenu';
+import { ComingSoonCard } from './src/components/ComingSoonCard';
 
-type TabType = 'study' | 'dictionary' | 'settings';
+// Initialize Sentry stub/client once at entry
+initSentry();
+
+type TabType = 'study' | 'dictionary' | 'tests' | 'reading' | 'settings';
 type Tab2Mode = 'vocab' | 'history';
 
 interface SessionLesson {
@@ -41,7 +57,14 @@ interface SessionLesson {
   title: string;
   analysis: PageAnalysisResponse;
   imageUri: string | null;
+  imageUris?: string[];
   timestamp: number;
+}
+
+interface CapturedPageItem {
+  uri: string;
+  base64?: string;
+  mimeType?: string;
 }
 
 function MainApp() {
@@ -59,6 +82,7 @@ function MainApp() {
   const [interestsText, setInterestsText] = useState('Minecraft, LEGO, Roblox');
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
+  const [capturedImages, setCapturedImages] = useState<CapturedPageItem[]>([]);
   const [capturedImageUri, setCapturedImageUri] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
@@ -68,6 +92,24 @@ function MainApp() {
   const [history, setHistory] = useState<SavedLessonCard[]>([]);
   const [savedVocab, setSavedVocab] = useState<VocabularyItem[]>([]);
   const [expandedWord, setExpandedWord] = useState<string | null>(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
+
+  const edgePanResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return (
+          gestureState.x0 < 40 &&
+          gestureState.dx > 18 &&
+          Math.abs(gestureState.dy) < 30
+        );
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dx > 35) {
+          setIsDrawerOpen(true);
+        }
+      },
+    })
+  ).current;
 
   const scrollViewRef = useRef<React.ElementRef<typeof ScrollView>>(null);
   const isJunior = profile.tier === 'primary';
@@ -92,6 +134,7 @@ function MainApp() {
           title: c.task_title,
           analysis: c.analysis,
           imageUri: c.imageUri || null,
+          imageUris: c.imageUris,
           timestamp: c.timestamp,
         }));
 
@@ -100,6 +143,12 @@ function MainApp() {
         // Load the latest one into current view
         setAnalysis(todayItems[0].analysis);
         setCapturedImageUri(todayItems[0].imageUri);
+        const restoredImages = (todayItems[0].imageUris && todayItems[0].imageUris.length > 0)
+          ? todayItems[0].imageUris.map((u) => ({ uri: u, mimeType: 'image/jpeg' }))
+          : todayItems[0].imageUri
+          ? [{ uri: todayItems[0].imageUri, mimeType: 'image/jpeg' }]
+          : [];
+        setCapturedImages(restoredImages);
         setIsSaved(true);
         // Start background prefetch for latest today lesson
         AudioQueueManager.prefetchLessonAudio(todayItems[0].analysis, API_BASE_URL);
@@ -150,7 +199,7 @@ function MainApp() {
         API_BASE_URL
       );
     } catch (err: any) {
-      Alert.alert('Аудио', `Ошибка: ${err?.message || 'Сбой сети'}`);
+      Alert.alert('Аудио', formatFriendlyErrorMessage(err));
     }
   };
 
@@ -199,7 +248,7 @@ function MainApp() {
   };
 
   // Helper to persist to history and update session lessons list
-  const recordNewLesson = async (data: PageAnalysisResponse, imageUri: string | null) => {
+  const recordNewLesson = async (data: PageAnalysisResponse, imagesList: CapturedPageItem[]) => {
     const now = new Date();
     const months = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
     const dateFormatted = `${now.getDate()} ${months[now.getMonth()]}, ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -212,6 +261,9 @@ function MainApp() {
       taskType = 'Loodusõpetus';
     }
 
+    const firstUri = imagesList.length > 0 ? imagesList[0].uri : undefined;
+    const allUris = imagesList.map((img) => img.uri);
+
     const newId = `card_${Date.now()}`;
     const card: SavedLessonCard = {
       id: newId,
@@ -222,24 +274,21 @@ function MainApp() {
       task_title: data.task_title,
       task_type: taskType,
       analysis: data,
-      imageUri: imageUri || undefined,
+      imageUri: firstUri,
+      imageUris: allUris,
     };
 
-    // Auto-save to AsyncStorage
-    await StorageService.saveLessonToHistory(card);
-    setIsSaved(true);
-
-    const updatedHistory = await StorageService.getHistory();
-    setHistory(updatedHistory);
-    const updatedVocab = await StorageService.getSavedVocabulary();
-    setSavedVocab(updatedVocab);
+    // Do not auto-save to history to prevent cluttering; user manually clicks "Сохранить в историю"
+    const alreadySaved = await StorageService.isLessonSaved(data.task_title);
+    setIsSaved(alreadySaved);
 
     // Update today's session lessons list
     const newSessionItem: SessionLesson = {
       id: newId,
       title: data.task_title,
       analysis: data,
-      imageUri,
+      imageUri: firstUri || null,
+      imageUris: allUris,
       timestamp: Date.now(),
     };
 
@@ -255,46 +304,29 @@ function MainApp() {
     scrollToTaskTop();
   };
 
-  const processImageAnalysis = async (asset: ImagePicker.ImagePickerAsset) => {
+  const processImagesAnalysis = async (imagesList: CapturedPageItem[]) => {
+    if (!imagesList || imagesList.length === 0) return;
     setLoading(true);
-    setLoadingStep('Разбираем материал...');
+    setLoadingStep(
+      imagesList.length > 1
+        ? `Анализируем ${imagesList.length} стр. материала...`
+        : 'Разбираем материал...'
+    );
     try {
-      let data: PageAnalysisResponse;
+      const payload: ImagePayload[] = imagesList.map((img) => ({
+        base64: img.base64,
+        uri: img.uri,
+        mimeType: img.mimeType || 'image/jpeg',
+      }));
 
-      if (asset.base64) {
-        const res = await fetch(`${API_BASE_URL}/api/v1/analyze-page/json`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            image_base64: asset.base64,
-            mime_type: asset.mimeType || 'image/jpeg',
-            grade: profile.grade,
-            tier: profile.tier,
-            interests: profile.interests,
-            nickname: profile.nickname,
-          }),
-        });
-
-        if (!res.ok) {
-          let errorMsg = `Статус ${res.status}`;
-          try {
-            const errData = await res.json();
-            if (errData.detail) errorMsg = errData.detail;
-          } catch {}
-          throw new Error(errorMsg);
-        }
-
-        data = await res.json();
-      } else {
-        data = await analyzePage(asset.uri, profile, API_BASE_URL);
-      }
+      const data = await analyzePagesJson(payload, profile, API_BASE_URL);
 
       setAnalysis(data);
-      await recordNewLesson(data, asset.uri);
+      await recordNewLesson(data, imagesList);
     } catch (err: any) {
       Alert.alert(
-        'Ошибка анализа страницы',
-        `Не удалось разобрать изображение: ${err?.message || 'Ошибка сети'}\n\nПроверьте, что сервер запущен по адресу:\n${API_BASE_URL}`
+        'Ошибка анализа страниц',
+        formatFriendlyErrorMessage(err)
       );
     } finally {
       setLoading(false);
@@ -302,7 +334,7 @@ function MainApp() {
     }
   };
 
-  const handleTakePhoto = async () => {
+  const handleTakePhoto = async (mode: 'replace' | 'append' = 'replace') => {
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
@@ -315,7 +347,7 @@ function MainApp() {
 
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
-        allowsEditing: true,
+        allowsEditing: false,
         quality: 0.8,
         base64: true,
       });
@@ -325,14 +357,22 @@ function MainApp() {
       }
 
       const asset = result.assets[0];
-      setCapturedImageUri(asset.uri);
-      await processImageAnalysis(asset);
+      const newItem: CapturedPageItem = {
+        uri: asset.uri,
+        base64: asset.base64 || undefined,
+        mimeType: asset.mimeType || 'image/jpeg',
+      };
+
+      const nextImages = mode === 'append' ? [...capturedImages, newItem] : [newItem];
+      setCapturedImages(nextImages);
+      setCapturedImageUri(nextImages[0]?.uri || null);
+      await processImagesAnalysis(nextImages);
     } catch (err: any) {
       Alert.alert('Камера', `Не удалось запустить камеру: ${err?.message || 'Неизвестная ошибка'}`);
     }
   };
 
-  const handlePickImage = async () => {
+  const handlePickImage = async (mode: 'replace' | 'append' = 'replace') => {
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
@@ -345,7 +385,8 @@ function MainApp() {
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
-        allowsEditing: true,
+        allowsEditing: false,
+        allowsMultipleSelection: true,
         quality: 0.8,
         base64: true,
       });
@@ -354,50 +395,71 @@ function MainApp() {
         return;
       }
 
-      const asset = result.assets[0];
-      setCapturedImageUri(asset.uri);
-      await processImageAnalysis(asset);
+      const newItems: CapturedPageItem[] = result.assets.map((asset) => ({
+        uri: asset.uri,
+        base64: asset.base64 || undefined,
+        mimeType: asset.mimeType || 'image/jpeg',
+      }));
+
+      const nextImages = mode === 'append' ? [...capturedImages, ...newItems] : newItems;
+      setCapturedImages(nextImages);
+      setCapturedImageUri(nextImages[0]?.uri || null);
+      await processImagesAnalysis(nextImages);
     } catch (err: any) {
       Alert.alert('Галерея', `Не удалось открыть галерею: ${err?.message || 'Неизвестная ошибка'}`);
     }
   };
 
-  const handleRunDemoAnalysis = async () => {
-    setLoading(true);
-    setLoadingStep('Генерируем демо-разбор...');
-    try {
-      const dummyBase64 =
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const handleAddPagePrompt = () => {
+    Alert.alert(
+      'Добавить страницу к уроку',
+      'Если задание продолжается на другой странице или в тетради, добавьте фото для связного контекста:',
+      [
+        {
+          text: '📷 Снять камерой',
+          onPress: () => handleTakePhoto('append'),
+        },
+        {
+          text: '🖼️ Выбрать из галереи',
+          onPress: () => handlePickImage('append'),
+        },
+        {
+          text: 'Отмена',
+          style: 'cancel',
+        },
+      ]
+    );
+  };
 
-      const res = await fetch(`${API_BASE_URL}/api/v1/analyze-page/json`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image_base64: dummyBase64,
-          mime_type: 'image/png',
-          grade: profile.grade,
-          tier: profile.tier,
-          interests: profile.interests,
-          nickname: profile.nickname,
-        }),
-      });
+  const handleRemovePage = async (index: number) => {
+    if (capturedImages.length <= 1) return;
+    const nextImages = capturedImages.filter((_, idx) => idx !== index);
+    setCapturedImages(nextImages);
+    setCapturedImageUri(nextImages[0]?.uri || null);
+    await processImagesAnalysis(nextImages);
+  };
 
-      if (!res.ok) {
-        throw new Error(`Ошибка сервера: ${res.status}`);
-      }
-
-      const data: PageAnalysisResponse = await res.json();
-      setAnalysis(data);
-      await recordNewLesson(data, null);
-    } catch (err: any) {
-      Alert.alert(
-        'TarkApp',
-        `Подключение к бэкенду (${API_BASE_URL}): ${err.message || 'Ошибка сети'}. Убедитесь, что бэкенд запущен.`
-      );
-    } finally {
-      setLoading(false);
-      setLoadingStep('');
-    }
+  const handleRetakeAll = () => {
+    Alert.alert(
+      'Снять заново',
+      'Вы хотите очистить все фото и сфотографировать материал заново?',
+      [
+        {
+          text: 'Да, переснять',
+          style: 'destructive',
+          onPress: () => {
+            setCapturedImages([]);
+            setCapturedImageUri(null);
+            setAnalysis(null);
+            handleTakePhoto('replace');
+          },
+        },
+        {
+          text: 'Отмена',
+          style: 'cancel',
+        },
+      ]
+    );
   };
 
   const handleSaveCard = async () => {
@@ -424,7 +486,8 @@ function MainApp() {
         task_title: analysis.task_title,
         task_type: taskType,
         analysis,
-        imageUri: capturedImageUri || undefined,
+        imageUri: capturedImages[0]?.uri || undefined,
+        imageUris: capturedImages.map((img) => img.uri),
       };
 
       await StorageService.saveLessonToHistory(card);
@@ -444,8 +507,14 @@ function MainApp() {
 
   const handleSelectSessionLesson = (item: SessionLesson) => {
     setAnalysis(item.analysis);
-    setCapturedImageUri(item.imageUri);
-    setIsSaved(true);
+    const restored = (item.imageUris && item.imageUris.length > 0)
+      ? item.imageUris.map((u) => ({ uri: u, mimeType: 'image/jpeg' }))
+      : item.imageUri
+      ? [{ uri: item.imageUri, mimeType: 'image/jpeg' }]
+      : [];
+    setCapturedImages(restored);
+    setCapturedImageUri(restored[0]?.uri || null);
+    StorageService.isLessonSaved(item.analysis.task_title).then(setIsSaved);
     AudioQueueManager.clearQueue();
     AudioQueueManager.prefetchLessonAudio(item.analysis, API_BASE_URL);
     scrollToTaskTop();
@@ -453,7 +522,13 @@ function MainApp() {
 
   const handleOpenHistoryItem = (item: SavedLessonCard) => {
     setAnalysis(item.analysis);
-    setCapturedImageUri(item.imageUri || null);
+    const restored = (item.imageUris && item.imageUris.length > 0)
+      ? item.imageUris.map((u) => ({ uri: u, mimeType: 'image/jpeg' }))
+      : item.imageUri
+      ? [{ uri: item.imageUri, mimeType: 'image/jpeg' }]
+      : [];
+    setCapturedImages(restored);
+    setCapturedImageUri(restored[0]?.uri || null);
     setIsSaved(true);
     setCurrentTab('study');
     AudioQueueManager.clearQueue();
@@ -628,20 +703,68 @@ function MainApp() {
         </View>
       )}
 
-      {/* Photo Preview Thumbnail if active task has an image */}
-      {capturedImageUri && (
+      {/* Photo Preview Gallery if active task has images */}
+      {capturedImages.length > 0 && (
         <View style={[styles.previewCard, isJunior && styles.previewCardJunior]}>
-          <Image source={{ uri: capturedImageUri }} style={styles.previewImage} resizeMode="cover" />
-          <View style={styles.previewContent}>
-            <Text style={styles.previewLabel}>📸 Снимок текущего материала</Text>
+          <View style={styles.previewHeaderRow}>
+            <View style={styles.previewHeaderTitleBox}>
+              <Text style={styles.previewLabel}>
+                📸 Материалы урока ({capturedImages.length} {capturedImages.length === 1 ? 'страница' : 'стр.'})
+              </Text>
+              {capturedImages.length > 1 && (
+                <Text style={styles.previewSubLabel}>Общий контекст {capturedImages.length} страниц</Text>
+              )}
+            </View>
             <TouchableOpacity
-              style={styles.retakeBtn}
-              onPress={handleTakePhoto}
+              style={styles.retakeAllBtn}
+              onPress={handleRetakeAll}
               disabled={loading}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Text style={styles.retakeBtnText}>🔄 Переснять</Text>
             </TouchableOpacity>
           </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.thumbnailsScroll}
+          >
+            {capturedImages.map((img, idx) => (
+              <View key={`${img.uri}_${idx}`} style={styles.thumbnailWrapper}>
+                <Image source={{ uri: img.uri }} style={styles.thumbnailImage} resizeMode="cover" />
+                <View style={styles.pageNumberBadge}>
+                  <Text style={styles.pageNumberBadgeText}>Стр. {idx + 1}</Text>
+                </View>
+                {capturedImages.length > 1 && (
+                  <TouchableOpacity
+                    style={styles.thumbnailRemoveBtn}
+                    onPress={() => handleRemovePage(idx)}
+                    disabled={loading}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityLabel={`Удалить страницу ${idx + 1}`}
+                  >
+                    <Text style={styles.thumbnailRemoveBtnText}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+
+            {/* + Добавить страницу (Камера / Галерея) */}
+            <TouchableOpacity
+              style={[
+                styles.addPageThumbnailBtn,
+                isJunior && styles.addPageThumbnailBtnJunior,
+              ]}
+              onPress={handleAddPagePrompt}
+              disabled={loading}
+              activeOpacity={0.7}
+              accessibilityLabel="Добавить страницу задания"
+            >
+              <Text style={styles.addPageIcon}>➕</Text>
+              <Text style={styles.addPageText}>Добавить{'\n'}страницу</Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       )}
 
@@ -653,12 +776,12 @@ function MainApp() {
             styles.actionButton,
             isJunior ? styles.actionButtonJunior : styles.actionButtonSenior,
           ]}
-          onPress={handleTakePhoto}
+          onPress={() => handleTakePhoto(capturedImages.length > 0 ? 'append' : 'replace')}
           disabled={loading}
         >
           {loading ? (
             <View style={styles.loadingRow}>
-              <ActivityIndicator color="#fff" size="small" />
+              <ActivityIndicator color={Theme.colors.onPrimaryText} size="small" />
               <Text
                 style={[
                   styles.actionButtonText,
@@ -683,14 +806,14 @@ function MainApp() {
           )}
         </TouchableOpacity>
 
-        {/* Secondary Buttons Row: Gallery & Demo */}
+        {/* Secondary Buttons Row: Gallery & Tier Badge */}
         <View style={styles.secondaryRow}>
           <TouchableOpacity
             style={[
               styles.secondaryButton,
               isJunior && styles.secondaryButtonJunior,
             ]}
-            onPress={handlePickImage}
+            onPress={() => handlePickImage(capturedImages.length > 0 ? 'append' : 'replace')}
             disabled={loading}
           >
             <Text
@@ -703,213 +826,197 @@ function MainApp() {
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
+          {/* Плашка уровня образования перенесена наверх вместо «Тестовое демо» */}
+          <View
             style={[
-              styles.secondaryButton,
-              isJunior && styles.secondaryButtonJunior,
+              styles.tierPillInActionRow,
+              isJunior && styles.tierPillInActionRowJunior,
             ]}
-            onPress={handleRunDemoAnalysis}
-            disabled={loading}
           >
             <Text
               style={[
-                styles.secondaryButtonText,
-                isJunior && styles.secondaryButtonTextJunior,
+                styles.tierPillInActionRowText,
+                isJunior && styles.tierPillInActionRowTextJunior,
               ]}
             >
-              ✨ Тестовое демо
+              🎓 {getTierBadgeText(profile.tier)}
             </Text>
-          </TouchableOpacity>
+          </View>
         </View>
       </View>
 
-      {/* Analysis Results View */}
+      {/* Analysis Results View - Nordic Clean Modular Cards */}
       {analysis && (
-        <View style={[styles.resultCard, isJunior ? styles.resultCardJunior : styles.resultCardSenior]}>
-          <View style={styles.resultHeader}>
+        <View style={styles.analysisModularContainer}>
+          {/* Card 1: Task Context / Title - растянуто на всё окно, с мягкой подсветкой фона */}
+          <View style={[styles.modularCard, styles.topicTitleCard, isJunior && styles.topicTitleCardJunior]}>
             <Text style={[styles.resultTitle, isJunior && styles.resultTitleJunior]}>
               {analysis.task_title}
             </Text>
-            <Text style={styles.tierBadge}>
-              {getTierBadgeText(profile.tier)}
-            </Text>
           </View>
 
-          {/* Accent Audio Box for Junior (1-4) at the TOP */}
-          {isJunior && (
-            <View style={styles.juniorVoiceHeroBox}>
-              <View style={styles.voiceHeroHeader}>
-                <Text style={styles.voiceHeroBadge}>🎧 ДЛЯ 1–4 КЛАССОВ</Text>
-                <Text style={styles.voiceHeroTitle}>
-                  {loadingAudioId === 'voice_prompt'
-                    ? '⏳ Подготовка подсказки...'
-                    : playingId === 'voice_prompt'
-                    ? '🔊 Воспроизведение...'
-                    : 'Послушай подсказку голосом:'}
+          {/* Card 2: Audio Hint (Аудиоподсказка к уроку) */}
+          <View style={styles.modularCard}>
+            <View style={styles.voiceHeroHeader}>
+              <Text style={styles.voiceHeroBadge}>🎧 ПОДСКАЗКА К УРОКУ</Text>
+              <Text style={styles.voiceHeroTitle}>
+                {loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice'
+                  ? '⏳ Подготовка подсказки...'
+                  : playingId === 'voice_prompt' || playingId === 'senior_voice'
+                  ? '🔊 Воспроизведение...'
+                  : 'Послушай подсказку голосом:'}
+              </Text>
+            </View>
+            <Text style={styles.voiceScriptText}>{analysis.voice_prompt_script}</Text>
+            <TouchableOpacity
+              style={[
+                styles.voiceHeroPlayButton,
+                (playingId === 'voice_prompt' || playingId === 'senior_voice') && styles.voiceHeroPlayButtonActive,
+              ]}
+              onPress={() =>
+                handlePlayAudio(
+                  analysis.voice_prompt_script,
+                  'ru',
+                  isJunior ? 'voice_prompt' : 'senior_voice'
+                )
+              }
+              activeOpacity={0.85}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                {(loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice') && (
+                  <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 8 }} />
+                )}
+                <Text style={styles.voiceHeroPlayText}>
+                  {(loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice')
+                    ? 'ЗАГРУЗКА ЗВУКА...'
+                    : (playingId === 'voice_prompt' || playingId === 'senior_voice')
+                    ? '⏹ ОСТАНОВИТЬ ОЗВУЧКУ'
+                    : '▶ СЛУШАТЬ ПОДСКАЗКУ'}
                 </Text>
               </View>
-              <Text style={styles.voiceScriptJunior}>
-                {analysis.voice_prompt_script}
-              </Text>
-              <TouchableOpacity
-                style={[
-                  styles.voiceBigPlayButton,
-                  playingId === 'voice_prompt' && styles.voiceBigPlayButtonActive,
-                ]}
-                onPress={() =>
-                  handlePlayAudio(analysis.voice_prompt_script, 'ru', 'voice_prompt')
-                }
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                  {loadingAudioId === 'voice_prompt' && (
-                    <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 8 }} />
-                  )}
-                  <Text style={styles.voiceBigPlayText}>
-                    {loadingAudioId === 'voice_prompt'
-                      ? 'ЗАГРУЗКА ЗВУКА...'
-                      : playingId === 'voice_prompt'
-                      ? '⏹ ОСТАНОВИТЬ ОЗВУЧКУ'
-                      : '▶ СЛУШАТЬ ПОДСКАЗКУ'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            </View>
-          )}
+            </TouchableOpacity>
+          </View>
 
-          {/* Explanation */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={[styles.sectionHeader, isJunior && styles.sectionHeaderJunior]}>
-                💡 Суть темы простыми словами
-              </Text>
+          {/* Card 3: Суть темы простыми словами */}
+          <View style={styles.modularCard}>
+            <Text style={styles.sectionHeader}>💡 Суть темы простыми словами</Text>
+            <View style={styles.sectionAudioCenteredContainer}>
               <TouchableOpacity
                 style={[
                   styles.sectionAudioBtn,
-                  isJunior && styles.sectionAudioBtnJunior,
                   playingId === 'theme_explanation' && styles.sectionAudioBtnActive,
                 ]}
                 onPress={() =>
-                  handlePlayAudio(analysis.theme_explanation, 'ru', 'theme_explanation')
+                  handlePlayAudio(analysis.theme_explanation, 'ru', 'theme_explanation', true)
                 }
+                activeOpacity={0.85}
                 accessibilityLabel="Озвучить суть темы"
               >
                 {loadingAudioId === 'theme_explanation' ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ActivityIndicator size="small" color={isJunior ? '#065F46' : '#1D4ED8'} />
-                    <Text style={[styles.sectionAudioBtnText, isJunior && styles.sectionAudioBtnTextJunior, { marginLeft: 4 }]}>
-                      Загрузка...
-                    </Text>
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                    <Text style={[styles.sectionAudioBtnText, { marginLeft: 6 }]}>Загрузка...</Text>
                   </View>
                 ) : (
-                  <Text style={[styles.sectionAudioBtnText, isJunior && styles.sectionAudioBtnTextJunior]}>
+                  <Text style={styles.sectionAudioBtnText}>
                     {playingId === 'theme_explanation' ? '⏹ Стоп' : '🔊 Озвучить'}
                   </Text>
                 )}
               </TouchableOpacity>
             </View>
-            <Text style={[styles.explanationText, isJunior && styles.explanationTextJunior]}>
-              {analysis.theme_explanation}
-            </Text>
+            <Text style={styles.explanationText}>{analysis.theme_explanation}</Text>
           </View>
 
-          {/* Vocabulary with Word and Example Pronunciation */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionHeader, isJunior && styles.sectionHeaderJunior]}>
-              📚 Словарь урока (Sõnastik)
-            </Text>
-            {analysis.vocabulary.map((v, idx) => {
-              const isVocabPlaying = playingId === `vocab_${idx}`;
-              const isExPlaying = playingId === `vocab_ex_${idx}`;
-              return (
-                <View key={idx} style={[styles.vocabItem, isJunior && styles.vocabItemJunior]}>
-                  <View style={styles.vocabRow}>
-                    <Text style={[styles.vocabEst, isJunior && styles.vocabEstJunior]}>
-                      {v.est}
-                    </Text>
-                    {/* Speaker button for Estonian word */}
-                    <TouchableOpacity
-                      style={[
-                        styles.vocabSpeakerBtn,
-                        isVocabPlaying && styles.vocabSpeakerBtnActive,
-                      ]}
-                      onPress={() => handlePlayAudio(v.est, 'et', `vocab_${idx}`)}
-                      accessibilityLabel={`Озвучить слово ${v.est}`}
-                    >
-                      {loadingAudioId === `vocab_${idx}` ? (
-                        <ActivityIndicator size="small" color="#4F46E5" style={{ transform: [{ scale: 0.7 }] }} />
-                      ) : (
-                        <Text style={styles.vocabSpeakerIcon}>
-                          {isVocabPlaying ? '⏹' : '🔊'}
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                    <Text style={styles.vocabRu}>— {v.ru}</Text>
-                  </View>
+          {/* Card 4: Словарь урока (Sõnastik) */}
+          <View style={styles.modularCard}>
+            <Text style={styles.sectionHeader}>📚 Словарь урока (Sõnastik)</Text>
+            <View style={styles.vocabChipsContainer}>
+              {analysis.vocabulary.map((v, idx) => {
+                const isVocabPlaying = playingId === `vocab_${idx}`;
+                const isExPlaying = playingId === `vocab_ex_${idx}`;
+                return (
+                  <View key={idx} style={styles.vocabItemCard}>
+                    <View style={styles.vocabPillRow}>
+                      <View style={styles.vocabEstChip}>
+                        <Text style={styles.vocabEstText}>{v.est}</Text>
+                        <TouchableOpacity
+                          style={[
+                            styles.vocabCircleSpeaker,
+                            isVocabPlaying && styles.vocabCircleSpeakerActive,
+                          ]}
+                          onPress={() => handlePlayAudio(v.est, 'et', `vocab_${idx}`)}
+                          accessibilityLabel={`Озвучить слово ${v.est}`}
+                        >
+                          {loadingAudioId === `vocab_${idx}` ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.65 }] }} />
+                          ) : (
+                            <Text style={styles.vocabSpeakerIconWhite}>
+                              {isVocabPlaying ? '⏹' : '🔊'}
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={styles.vocabRuText}>— {v.ru}</Text>
+                    </View>
 
-                  {/* Estonian Example sentence row with dedicated speaker button */}
-                  <View style={styles.vocabExampleRow}>
-                    <TouchableOpacity
-                      style={[
-                        styles.vocabExampleSpeakerBtn,
-                        isExPlaying && styles.vocabSpeakerBtnActive,
-                      ]}
-                      onPress={() => handlePlayAudio(v.example, 'et', `vocab_ex_${idx}`)}
-                      accessibilityLabel={`Озвучить пример предложения ${v.example}`}
-                    >
-                      {loadingAudioId === `vocab_ex_${idx}` ? (
-                        <ActivityIndicator size="small" color="#4F46E5" style={{ transform: [{ scale: 0.7 }] }} />
-                      ) : (
-                        <Text style={styles.vocabExampleSpeakerIcon}>
-                          {isExPlaying ? '⏹' : '🔊'}
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                    <Text style={[styles.vocabExample, isJunior && styles.vocabExampleJunior]}>
-                      «{v.example}»
-                    </Text>
+                    {v.example ? (
+                      <View style={styles.vocabExampleBox}>
+                        <TouchableOpacity
+                          style={[
+                            styles.vocabExampleCircleBtn,
+                            isExPlaying && styles.vocabCircleSpeakerActive,
+                          ]}
+                          onPress={() => handlePlayAudio(v.example, 'et', `vocab_ex_${idx}`)}
+                          accessibilityLabel={`Озвучить пример ${v.example}`}
+                        >
+                          {loadingAudioId === `vocab_ex_${idx}` ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.6 }] }} />
+                          ) : (
+                            <Text style={styles.vocabExampleIconWhite}>
+                              {isExPlaying ? '⏹' : '🔊'}
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                        <Text style={styles.vocabExampleText}>«{v.example}»</Text>
+                      </View>
+                    ) : null}
                   </View>
-                </View>
-              );
-            })}
+                );
+              })}
+            </View>
           </View>
 
-          {/* How to Answer */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={[styles.sectionHeader, isJunior && styles.sectionHeaderJunior]}>
-                🎯 Как решить задание самому
-              </Text>
+          {/* Card 5: Как решить задание самому */}
+          <View style={styles.modularCard}>
+            <Text style={styles.sectionHeader}>🎯 Как решить задание самому</Text>
+            <View style={styles.sectionAudioCenteredContainer}>
               <TouchableOpacity
                 style={[
                   styles.sectionAudioBtn,
-                  isJunior && styles.sectionAudioBtnJunior,
                   playingId === 'how_to_answer' && styles.sectionAudioBtnActive,
                 ]}
                 onPress={() =>
                   handlePlayAudio(analysis.how_to_answer, 'ru', 'how_to_answer', true)
                 }
+                activeOpacity={0.85}
                 accessibilityLabel="Озвучить решение"
               >
                 {loadingAudioId === 'how_to_answer' ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ActivityIndicator size="small" color={isJunior ? '#065F46' : '#1D4ED8'} />
-                    <Text style={[styles.sectionAudioBtnText, isJunior && styles.sectionAudioBtnTextJunior, { marginLeft: 4 }]}>
-                      Загрузка...
-                    </Text>
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                    <Text style={[styles.sectionAudioBtnText, { marginLeft: 6 }]}>Загрузка...</Text>
                   </View>
                 ) : (
-                  <Text style={[styles.sectionAudioBtnText, isJunior && styles.sectionAudioBtnTextJunior]}>
+                  <Text style={styles.sectionAudioBtnText}>
                     {playingId === 'how_to_answer' ? '⏹ Стоп' : '🔊 Озвучить'}
                   </Text>
                 )}
               </TouchableOpacity>
             </View>
-            <Text style={[styles.instructionText, isJunior && styles.instructionTextJunior]}>
-              {analysis.how_to_answer}
-            </Text>
+            <Text style={styles.instructionText}>{analysis.how_to_answer}</Text>
           </View>
 
-          {/* Interactive Phrase Builder with Word Bank & Semantic Slot Matching */}
+          {/* Card 6: Собери ответ на эстонском (PhraseBuilder) */}
           <PhraseBuilder
             template={analysis.answer_template}
             vocabulary={analysis.vocabulary}
@@ -917,58 +1024,25 @@ function MainApp() {
             onPlayAudio={handlePlayAudio}
             playingId={playingId}
             loadingAudioId={loadingAudioId}
+            taskTitle={analysis.task_title}
+            themeExplanation={analysis.theme_explanation}
+            grade={profile.grade}
+            tier={profile.tier}
           />
 
-          {/* Compact Audio Button for Senior (5-12) */}
-          {!isJunior && (
-            <View style={styles.seniorVoiceBox}>
-              <Text style={styles.seniorVoiceLabel}>
-                {loadingAudioId === 'senior_voice'
-                  ? '⏳ Загрузка аудио...'
-                  : playingId === 'senior_voice'
-                  ? '🔊 Воспроизведение...'
-                  : '🔊 Аудио-подсказка к уроку:'}
-              </Text>
-              <Text style={styles.seniorVoiceScript}>{analysis.voice_prompt_script}</Text>
-              <TouchableOpacity
-                style={[
-                  styles.seniorVoiceButton,
-                  playingId === 'senior_voice' && styles.seniorVoiceButtonActive,
-                ]}
-                onPress={() =>
-                  handlePlayAudio(analysis.voice_prompt_script, 'ru', 'senior_voice')
-                }
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  {loadingAudioId === 'senior_voice' && (
-                    <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 6 }} />
-                  )}
-                  <Text style={styles.seniorVoiceButtonText}>
-                    {loadingAudioId === 'senior_voice'
-                      ? 'Загрузка...'
-                      : playingId === 'senior_voice'
-                      ? '⏹ Остановить'
-                      : '▶ Озвучить тезисы'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Save Card to History Button */}
+          {/* Card 7: Save Card Button */}
           <TouchableOpacity
             style={[
               styles.saveCardButton,
-              isJunior ? styles.saveCardButtonJunior : styles.saveCardButtonSenior,
               isSaved && styles.saveCardButtonSaved,
             ]}
             onPress={handleSaveCard}
             disabled={isSaved}
+            activeOpacity={0.85}
           >
             <Text
               style={[
                 styles.saveCardButtonText,
-                isJunior && styles.saveCardButtonTextJunior,
                 isSaved && styles.saveCardButtonTextSaved,
               ]}
             >
@@ -976,37 +1050,23 @@ function MainApp() {
             </Text>
           </TouchableOpacity>
 
-          {/* Next Task Camera Button */}
+          {/* Card 8: Next Task Camera Button */}
           <TouchableOpacity
-            style={[
-              styles.nextTaskButton,
-              isJunior ? styles.nextTaskButtonJunior : styles.nextTaskButtonSenior,
-            ]}
-            onPress={handleTakePhoto}
+            style={styles.nextTaskButton}
+            onPress={() => handleTakePhoto('replace')}
             disabled={loading}
             activeOpacity={0.85}
           >
             {loading ? (
               <View style={styles.loadingRow}>
-                <ActivityIndicator color="#fff" size="small" />
-                <Text
-                  style={[
-                    styles.nextTaskButtonText,
-                    isJunior && styles.nextTaskButtonTextJunior,
-                    styles.loadingText,
-                  ]}
-                >
+                <ActivityIndicator color={Theme.colors.onPrimaryText} size="small" />
+                <Text style={[styles.nextTaskButtonText, styles.loadingText]}>
                   {loadingStep || 'Анализируем...'}
                 </Text>
               </View>
             ) : (
-              <Text
-                style={[
-                  styles.nextTaskButtonText,
-                  isJunior && styles.nextTaskButtonTextJunior,
-                ]}
-              >
-                📷 Разобрать следующее задание
+              <Text style={styles.nextTaskButtonText}>
+                📷 Разобрать следующее задание (Фото)
               </Text>
             )}
           </TouchableOpacity>
@@ -1109,7 +1169,7 @@ function MainApp() {
                           onPress={() => handlePlayAudio(item.est, 'et', `saved_vocab_${item.est}`)}
                         >
                           {loadingAudioId === `saved_vocab_${item.est}` ? (
-                            <ActivityIndicator size="small" color="#4F46E5" style={{ transform: [{ scale: 0.7 }] }} />
+                            <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.7 }] }} />
                           ) : (
                             <Text style={styles.vocabCardSpeakerIcon}>
                               {isPlaying ? '⏹' : '🔊'}
@@ -1133,15 +1193,15 @@ function MainApp() {
                           <Text style={styles.vocabCardExampleLabel}>Пример в предложении:</Text>
                           <TouchableOpacity
                             style={[
-                              styles.vocabExampleSpeakerBtn,
-                              isExPlaying && styles.vocabSpeakerBtnActive,
+                              styles.vocabCardSpeaker,
+                              isExPlaying && styles.vocabCardSpeakerActive,
                             ]}
                             onPress={() => handlePlayAudio(item.example, 'et', `saved_ex_${item.est}`)}
                           >
                             {loadingAudioId === `saved_ex_${item.est}` ? (
-                              <ActivityIndicator size="small" color="#4F46E5" style={{ transform: [{ scale: 0.7 }] }} />
+                              <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.7 }] }} />
                             ) : (
-                              <Text style={styles.vocabExampleSpeakerIcon}>
+                              <Text style={styles.vocabCardSpeakerIcon}>
                                 {isExPlaying ? '⏹' : '🔊'}
                               </Text>
                             )}
@@ -1255,7 +1315,7 @@ function MainApp() {
             value={profile.nickname || ''}
             onChangeText={updateNickname}
             placeholder="Например: Алекс"
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={Theme.colors.textMuted}
           />
         </View>
 
@@ -1299,7 +1359,7 @@ function MainApp() {
             value={interestsText}
             onChangeText={handleInterestsChange}
             placeholder="Minecraft, LEGO, футбол, котики..."
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={Theme.colors.textMuted}
             multiline
           />
           <Text style={[styles.interestsHint, isJunior && styles.interestsHintJunior]}>
@@ -1348,9 +1408,6 @@ function MainApp() {
         <Text style={styles.storageStats}>
           • Терминов в личном словаре: <Text style={styles.bold}>{savedVocab.length}</Text>
         </Text>
-        <Text style={styles.storageStats}>
-          • Модель синтеза речи: <Text style={styles.bold}>Edge-TTS Neural (et-EE +20% / ru-RU)</Text>
-        </Text>
 
         <TouchableOpacity style={styles.clearDataBtn} onPress={handleClearAllData}>
           <Text style={styles.clearDataBtnText}>🗑️ Очистить сохранённую историю и словарь</Text>
@@ -1360,32 +1417,56 @@ function MainApp() {
   );
 
   // Compute safe native insets across all phone models (Dynamic Island, camera punch-hole, 3-button nav)
-  const topInset = Math.max(
+  const headerTopPadding = Math.max(
     insets.top,
-    Platform.OS === 'android' ? (RNStatusBar.currentHeight || 28) : 0,
-    24
+    Platform.OS === 'android' ? (RNStatusBar.currentHeight || 24) : 16
   );
 
   const bottomInset = Math.max(
     insets.bottom,
-    Platform.OS === 'android' ? 16 : 10
+    Platform.OS === 'android' ? 14 : 10
   );
 
   return (
     <View
       style={[
         styles.safeArea,
-        isJunior ? styles.safeAreaJunior : styles.safeAreaSenior,
         {
-          paddingTop: topInset + 6,
           paddingLeft: insets.left,
           paddingRight: insets.right,
         },
       ]}
+      {...edgePanResponder.panHandlers}
     >
-      <StatusBar style="dark" />
+      <RNStatusBar barStyle="dark-content" />
 
-      {/* Main Content Area */}
+      {/* Nordic Clean Persistent Onsen Header Bar */}
+      <View style={[styles.headerBar, { paddingTop: headerTopPadding + 4 }]}>
+        <TouchableOpacity
+          style={styles.headerMenuBtn}
+          onPress={() => setIsDrawerOpen(true)}
+          accessibilityLabel="Открыть меню"
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <Text style={styles.headerMenuIcon}>≡</Text>
+        </TouchableOpacity>
+
+        <View style={styles.headerTitleCenter}>
+          <Text style={styles.headerBrandTitle}>TarkApp</Text>
+        </View>
+
+        <TouchableOpacity
+          style={styles.headerProfilePill}
+          onPress={() => setCurrentTab('settings')}
+          accessibilityLabel="Профиль ученика"
+        >
+          <Text style={styles.headerProfileText}>
+            👤 {profile.nickname || 'Ученик'} • {profile.grade} кл.
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Main Scrollable Content Area */}
       <ScrollView
         ref={scrollViewRef}
         contentContainerStyle={[
@@ -1395,9 +1476,70 @@ function MainApp() {
           },
         ]}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {currentTab === 'study' && renderStudyTab()}
         {currentTab === 'dictionary' && renderDictionaryTab()}
+        {currentTab === 'tests' && (
+          <ComingSoonCard
+            icon="🎯"
+            title="Подготовка к контрольным"
+            subtitle="Интеллектуальный тренажёр типовых проверочных работ эстонской школы (Koolibri, Avita) с разбором частых ошибок."
+            features={[
+              {
+                icon: '📝',
+                title: 'Интерактивные проверочные',
+                desc: 'Тематические тесты по эстонской школьной программе с мгновенной проверкой',
+              },
+              {
+                icon: '🔍',
+                title: 'Разбор частых ловушек',
+                desc: 'Сложные падежи (Omastav, Osastav) и формы слов без стресса',
+              },
+              {
+                icon: '⏱️',
+                title: 'Тренировка на время',
+                desc: 'Режим симуляции реального урока с подсказками',
+              },
+              {
+                icon: '📊',
+                title: 'Оценка готовности',
+                desc: 'Наглядный прогноз балла перед реальной контрольной работой в школе',
+              },
+            ]}
+            onBackToStudy={() => setCurrentTab('study')}
+          />
+        )}
+        {currentTab === 'reading' && (
+          <ComingSoonCard
+            icon="⚡"
+            title="Помощь в чтении (Скорочтение)"
+            subtitle="Тренажёр осознанного беглого чтения эстонских текстов с синхронной подсветкой и ударениями."
+            features={[
+              {
+                icon: '📖',
+                title: 'Сложные составные слова',
+                desc: 'Разбор длинных liitsõnad на смысловые корни для понимания сути',
+              },
+              {
+                icon: '🔊',
+                title: 'Аудио-сопровождение',
+                desc: 'Эталонное произношение диктора в комфортном темпе',
+              },
+              {
+                icon: '🧠',
+                title: 'Контроль понимания',
+                desc: 'Мини-вопросы после каждого абзаца для проверки смысла',
+              },
+              {
+                icon: '📈',
+                title: 'Отслеживание прогресса',
+                desc: 'Рост скорости чтения (слов/мин) и словарного запаса',
+              },
+            ]}
+            onBackToStudy={() => setCurrentTab('study')}
+          />
+        )}
         {currentTab === 'settings' && renderSettingsTab()}
       </ScrollView>
 
@@ -1405,7 +1547,6 @@ function MainApp() {
       <View
         style={[
           styles.bottomTabBar,
-          isJunior ? styles.bottomTabBarJunior : styles.bottomTabBarSenior,
           {
             paddingBottom: bottomInset,
             height: 58 + bottomInset,
@@ -1416,14 +1557,14 @@ function MainApp() {
           style={[styles.tabItem, currentTab === 'study' && styles.tabItemActive]}
           onPress={() => setCurrentTab('study')}
         >
-          <Text style={styles.tabIcon}>📖</Text>
+          <Text style={styles.tabIcon}>📸</Text>
           <Text
             style={[
               styles.tabLabel,
-              currentTab === 'study' && (isJunior ? styles.tabLabelActiveJunior : styles.tabLabelActiveSenior),
+              currentTab === 'study' && styles.tabLabelActive,
             ]}
           >
-            Учёба
+            Разбор
           </Text>
         </TouchableOpacity>
 
@@ -1432,7 +1573,7 @@ function MainApp() {
           onPress={() => setCurrentTab('dictionary')}
         >
           <View style={styles.tabBadgeWrapper}>
-            <Text style={styles.tabIcon}>📚</Text>
+            <Text style={styles.tabIcon}>📖</Text>
             {savedVocab.length > 0 && (
               <View style={styles.tabBadge}>
                 <Text style={styles.tabBadgeText}>{savedVocab.length}</Text>
@@ -1442,10 +1583,10 @@ function MainApp() {
           <Text
             style={[
               styles.tabLabel,
-              currentTab === 'dictionary' && (isJunior ? styles.tabLabelActiveJunior : styles.tabLabelActiveSenior),
+              currentTab === 'dictionary' && styles.tabLabelActive,
             ]}
           >
-            Словарь
+            Словарик
           </Text>
         </TouchableOpacity>
 
@@ -1457,13 +1598,32 @@ function MainApp() {
           <Text
             style={[
               styles.tabLabel,
-              currentTab === 'settings' && (isJunior ? styles.tabLabelActiveJunior : styles.tabLabelActiveSenior),
+              currentTab === 'settings' && styles.tabLabelActive,
             ]}
           >
             Настройки
           </Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => setIsDrawerOpen(true)}
+        >
+          <Text style={styles.tabIcon}>≡</Text>
+          <Text style={styles.tabLabel}>Меню</Text>
+        </TouchableOpacity>
       </View>
+
+      {/* Navigation Drawer Component */}
+      <DrawerMenu
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        activeTab={currentTab as DrawerTabType}
+        onSelectTab={(tab) => setCurrentTab(tab as TabType)}
+        userNickname={profile.nickname}
+        userGrade={profile.grade}
+        vocabCount={savedVocab.length}
+      />
     </View>
   );
 }
@@ -1471,7 +1631,9 @@ function MainApp() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <MainApp />
+      <ErrorBoundary>
+        <MainApp />
+      </ErrorBoundary>
     </SafeAreaProvider>
   );
 }
@@ -1479,105 +1641,104 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
+    backgroundColor: Theme.colors.background,
   },
   safeAreaJunior: {
-    backgroundColor: '#F0FDF4',
+    backgroundColor: Theme.colors.background,
   },
   safeAreaSenior: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: Theme.colors.background,
+  },
+  headerBar: {
+    backgroundColor: Theme.colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    ...Theme.shadow.header,
+  },
+  headerMenuBtn: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerMenuIcon: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: Theme.colors.onPrimaryText,
+    lineHeight: 32,
+  },
+  headerTitleCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  headerBrandTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: Theme.colors.onPrimaryText,
+    letterSpacing: 0.3,
+  },
+  headerProfilePill: {
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: Theme.radius.chip,
+    borderWidth: 1,
+    borderColor: 'rgba(6, 78, 59, 0.15)',
+  },
+  headerProfileText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Theme.colors.onPrimaryText,
   },
   container: {
     padding: 16,
     paddingBottom: 90,
   },
-  header: {
-    marginBottom: 16,
+  studySubHeader: {
+    marginBottom: 12,
     alignItems: 'center',
   },
-  headerTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    width: '100%',
-  },
-  appTitle: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#1E3A8A',
-  },
-  appTitleJunior: {
-    fontSize: 28,
-    color: '#065F46',
-  },
-  subtitle: {
+  studySubTitle: {
     fontSize: 13,
-    color: '#4B5563',
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  subtitleJunior: {
-    fontSize: 15,
-    color: '#047857',
-    fontWeight: '500',
-  },
-  pupilPill: {
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 16,
-  },
-  pupilPillJunior: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 18,
-  },
-  pupilPillText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1E40AF',
-  },
-  pupilPillTextJunior: {
-    color: '#065F46',
+    fontWeight: '600',
+    color: Theme.colors.textSecondary,
   },
 
   // Today's Lesson Carousel Bar
   todaySection: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 12,
-    marginBottom: 16,
+    backgroundColor: Theme.colors.surface,
+    borderRadius: Theme.radius.card,
+    padding: 14,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 5,
-    elevation: 2,
+    borderColor: Theme.colors.border,
+    ...Theme.shadow.card,
   },
   todaySectionJunior: {
-    backgroundColor: '#F0FDF4',
-    borderColor: '#A7F3D0',
-    borderRadius: 18,
+    backgroundColor: Theme.colors.surface,
+    borderColor: Theme.colors.border,
+    borderRadius: Theme.radius.card,
   },
   todayHeaderRow: {
     marginBottom: 10,
-    paddingHorizontal: 4,
+    paddingHorizontal: 2,
   },
   todayTitle: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: '#1E293B',
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
   },
   todayTitleJunior: {
-    fontSize: 18,
-    color: '#065F46',
+    fontSize: 16,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
   },
   todaySubtitle: {
     fontSize: 12,
-    color: '#64748B',
+    color: Theme.colors.textSecondary,
     marginTop: 2,
   },
   todayCarousel: {
@@ -1588,40 +1749,51 @@ const styles = StyleSheet.create({
   },
   todayCard: {
     width: 210,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: Theme.colors.surfaceAlt,
     borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: Theme.colors.border,
     padding: 8,
     flexDirection: 'row',
     alignItems: 'center',
   },
   todayCardJunior: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#D1FAE5',
-    borderRadius: 14,
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderColor: Theme.colors.border,
+    borderRadius: 12,
+  },
+  todayCardActive: {
+    borderColor: Theme.colors.primary,
+    backgroundColor: '#CFFAEE',
+    borderWidth: 2,
+    elevation: 0,
+    shadowOpacity: 0,
   },
   todayCardActiveJunior: {
-    borderColor: '#059669',
-    backgroundColor: '#ECFDF5',
+    borderColor: '#F59E0B',
+    backgroundColor: '#FEF3C7',
     borderWidth: 2,
+    elevation: 0,
+    shadowOpacity: 0,
   },
   todayCardActiveSenior: {
-    borderColor: '#2563EB',
-    backgroundColor: '#EFF6FF',
+    borderColor: Theme.colors.primary,
+    backgroundColor: '#CFFAEE',
     borderWidth: 2,
+    elevation: 0,
+    shadowOpacity: 0,
   },
   todayThumbnail: {
-    width: 52,
-    height: 52,
+    width: 50,
+    height: 50,
     borderRadius: 8,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: Theme.colors.border,
   },
   todayThumbPlaceholder: {
-    width: 52,
-    height: 52,
+    width: 50,
+    height: 50,
     borderRadius: 8,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: Theme.colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1640,316 +1812,114 @@ const styles = StyleSheet.create({
     marginBottom: 3,
   },
   todayBadge: {
-    backgroundColor: '#E2E8F0',
+    backgroundColor: Theme.colors.border,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
   },
   todayBadgeActive: {
-    backgroundColor: '#059669',
+    backgroundColor: Theme.colors.primary,
   },
   todayBadgeText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#475569',
+    color: Theme.colors.textSecondary,
   },
   todayBadgeTextActive: {
-    color: '#FFFFFF',
+    color: Theme.colors.onPrimaryText,
   },
   todayActiveDot: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#059669',
+    color: Theme.colors.onPrimaryText,
   },
   todayCardTitle: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#334155',
+    color: Theme.colors.textPrimary,
     lineHeight: 16,
   },
   todayCardTitleJunior: {
-    fontSize: 13,
-    color: '#064E3B',
+    fontSize: 12,
+    fontWeight: '600',
+    color: Theme.colors.textPrimary,
   },
   todayCardTitleActive: {
-    fontWeight: 'bold',
-    color: '#065F46',
+    fontWeight: '800',
+    color: Theme.colors.onPrimaryText,
   },
 
   welcomeCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
+    backgroundColor: Theme.colors.surface,
+    borderRadius: Theme.radius.card,
+    padding: 22,
+    marginBottom: 14,
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    ...Theme.shadow.card,
   },
   welcomeCardJunior: {
-    borderColor: '#A7F3D0',
-    backgroundColor: '#F0FDF4',
-    borderRadius: 20,
+    backgroundColor: Theme.colors.surface,
+    borderColor: Theme.colors.border,
+    borderRadius: Theme.radius.card,
   },
   welcomeCardSenior: {
-    borderColor: '#CBD5E1',
+    backgroundColor: Theme.colors.surface,
+    borderColor: Theme.colors.border,
   },
   welcomeIcon: {
-    fontSize: 36,
-    marginBottom: 8,
+    fontSize: 38,
+    marginBottom: 10,
   },
   welcomeTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1E293B',
+    fontSize: 19,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
     marginBottom: 6,
+    textAlign: 'center',
   },
   welcomeTitleJunior: {
-    fontSize: 20,
-    color: '#065F46',
+    fontSize: 19,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
   },
   welcomeDesc: {
     fontSize: 13.5,
-    color: '#4B5563',
+    color: Theme.colors.textSecondary,
     textAlign: 'center',
     lineHeight: 20,
   },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  cardJunior: {
-    borderWidth: 2,
-    borderColor: '#A7F3D0',
-    borderRadius: 20,
-  },
-  cardSenior: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 12,
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  cardTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  cardTitleJunior: {
-    fontSize: 19,
-    color: '#065F46',
-  },
-  tierTag: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  tierTagJunior: {
-    backgroundColor: '#DCFCE7',
-  },
-  tierTagSenior: {
-    backgroundColor: '#F1F5F9',
-  },
-  tierTagText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  tierTagTextJunior: {
-    color: '#15803D',
-  },
-  tierTagTextSenior: {
-    color: '#475569',
-  },
-  caption: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginBottom: 12,
-    marginTop: 2,
-  },
-  inputRow: {
-    marginBottom: 12,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 6,
-  },
-  labelJunior: {
-    fontSize: 15,
-    color: '#064E3B',
-  },
-  bold: {
-    fontWeight: 'bold',
-    color: '#1E40AF',
-  },
-  textInput: {
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 14,
-    backgroundColor: '#F9FAFB',
-  },
-  textInputJunior: {
-    borderRadius: 12,
-    fontSize: 16,
-    paddingVertical: 10,
-  },
-  gradeGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
+
+  // Action Buttons Section
+  actionsContainer: {
     marginBottom: 14,
   },
-  gradeChip: {
-    width: 40,
-    height: 36,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#F9FAFB',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  gradeChipJunior: {
-    width: 44,
-    height: 40,
-    borderRadius: 10,
-  },
-  gradeChipActiveJunior: {
-    backgroundColor: '#059669',
-    borderColor: '#047857',
-  },
-  gradeChipActiveSenior: {
-    backgroundColor: '#2563EB',
-    borderColor: '#1D4ED8',
-  },
-  gradeChipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  gradeChipTextJunior: {
-    fontSize: 15,
-  },
-  gradeChipTextActive: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-  },
-  interestsSection: {
-    marginTop: 4,
-  },
-  interestsInput: {
-    minHeight: 46,
-    textAlignVertical: 'top',
-  },
-  interestsHint: {
-    fontSize: 12,
-    color: '#4B5563',
-    fontStyle: 'italic',
-    lineHeight: 17,
-    marginTop: 6,
-    marginBottom: 10,
-    backgroundColor: '#F3F4F6',
-    padding: 8,
-    borderRadius: 8,
-  },
-  interestsHintJunior: {
-    backgroundColor: '#ECFDF5',
-    color: '#065F46',
-    fontSize: 12.5,
-  },
-  suggestionsTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6B7280',
-    marginBottom: 6,
-  },
-  suggestionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  suggestionChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  suggestionChipSelected: {
-    backgroundColor: '#DBEAFE',
-    borderColor: '#3B82F6',
-  },
-  suggestionText: {
-    fontSize: 12,
-    color: '#475569',
-    fontWeight: '500',
-  },
-  suggestionTextSelected: {
-    color: '#1E40AF',
-    fontWeight: '700',
-  },
-  storageStats: {
-    fontSize: 13.5,
-    color: '#475569',
-    marginBottom: 6,
-  },
-  clearDataBtn: {
-    marginTop: 14,
-    backgroundColor: '#FEE2E2',
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  clearDataBtnText: {
-    color: '#DC2626',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  actionsContainer: {
-    marginBottom: 16,
-  },
   actionButton: {
-    borderRadius: 14,
-    paddingVertical: 14,
+    backgroundColor: Theme.colors.primary,
+    borderRadius: Theme.radius.card,
+    paddingVertical: 16,
     alignItems: 'center',
-    marginBottom: 8,
-    elevation: 3,
+    marginBottom: 10,
+    ...Theme.shadow.card,
   },
   actionButtonJunior: {
-    backgroundColor: '#059669',
-    paddingVertical: 18,
-    borderRadius: 18,
-    shadowColor: '#059669',
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
+    backgroundColor: Theme.colors.primary,
+    borderRadius: Theme.radius.card,
   },
   actionButtonSenior: {
-    backgroundColor: '#1E40AF',
-    paddingVertical: 13,
-    borderRadius: 10,
+    backgroundColor: Theme.colors.primary,
+    borderRadius: Theme.radius.card,
   },
   actionButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: 'bold',
+    color: Theme.colors.onPrimaryText,
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   actionButtonTextJunior: {
-    fontSize: 17,
+    fontSize: 16,
+    fontWeight: '800',
   },
   loadingRow: {
     flexDirection: 'row',
@@ -1962,429 +1932,582 @@ const styles = StyleSheet.create({
   secondaryRow: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 4,
   },
   secondaryButton: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: Theme.colors.surface,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 12,
-    paddingVertical: 10,
+    borderColor: Theme.colors.border,
+    borderRadius: Theme.radius.button,
+    paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    ...Theme.shadow.card,
   },
   secondaryButtonJunior: {
-    borderRadius: 14,
-    borderColor: '#6EE7B7',
-    backgroundColor: '#F0FDF4',
-    paddingVertical: 12,
+    borderRadius: Theme.radius.button,
+    borderColor: Theme.colors.border,
+    backgroundColor: Theme.colors.surface,
   },
   secondaryButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: Theme.colors.textPrimary,
   },
   secondaryButtonTextJunior: {
-    fontSize: 14,
-    color: '#065F46',
+    fontSize: 13.5,
+    color: Theme.colors.textPrimary,
   },
-  previewCard: {
-    flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 10,
-    marginBottom: 12,
+
+  tierPillInActionRow: {
+    flex: 1,
+    backgroundColor: '#CFFAEE',
+    borderWidth: 1.5,
+    borderColor: '#5FEDC5',
+    borderRadius: Theme.radius.button,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
     alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 0,
+    shadowOpacity: 0,
+  },
+  tierPillInActionRowJunior: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FCD34D',
+    elevation: 0,
+    shadowOpacity: 0,
+  },
+  tierPillInActionRowText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: Theme.colors.onPrimaryText,
+    textAlign: 'center',
+    backgroundColor: 'transparent',
+  },
+  tierPillInActionRowTextJunior: {
+    color: '#78350F',
+    backgroundColor: 'transparent',
+  },
+
+  previewCard: {
+    backgroundColor: Theme.colors.surface,
+    borderRadius: Theme.radius.card,
+    padding: 12,
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
+    borderColor: Theme.colors.border,
+    ...Theme.shadow.card,
   },
   previewCardJunior: {
-    borderColor: '#A7F3D0',
-    backgroundColor: '#F0FDF4',
-    borderRadius: 16,
+    borderColor: Theme.colors.border,
+    backgroundColor: Theme.colors.surface,
+    borderRadius: Theme.radius.card,
   },
-  previewImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
-    backgroundColor: '#E2E8F0',
+  previewHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
   },
-  previewContent: {
+  previewHeaderTitleBox: {
     flex: 1,
-    marginLeft: 12,
   },
   previewLabel: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#1E293B',
-    marginBottom: 4,
+    fontWeight: '700',
+    color: Theme.colors.textPrimary,
+  },
+  previewSubLabel: {
+    fontSize: 11,
+    color: Theme.colors.textSecondary,
+    marginTop: 1,
+  },
+  retakeAllBtn: {
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
   },
   retakeBtn: {
     alignSelf: 'flex-start',
-    backgroundColor: '#E0E7FF',
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
   },
   retakeBtnText: {
     fontSize: 12,
-    color: '#3730A3',
+    color: Theme.colors.textPrimary,
     fontWeight: '600',
   },
-  resultCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    elevation: 3,
+  thumbnailsScroll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 2,
   },
-  resultCardJunior: {
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#A7F3D0',
-  },
-  resultCardSenior: {
-    borderRadius: 12,
+  thumbnailWrapper: {
+    position: 'relative',
+    width: 68,
+    height: 68,
+    borderRadius: 10,
+    backgroundColor: Theme.colors.border,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: Theme.colors.border,
+    overflow: 'hidden',
+  },
+  thumbnailImage: {
+    width: '100%',
+    height: '100%',
+  },
+  pageNumberBadge: {
+    position: 'absolute',
+    bottom: 2,
+    left: 2,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  pageNumberBadgeText: {
+    fontSize: 9.5,
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  thumbnailRemoveBtn: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    backgroundColor: 'rgba(239, 68, 68, 0.9)',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  thumbnailRemoveBtnText: {
+    fontSize: 10,
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    lineHeight: 12,
+  },
+  addPageThumbnailBtn: {
+    width: 68,
+    height: 68,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: Theme.colors.primary,
+    backgroundColor: '#F0FDF9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 2,
+    elevation: 0,
+    shadowOpacity: 0,
+  },
+  addPageThumbnailBtnJunior: {
+    borderColor: '#F59E0B',
+    backgroundColor: '#FEF9C3',
+    elevation: 0,
+    shadowOpacity: 0,
+  },
+  addPageIcon: {
+    fontSize: 16,
+    color: Theme.colors.onPrimaryText,
+    marginBottom: 2,
+  },
+  addPageText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: Theme.colors.onPrimaryText,
+    textAlign: 'center',
+    lineHeight: 11,
+  },
+
+  // Analysis Modular Cards
+  analysisModularContainer: {
+    marginTop: 2,
+  },
+  modularCard: {
+    backgroundColor: Theme.colors.surface,
+    borderRadius: Theme.radius.card,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    ...Theme.shadow.card,
+  },
+  topicTitleCard: {
+    backgroundColor: '#CFFAEE',
+    borderColor: '#5FEDC5',
+    borderWidth: 1.5,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    elevation: 0,
+    shadowOpacity: 0,
+  },
+  topicTitleCardJunior: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FCD34D',
+    elevation: 0,
+    shadowOpacity: 0,
   },
   resultHeader: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-    paddingBottom: 10,
-    marginBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
   },
   resultTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: '#111827',
+    fontWeight: '800',
+    color: Theme.colors.onPrimaryText,
+    width: '100%',
+    lineHeight: 26,
+    textAlign: 'left',
+    backgroundColor: 'transparent',
   },
   resultTitleJunior: {
-    fontSize: 21,
-    color: '#064E3B',
+    color: '#78350F',
+    backgroundColor: 'transparent',
   },
-  tierBadge: {
-    fontSize: 12,
-    color: '#059669',
-    fontWeight: '600',
-    marginTop: 4,
+  tierBadgeBox: {
+    backgroundColor: Theme.colors.slotSuccessBg,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: Theme.radius.badge,
+    borderWidth: 1,
+    borderColor: Theme.colors.primary,
   },
-  juniorVoiceHeroBox: {
-    backgroundColor: '#EDE9FE',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 2,
-    borderColor: '#C4B5FD',
-    marginBottom: 16,
+  tierBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: Theme.colors.onPrimaryText,
   },
+
+  // Voice Hero (Аудиоподсказка)
   voiceHeroHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
   },
   voiceHeroBadge: {
     fontSize: 11,
     fontWeight: 'bold',
-    backgroundColor: '#7C3AED',
+    backgroundColor: Theme.colors.voiceButton,
     color: '#FFFFFF',
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 3,
     borderRadius: 6,
   },
   voiceHeroTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#5B21B6',
+    color: Theme.colors.textPrimary,
   },
-  voiceScriptJunior: {
-    fontSize: 15,
+  voiceScriptText: {
+    fontSize: 14.5,
     lineHeight: 22,
-    color: '#4C1D95',
+    color: Theme.colors.textPrimary,
     marginBottom: 12,
   },
-  voiceBigPlayButton: {
-    backgroundColor: '#7C3AED',
+  voiceHeroPlayButton: {
+    backgroundColor: Theme.colors.voiceButton,
     paddingVertical: 12,
-    borderRadius: 12,
+    borderRadius: Theme.radius.button,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#6D28D9',
   },
-  voiceBigPlayButtonActive: {
-    backgroundColor: '#DC2626',
-    borderColor: '#B91C1C',
+  voiceHeroPlayButtonActive: {
+    backgroundColor: Theme.colors.voiceButtonPressed,
   },
-  voiceBigPlayText: {
+  voiceHeroPlayText: {
     color: '#FFFFFF',
-    fontWeight: 'bold',
+    fontWeight: '700',
     fontSize: 14,
   },
+
+  // Sections
   section: {
     marginBottom: 16,
   },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
   sectionHeader: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1F2937',
+    fontSize: 16,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
+    marginBottom: 4,
   },
   sectionHeaderJunior: {
-    fontSize: 17,
-    color: '#065F46',
+    fontSize: 16,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
+  },
+  sectionAudioCenteredContainer: {
+    alignItems: 'center',
+    marginVertical: 10,
   },
   sectionAudioBtn: {
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
+    backgroundColor: Theme.colors.voiceButton,
+    paddingHorizontal: 22,
+    paddingVertical: 8,
+    borderRadius: Theme.radius.chip,
+    minWidth: 140,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Theme.shadow.chip,
   },
   sectionAudioBtnJunior: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
+    backgroundColor: Theme.colors.voiceButton,
   },
   sectionAudioBtnActive: {
-    backgroundColor: '#FEE2E2',
-    borderColor: '#FCA5A5',
+    backgroundColor: Theme.colors.voiceButtonPressed,
   },
   sectionAudioBtnText: {
-    fontSize: 12.5,
+    fontSize: 14,
     fontWeight: '700',
-    color: '#1D4ED8',
+    color: '#FFFFFF',
   },
   sectionAudioBtnTextJunior: {
-    color: '#065F46',
-    fontSize: 13.5,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   explanationText: {
-    fontSize: 14,
-    lineHeight: 21,
-    color: '#374151',
+    fontSize: 14.5,
+    lineHeight: 22,
+    color: Theme.colors.textPrimary,
   },
   explanationTextJunior: {
-    fontSize: 15.5,
-    lineHeight: 23,
-    color: '#1F2937',
+    fontSize: 14.5,
+    lineHeight: 22,
+    color: Theme.colors.textPrimary,
   },
-  vocabItem: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#059669',
+  instructionText: {
+    fontSize: 14.5,
+    lineHeight: 22,
+    color: Theme.colors.textPrimary,
   },
-  vocabItemJunior: {
+  instructionTextJunior: {
+    fontSize: 14.5,
+    lineHeight: 22,
+    color: Theme.colors.textPrimary,
+  },
+
+  // Vocabulary Chips
+  vocabChipsContainer: {
+    marginTop: 8,
+    gap: 10,
+  },
+  vocabItemCard: {
+    backgroundColor: Theme.colors.surfaceAlt,
     borderRadius: 12,
-    padding: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
   },
-  vocabRow: {
+  vocabPillRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    marginBottom: 4,
   },
-  vocabEst: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: '#0F172A',
-  },
-  vocabEstJunior: {
-    fontSize: 16,
-    color: '#065F46',
-  },
-  vocabSpeakerBtn: {
-    marginLeft: 8,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    backgroundColor: '#E0E7FF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  vocabSpeakerBtnActive: {
-    backgroundColor: '#FEE2E2',
-  },
-  vocabSpeakerIcon: {
-    fontSize: 13,
-  },
-  vocabRu: {
-    fontSize: 13,
-    color: '#4B5563',
-    marginLeft: 8,
-    flexShrink: 1,
-  },
-  vocabExampleRow: {
+  vocabEstChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 8,
+    backgroundColor: Theme.colors.surface,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    borderRadius: Theme.radius.chip,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    ...Theme.shadow.chip,
   },
-  vocabExampleSpeakerBtn: {
-    backgroundColor: '#E0E7FF',
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 6,
-    marginRight: 6,
-    alignItems: 'center',
+  vocabEstText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
+  },
+  vocabCircleSpeaker: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: Theme.colors.voiceButton,
     justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
   },
-  vocabExampleSpeakerIcon: {
-    fontSize: 11,
+  vocabCircleSpeakerActive: {
+    backgroundColor: Theme.colors.voiceButtonPressed,
   },
-  vocabExample: {
+  vocabSpeakerIconWhite: {
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  vocabRuText: {
+    fontSize: 13.5,
+    color: Theme.colors.textSecondary,
+    marginLeft: 10,
+    flexShrink: 1,
+  },
+  vocabExampleBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    backgroundColor: Theme.colors.surface,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+  },
+  vocabExampleCircleBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: Theme.colors.voiceButton,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  vocabExampleIconWhite: {
+    fontSize: 10,
+    color: '#FFFFFF',
+  },
+  vocabExampleText: {
     fontSize: 12.5,
-    color: '#475569',
+    color: Theme.colors.textSecondary,
     fontStyle: 'italic',
     flex: 1,
   },
-  vocabExampleJunior: {
-    fontSize: 13.5,
-    color: '#1E293B',
-    lineHeight: 18,
-  },
-  instructionText: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#374151',
-  },
-  instructionTextJunior: {
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  seniorVoiceBox: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginTop: 12,
-  },
-  seniorVoiceLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#475569',
-    marginBottom: 4,
-  },
-  seniorVoiceScript: {
-    fontSize: 13,
-    color: '#334155',
-    lineHeight: 18,
-    marginBottom: 8,
-  },
-  seniorVoiceButton: {
-    backgroundColor: '#3B82F6',
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-  },
-  seniorVoiceButtonActive: {
-    backgroundColor: '#DC2626',
-  },
-  seniorVoiceButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 12,
-  },
+
+  // Save & Next Action Buttons
   saveCardButton: {
-    backgroundColor: '#D97706',
-    borderRadius: 14,
+    backgroundColor: Theme.colors.primary,
+    borderRadius: Theme.radius.card,
     paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 18,
-    elevation: 3,
-    shadowColor: '#D97706',
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
+    marginTop: 14,
+    ...Theme.shadow.card,
   },
   saveCardButtonJunior: {
-    backgroundColor: '#059669',
-    paddingVertical: 16,
-    borderRadius: 18,
-    shadowColor: '#059669',
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
+    backgroundColor: Theme.colors.primary,
   },
   saveCardButtonSenior: {
-    backgroundColor: '#334155',
-    paddingVertical: 12,
-    borderRadius: 10,
+    backgroundColor: Theme.colors.primary,
   },
   saveCardButtonSaved: {
-    backgroundColor: '#10B981',
-    shadowColor: '#10B981',
-    opacity: 0.9,
+    backgroundColor: '#CFFAEE',
+    borderWidth: 1.5,
+    borderColor: '#5FEDC5',
+    elevation: 0,
+    shadowOpacity: 0,
   },
   saveCardButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: 'bold',
+    color: Theme.colors.onPrimaryText,
+    fontSize: 15.5,
+    fontWeight: '800',
+    backgroundColor: 'transparent',
   },
   saveCardButtonTextJunior: {
-    fontSize: 16.5,
+    fontSize: 15.5,
+    backgroundColor: 'transparent',
   },
   saveCardButtonTextSaved: {
-    color: '#FFFFFF',
+    color: Theme.colors.onPrimaryText,
+    backgroundColor: 'transparent',
   },
   nextTaskButton: {
-    borderRadius: 16,
-    paddingVertical: 15,
+    backgroundColor: Theme.colors.surface,
+    borderWidth: 1.5,
+    borderColor: Theme.colors.primary,
+    borderRadius: Theme.radius.card,
+    paddingVertical: 14,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 12,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
+    marginTop: 10,
+    ...Theme.shadow.card,
   },
   nextTaskButtonJunior: {
-    backgroundColor: '#059669',
-    paddingVertical: 18,
-    borderRadius: 20,
-    shadowColor: '#059669',
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
+    backgroundColor: Theme.colors.surface,
   },
   nextTaskButtonSenior: {
-    backgroundColor: '#1E40AF',
-    paddingVertical: 14,
-    borderRadius: 12,
+    backgroundColor: Theme.colors.surface,
   },
   nextTaskButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: 'bold',
+    color: Theme.colors.onPrimaryText,
+    fontSize: 15,
+    fontWeight: '700',
   },
   nextTaskButtonTextJunior: {
-    fontSize: 17.5,
+    fontSize: 15,
   },
-  // Segmented control for Tab 2
+
+  // Tab 2: Dictionary & History
+  header: {
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  headerTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 4,
+  },
+  pupilPill: {
+    backgroundColor: '#CFFAEE',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: Theme.radius.badge,
+    borderWidth: 1,
+    borderColor: '#5FEDC5',
+    elevation: 0,
+    shadowOpacity: 0,
+  },
+  pupilPillJunior: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FCD34D',
+    elevation: 0,
+    shadowOpacity: 0,
+  },
+  pupilPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Theme.colors.onPrimaryText,
+    backgroundColor: 'transparent',
+  },
+  pupilPillTextJunior: {
+    color: '#78350F',
+    backgroundColor: 'transparent',
+  },
+  appTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
+  },
+  appTitleJunior: {
+    fontSize: 24,
+  },
+  subtitle: {
+    fontSize: 13,
+    color: Theme.colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  subtitleJunior: {
+    fontSize: 13,
+  },
   segmentedControl: {
     flexDirection: 'row',
-    backgroundColor: '#E2E8F0',
+    backgroundColor: Theme.colors.surfaceAlt,
     borderRadius: 12,
     padding: 3,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
   },
   segmentBtn: {
     flex: 1,
@@ -2393,23 +2516,23 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   segmentBtnActiveJunior: {
-    backgroundColor: '#059669',
+    backgroundColor: Theme.colors.primary,
   },
   segmentBtnActiveSenior: {
-    backgroundColor: '#1E40AF',
+    backgroundColor: Theme.colors.primary,
   },
   segmentBtnText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#475569',
+    color: Theme.colors.textSecondary,
   },
   segmentBtnTextActive: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
+    color: Theme.colors.onPrimaryText,
+    fontWeight: '800',
   },
   listHint: {
     fontSize: 12,
-    color: '#6B7280',
+    color: Theme.colors.textSecondary,
     fontStyle: 'italic',
     marginBottom: 10,
   },
@@ -2417,24 +2540,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   vocabCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    backgroundColor: Theme.colors.surface,
+    borderRadius: Theme.radius.card,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: Theme.colors.border,
     marginBottom: 8,
-    shadowColor: '#000',
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 1,
+    ...Theme.shadow.card,
   },
   vocabCardJunior: {
-    borderColor: '#A7F3D0',
-    borderRadius: 16,
+    borderRadius: Theme.radius.card,
   },
   vocabCardExpanded: {
-    borderColor: '#3B82F6',
-    backgroundColor: '#F8FAFC',
+    borderColor: Theme.colors.primary,
+    backgroundColor: Theme.colors.surfaceAlt,
   },
   vocabCardTop: {
     flexDirection: 'row',
@@ -2448,44 +2567,46 @@ const styles = StyleSheet.create({
   },
   vocabCardEst: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: '#0F172A',
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
   },
   vocabCardEstJunior: {
-    fontSize: 18,
-    color: '#065F46',
+    fontSize: 16,
   },
   vocabCardSpeaker: {
     marginLeft: 8,
-    backgroundColor: '#EEF2FF',
+    backgroundColor: Theme.colors.voiceButton,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
   },
   vocabCardSpeakerActive: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: Theme.colors.voiceButtonPressed,
   },
   vocabCardSpeakerIcon: {
-    fontSize: 13,
+    fontSize: 12,
+    color: '#FFFFFF',
   },
   vocabCardDelete: {
     padding: 4,
   },
   vocabCardDeleteText: {
-    color: '#94A3B8',
+    color: Theme.colors.textMuted,
     fontSize: 15,
     fontWeight: 'bold',
   },
   vocabCardRu: {
     fontSize: 14,
-    color: '#475569',
+    color: Theme.colors.textSecondary,
     marginTop: 2,
   },
   vocabCardExampleBox: {
     marginTop: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: Theme.colors.surfaceAlt,
     padding: 8,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
   },
   vocabCardExampleHeader: {
     flexDirection: 'row',
@@ -2496,22 +2617,24 @@ const styles = StyleSheet.create({
   vocabCardExampleLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#64748B',
+    color: Theme.colors.textSecondary,
   },
   vocabCardExampleText: {
     fontSize: 12.5,
-    color: '#1E293B',
+    color: Theme.colors.textPrimary,
     fontStyle: 'italic',
   },
+
   emptyBox: {
     alignItems: 'center',
     justifyContent: 'center',
     padding: 30,
     marginTop: 40,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    backgroundColor: Theme.colors.surface,
+    borderRadius: Theme.radius.card,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: Theme.colors.border,
+    ...Theme.shadow.card,
   },
   emptyIcon: {
     fontSize: 44,
@@ -2519,29 +2642,28 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     fontSize: 17,
-    fontWeight: 'bold',
-    color: '#1E293B',
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
     marginBottom: 6,
   },
   emptyText: {
     fontSize: 13.5,
-    color: '#64748B',
+    color: Theme.colors.textSecondary,
     textAlign: 'center',
     lineHeight: 19,
   },
+
+  // History List
   historyList: {
     gap: 10,
   },
   historyItemCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    backgroundColor: Theme.colors.surface,
+    borderRadius: Theme.radius.card,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 5,
-    elevation: 2,
+    borderColor: Theme.colors.border,
+    ...Theme.shadow.card,
     marginBottom: 10,
   },
   historyItemHeader: {
@@ -2552,7 +2674,7 @@ const styles = StyleSheet.create({
   },
   historyItemDate: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: Theme.colors.textMuted,
     fontWeight: '500',
   },
   historyBadgeRow: {
@@ -2560,7 +2682,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   historyTypeBadge: {
-    backgroundColor: '#EDE9FE',
+    backgroundColor: Theme.colors.slotSuccessBg,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
@@ -2568,28 +2690,30 @@ const styles = StyleSheet.create({
   historyTypeBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#6D28D9',
+    color: Theme.colors.onPrimaryText,
   },
   historyItemBadge: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: Theme.colors.surfaceAlt,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
   },
   historyItemBadgeText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#475569',
+    color: Theme.colors.textSecondary,
   },
   historyItemTitle: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: '#0F172A',
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
     marginBottom: 4,
   },
   historyItemSnippet: {
     fontSize: 13,
-    color: '#64748B',
+    color: Theme.colors.textSecondary,
     lineHeight: 18,
     marginBottom: 10,
   },
@@ -2598,48 +2722,245 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: Theme.colors.border,
     paddingTop: 8,
   },
   historyOpenBtn: {
-    backgroundColor: '#059669',
+    backgroundColor: Theme.colors.primary,
     paddingHorizontal: 14,
     paddingVertical: 7,
     borderRadius: 10,
   },
   historyOpenBtnText: {
-    color: '#FFFFFF',
+    color: Theme.colors.onPrimaryText,
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   historyDeleteBtn: {
     paddingHorizontal: 10,
     paddingVertical: 7,
   },
   historyDeleteBtnText: {
-    color: '#EF4444',
+    color: Theme.colors.danger,
     fontSize: 13,
     fontWeight: '600',
   },
+
+  // Tab 3: Settings
+  card: {
+    backgroundColor: Theme.colors.surface,
+    borderRadius: Theme.radius.card,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    ...Theme.shadow.card,
+  },
+  cardJunior: {
+    borderRadius: Theme.radius.card,
+  },
+  cardSenior: {
+    borderRadius: Theme.radius.card,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cardTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
+  },
+  cardTitleJunior: {
+    fontSize: 17,
+  },
+  tierTag: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: Theme.radius.badge,
+    backgroundColor: Theme.colors.slotSuccessBg,
+    borderWidth: 1,
+    borderColor: Theme.colors.primary,
+  },
+  tierTagJunior: {},
+  tierTagSenior: {},
+  tierTagText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Theme.colors.onPrimaryText,
+  },
+  tierTagTextJunior: {},
+  tierTagTextSenior: {},
+  caption: {
+    fontSize: 12,
+    color: Theme.colors.textSecondary,
+    marginBottom: 12,
+    marginTop: 2,
+  },
+  inputRow: {
+    marginBottom: 12,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Theme.colors.textPrimary,
+    marginBottom: 6,
+  },
+  labelJunior: {
+    fontSize: 13,
+  },
+  bold: {
+    fontWeight: '800',
+    color: Theme.colors.onPrimaryText,
+  },
+  textInput: {
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    borderRadius: Theme.radius.button,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    backgroundColor: Theme.colors.surfaceAlt,
+    color: Theme.colors.textPrimary,
+  },
+  textInputJunior: {
+    borderRadius: Theme.radius.button,
+  },
+  gradeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 14,
+  },
+  gradeChip: {
+    width: 42,
+    height: 38,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    backgroundColor: Theme.colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gradeChipJunior: {
+    width: 42,
+    height: 38,
+  },
+  gradeChipActiveJunior: {
+    backgroundColor: Theme.colors.primary,
+    borderColor: Theme.colors.primary,
+  },
+  gradeChipActiveSenior: {
+    backgroundColor: Theme.colors.primary,
+    borderColor: Theme.colors.primary,
+  },
+  gradeChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Theme.colors.textPrimary,
+  },
+  gradeChipTextJunior: {
+    fontSize: 13,
+  },
+  gradeChipTextActive: {
+    color: Theme.colors.onPrimaryText,
+    fontWeight: '800',
+  },
+  interestsSection: {
+    marginTop: 4,
+  },
+  interestsInput: {
+    minHeight: 50,
+    textAlignVertical: 'top',
+  },
+  interestsHint: {
+    fontSize: 12,
+    color: Theme.colors.textSecondary,
+    fontStyle: 'italic',
+    lineHeight: 17,
+    marginTop: 6,
+    marginBottom: 10,
+    backgroundColor: Theme.colors.surfaceAlt,
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+  },
+  interestsHintJunior: {},
+  suggestionsTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Theme.colors.textSecondary,
+    marginBottom: 6,
+  },
+  suggestionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  suggestionChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+  },
+  suggestionChipSelected: {
+    backgroundColor: Theme.colors.slotSuccessBg,
+    borderColor: Theme.colors.primary,
+  },
+  suggestionText: {
+    fontSize: 12,
+    color: Theme.colors.textSecondary,
+    fontWeight: '500',
+  },
+  suggestionTextSelected: {
+    color: Theme.colors.onPrimaryText,
+    fontWeight: '800',
+  },
+  storageStats: {
+    fontSize: 13.5,
+    color: Theme.colors.textPrimary,
+    marginBottom: 6,
+  },
+  clearDataBtn: {
+    marginTop: 14,
+    backgroundColor: Theme.colors.dangerBg,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  clearDataBtnText: {
+    color: Theme.colors.danger,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+
   // Bottom Tab Bar
   bottomTabBar: {
     flexDirection: 'row',
+    backgroundColor: Theme.colors.surface,
     borderTopWidth: 1,
+    borderTopColor: Theme.colors.border,
     alignItems: 'center',
     justifyContent: 'space-around',
     paddingHorizontal: 10,
     elevation: 10,
     shadowColor: '#000',
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.06,
     shadowRadius: 6,
   },
   bottomTabBarJunior: {
-    backgroundColor: '#FFFFFF',
-    borderTopColor: '#A7F3D0',
+    backgroundColor: Theme.colors.surface,
+    borderTopColor: Theme.colors.border,
   },
   bottomTabBarSenior: {
-    backgroundColor: '#FFFFFF',
-    borderTopColor: '#E2E8F0',
+    backgroundColor: Theme.colors.surface,
+    borderTopColor: Theme.colors.border,
   },
   tabItem: {
     flex: 1,
@@ -2662,27 +2983,31 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -4,
     right: -12,
-    backgroundColor: '#059669',
+    backgroundColor: Theme.colors.primary,
     borderRadius: 10,
     paddingHorizontal: 5,
     paddingVertical: 1,
   },
   tabBadgeText: {
-    color: '#FFFFFF',
+    color: Theme.colors.onPrimaryText,
     fontSize: 10,
     fontWeight: 'bold',
   },
   tabLabel: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '600',
-    color: '#64748B',
+    color: Theme.colors.textSecondary,
+  },
+  tabLabelActive: {
+    color: Theme.colors.onPrimaryText,
+    fontWeight: '800',
   },
   tabLabelActiveJunior: {
-    color: '#059669',
-    fontWeight: 'bold',
+    color: Theme.colors.onPrimaryText,
+    fontWeight: '800',
   },
   tabLabelActiveSenior: {
-    color: '#1E40AF',
-    fontWeight: 'bold',
+    color: Theme.colors.onPrimaryText,
+    fontWeight: '800',
   },
 });

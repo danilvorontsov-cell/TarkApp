@@ -123,8 +123,8 @@ class AudioQueueManagerClass {
   /**
    * Enqueues all audio items from a parsed lesson according to sequential priority:
    * Priority 1 (Immediate): voice_prompt_script
-   * Priority 2 (300-400ms pause): theme_explanation
-   * Priority 3 (300-400ms pause): how_to_answer (bilingual)
+   * Priority 2 (150ms pause): theme_explanation (bilingual)
+   * Priority 3 (150ms pause): how_to_answer (bilingual)
    * Priority 4 (300ms pause each): vocabulary words & examples
    */
   public async prefetchLessonAudio(analysis: PageAnalysisResponse, baseUrl: string = API_BASE_URL) {
@@ -150,13 +150,13 @@ class AudioQueueManagerClass {
       });
     }
 
-    // 2. Priority 2: Theme explanation (theme_explanation)
+    // 2. Priority 2: Theme explanation (theme_explanation) with bilingual stitching
     if (analysis.theme_explanation && analysis.theme_explanation.trim()) {
       this.upsertItem({
         id: 'theme_explanation',
         text: analysis.theme_explanation,
         lang: 'ru',
-        bilingual: false,
+        bilingual: true,
         priority: 2,
       });
     }
@@ -275,7 +275,9 @@ class AudioQueueManagerClass {
       if (info.exists && typeof (info as any).size === 'number' && (info as any).size >= this.MIN_AUDIO_BYTES) {
         item.status = 'READY';
         item.localUri = targetFile;
-        this.currentDownloadingId = null;
+        if (this.currentDownloadingId === item.id) {
+          this.currentDownloadingId = null;
+        }
         this.notify();
         this.flushCallbacks(item);
         return true;
@@ -300,7 +302,9 @@ class AudioQueueManagerClass {
       ) {
         item.status = 'READY';
         item.localUri = targetFile;
-        this.currentDownloadingId = null;
+        if (this.currentDownloadingId === item.id) {
+          this.currentDownloadingId = null;
+        }
         this.notify();
         this.flushCallbacks(item);
         return true;
@@ -311,7 +315,9 @@ class AudioQueueManagerClass {
           await FileSystem.deleteAsync(targetFile, { idempotent: true });
         }
         item.status = 'ERROR';
-        this.currentDownloadingId = null;
+        if (this.currentDownloadingId === item.id) {
+          this.currentDownloadingId = null;
+        }
         this.notify();
         this.flushErrorCallbacks(item, new Error(`Download returned HTTP ${result.status}, size: ${fileSize}`));
         return false;
@@ -322,7 +328,9 @@ class AudioQueueManagerClass {
         await FileSystem.deleteAsync(targetFile, { idempotent: true });
       } catch {}
       item.status = 'ERROR';
-      this.currentDownloadingId = null;
+      if (this.currentDownloadingId === item.id) {
+        this.currentDownloadingId = null;
+      }
       this.notify();
       this.flushErrorCallbacks(item, downloadErr);
       return false;
@@ -355,11 +363,11 @@ class AudioQueueManagerClass {
 
         await this.downloadItem(bestItem, baseUrl);
 
-        // Relaxed sequential delay between background items to prevent Edge-TTS socket congestion:
+        // Responsive sequential delay between background items
         // Priority 0 (urgent): 50ms
-        // Priorities 1-3: 400ms
-        // Priority 4 (vocabulary): 500ms
-        const delayMs = bestItem.priority === 0 ? 50 : bestItem.priority === 4 ? 500 : 400;
+        // Priorities 1-3: 150ms
+        // Priority 4 (vocabulary): 300ms
+        const delayMs = bestItem.priority === 0 ? 50 : bestItem.priority === 4 ? 300 : 150;
         await new Promise((r) => setTimeout(r, delayMs));
       }
     } finally {
@@ -372,10 +380,11 @@ class AudioQueueManagerClass {
   /**
    * Handles user tapping an audio play button:
    * 1. If currently playing this id -> toggle stop.
-   * 2. If already READY -> plays instantly from local cache.
-   * 3. If LOADING or QUEUED -> elevates to top priority (0), shows spinner, triggers immediate download.
-   * 4. If IDLE or ERROR -> enqueues at priority 0, starts immediate download.
-   * 5. If local caching fails -> seamlessly falls back to direct live audio streaming (never shows error alert).
+   * 2. If user taps during LOADING state -> cancels waiting/loading state.
+   * 3. If already READY -> plays instantly from local cache (<10ms).
+   * 4. If QUEUED / LOADING -> elevates to top priority (0), shows spinner.
+   * 5. Fast Streaming Fallback: If local file download hasn't finished in 3.5 seconds,
+   *    switches seamlessly to live audio streaming without ever stalling or showing error.
    */
   public async playOrEnqueue(
     id: string,
@@ -393,6 +402,18 @@ class AudioQueueManagerClass {
       this.currentlyPlayingId = null;
       this.pendingUserPlayId = null;
       callbacks?.onFinish?.();
+      this.notify();
+      return;
+    }
+
+    // 2. Toggle off if user taps while this item is currently waiting/loading
+    if (this.pendingUserPlayId === id) {
+      this.pendingUserPlayId = null;
+      const item = this.queue.get(id);
+      if (item) {
+        item.onReadyCallbacks = [];
+        item.onErrorCallbacks = [];
+      }
       this.notify();
       return;
     }
@@ -465,8 +486,54 @@ class AudioQueueManagerClass {
       }
     }
 
-    // Register playback trigger when file is ready
+    // Reset previous callbacks so we don't stack up obsolete handlers
+    item.onReadyCallbacks = [];
+    item.onErrorCallbacks = [];
+
+    let fallbackTriggered = false;
+
+    // Fast streaming fallback: If disk download hasn't finished in 3.5 seconds, start live stream directly
+    const fallbackTimer = setTimeout(async () => {
+      if (this.pendingUserPlayId === id && (!item?.localUri || item?.status !== 'READY')) {
+        fallbackTriggered = true;
+        console.log(`[AudioQueue] Download taking >3.5s for ${id}, switching to direct streaming...`);
+        this.currentlyPlayingId = id;
+        this.pendingUserPlayId = null;
+        this.notify();
+
+        try {
+          await playTts(cleanText, lang, id, {
+            onStart: () => {
+              this.currentlyPlayingId = id;
+              this.pendingUserPlayId = null;
+              this.notify();
+              callbacks?.onStart?.();
+            },
+            onFinish: () => {
+              this.currentlyPlayingId = null;
+              this.notify();
+              callbacks?.onFinish?.();
+            },
+            onError: (playErr) => {
+              this.currentlyPlayingId = null;
+              this.notify();
+              callbacks?.onError?.(playErr);
+            },
+          }, baseUrl, item?.bilingual ?? bilingual);
+        } catch (streamingErr) {
+          this.currentlyPlayingId = null;
+          this.notify();
+          callbacks?.onError?.(streamingErr);
+        }
+      }
+    }, 3500);
+
+    // Register callback for when disk file becomes ready
     item.onReadyCallbacks.push(async (localUri: string) => {
+      clearTimeout(fallbackTimer);
+      if (fallbackTriggered) {
+        return;
+      }
       if (this.pendingUserPlayId !== id) {
         return;
       }
@@ -496,8 +563,12 @@ class AudioQueueManagerClass {
 
     // Fallback: If downloading to disk fails, stream live directly via playTts
     item.onErrorCallbacks.push(async (err) => {
+      clearTimeout(fallbackTimer);
+      if (fallbackTriggered) {
+        return;
+      }
       if (this.pendingUserPlayId === id) {
-        console.warn(`[AudioQueue] Local download failed for ${id}, falling back to live direct stream:`, err);
+        console.warn(`[AudioQueue] Local download failed for ${id}, falling back to direct stream:`, err);
         this.currentlyPlayingId = id;
         this.pendingUserPlayId = null;
         this.notify();
@@ -520,7 +591,7 @@ class AudioQueueManagerClass {
               this.notify();
               callbacks?.onError?.(playErr);
             },
-          }, baseUrl);
+          }, baseUrl, item?.bilingual ?? bilingual);
         } catch (streamingErr) {
           this.currentlyPlayingId = null;
           this.notify();
@@ -529,8 +600,8 @@ class AudioQueueManagerClass {
       }
     });
 
-    // If not currently downloading this item, trigger immediate download
-    if (this.currentDownloadingId !== id) {
+    // If item is not currently downloading, start download immediately
+    if (this.currentDownloadingId !== id && item.status !== 'LOADING') {
       this.downloadItem(item, baseUrl);
     } else {
       this.processQueue(baseUrl);

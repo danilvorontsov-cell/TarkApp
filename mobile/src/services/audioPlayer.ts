@@ -70,7 +70,8 @@ export async function playTts(
   lang: 'ru' | 'et' = 'ru',
   playbackId: string = 'prompt',
   callbacks?: AudioPlaybackCallbacks,
-  baseUrl: string = API_BASE_URL
+  baseUrl: string = API_BASE_URL,
+  bilingual: boolean = false
 ): Promise<AudioPlayer | null> {
   // Toggle off if currently playing this item
   if (activePlayer && currentPlayingId === playbackId) {
@@ -93,9 +94,10 @@ export async function playTts(
     text.startsWith('http://') ||
     text.startsWith('https://');
 
+  const bilingualParam = bilingual ? '&bilingual=true' : '';
   const url = isDirectUri
     ? text
-    : `${baseUrl}/api/v1/voice/tts?text=${encodeURIComponent(text.trim())}&lang=${lang}`;
+    : `${baseUrl}/api/v1/voice/tts?text=${encodeURIComponent(text.trim())}&lang=${lang}${bilingualParam}`;
 
   try {
     currentPlayingId = playbackId;

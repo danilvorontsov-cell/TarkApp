@@ -1,6 +1,6 @@
 import base64
 import logging
-from typing import Optional, Union, List
+from typing import Optional, Union, List, Tuple
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
@@ -8,6 +8,8 @@ from app.config import settings
 from app.models.page_analysis import (
     AgeTier,
     AnalyzePageJsonRequest,
+    MoreExamplesRequest,
+    MoreExamplesResponse,
     PageAnalysisResponse,
     UserProfile,
 )
@@ -32,13 +34,14 @@ ALLOWED_MIME_TYPES = {
     status_code=status.HTTP_200_OK,
     summary="Анализ страницы эстонского учебника и адаптация под ученика",
     description=(
-        "Принимает фотографию страницы учебника/тетради (Opiq, Koolibri, Avita) "
+        "Принимает одну или несколько фотографий страниц учебника/тетради (Opiq, Koolibri, Avita) "
         "и параметры профиля ребенка (класс, звено, увлечения). "
         "Возвращает структурированный разбор на русском языке с эстонским словарем и каркасом ответа."
     ),
 )
 async def analyze_page(
-    file: UploadFile = File(..., description="Файл изображения страницы (JPEG/PNG)"),
+    files: Optional[List[UploadFile]] = File(default=None, description="Список файлов страниц (JPEG/PNG)"),
+    file: Optional[UploadFile] = File(default=None, description="Одиночный файл изображения (для обратной совместимости)"),
     grade: int = Form(default=3, ge=1, le=12, description="Класс от 1 до 12"),
     tier: Optional[AgeTier] = Form(default=None, description="Возрастное звено (primary, middle, gymnasium)"),
     interests: Optional[str] = Form(
@@ -51,27 +54,42 @@ async def analyze_page(
     ),
     nickname: Optional[str] = Form(default="Друг", description="Имя ученика для персонализации"),
 ) -> PageAnalysisResponse:
-    # Validate MIME type
-    content_type = file.content_type or "image/jpeg"
-    if content_type.lower() not in ALLOWED_MIME_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Неподдерживаемый формат изображения: {content_type}. Поддерживаются: {', '.join(ALLOWED_MIME_TYPES)}",
-        )
+    target_files: List[UploadFile] = []
+    if files:
+        target_files.extend(files)
+    if file:
+        target_files.append(file)
 
-    # Read image contents
-    image_bytes = await file.read()
-    if not image_bytes:
+    if not target_files:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Файл изображения пуст.",
+            detail="Не передано ни одного файла изображения.",
         )
 
     max_size_bytes = settings.MAX_IMAGE_SIZE_MB * 1024 * 1024
-    if len(image_bytes) > max_size_bytes:
+    images_data: List[Tuple[bytes, str]] = []
+
+    for f in target_files:
+        content_type = f.content_type or "image/jpeg"
+        if content_type.lower() not in ALLOWED_MIME_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Неподдерживаемый формат изображения: {content_type}. Поддерживаются: {', '.join(ALLOWED_MIME_TYPES)}",
+            )
+        data = await f.read()
+        if not data:
+            continue
+        if len(data) > max_size_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Размер файла '{f.filename}' превышает лимит {settings.MAX_IMAGE_SIZE_MB} МБ.",
+            )
+        images_data.append((data, content_type))
+
+    if not images_data:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Размер файла превышает лимит {settings.MAX_IMAGE_SIZE_MB} МБ.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Файл изображения пуст.",
         )
 
     # Auto-resolve tier if not explicitly passed
@@ -87,9 +105,8 @@ async def analyze_page(
 
     try:
         return await gemini_tutor_service.analyze_page(
-            image_bytes=image_bytes,
-            mime_type=content_type,
             profile=profile,
+            images=images_data,
         )
     except Exception as e:
         logger.error(f"Error analyzing page: {e}", exc_info=True)
@@ -104,21 +121,45 @@ async def analyze_page(
     response_model=PageAnalysisResponse,
     status_code=status.HTTP_200_OK,
     summary="Анализ страницы через Base64 JSON payload",
-    description="Альтернативный эндпоинт для клиентов, передающих base64 строку вместо multipart/form-data.",
+    description="Альтернативный эндпоинт для клиентов, передающих base64 строку вместо multipart/form-data. Поддерживает одиночные и множественные страницы.",
 )
 async def analyze_page_json(request: AnalyzePageJsonRequest) -> PageAnalysisResponse:
-    try:
-        image_bytes = base64.b64decode(request.image_base64)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Некорректная Base64 строка: {e}",
-        )
+    images_data: List[Tuple[bytes, str]] = []
 
-    if not image_bytes:
+    # 1. Проверяем список изображений
+    if request.images_base64 and len(request.images_base64) > 0:
+        for idx, b64_str in enumerate(request.images_base64):
+            try:
+                ib = base64.b64decode(b64_str)
+                if ib:
+                    mtype = "image/jpeg"
+                    if request.mime_types and idx < len(request.mime_types):
+                        mtype = request.mime_types[idx]
+                    elif request.mime_type:
+                        mtype = request.mime_type
+                    images_data.append((ib, mtype))
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Некорректная Base64 строка в изображении #{idx + 1}: {e}",
+                )
+
+    # 2. Фолбэк на одиночное изображение (для обратной совместимости)
+    elif request.image_base64:
+        try:
+            image_bytes = base64.b64decode(request.image_base64)
+            if image_bytes:
+                images_data.append((image_bytes, request.mime_type or "image/jpeg"))
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Некорректная Base64 строка: {e}",
+            )
+
+    if not images_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Декодированное изображение пусто.",
+            detail="Не передано ни одного корректного изображения для анализа.",
         )
 
     resolved_tier = request.tier or AgeTier.from_grade(request.grade)
@@ -132,9 +173,8 @@ async def analyze_page_json(request: AnalyzePageJsonRequest) -> PageAnalysisResp
 
     try:
         return await gemini_tutor_service.analyze_page(
-            image_bytes=image_bytes,
-            mime_type=request.mime_type,
             profile=profile,
+            images=images_data,
         )
     except Exception as e:
         logger.error(f"Error analyzing page via JSON: {e}", exc_info=True)
@@ -142,3 +182,30 @@ async def analyze_page_json(request: AnalyzePageJsonRequest) -> PageAnalysisResp
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Ошибка обработки страницы: {str(e)}",
         )
+
+
+@router.post(
+    "/more-examples",
+    response_model=MoreExamplesResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Генерация дополнительных эстонских речевых примеров для тренировки",
+    description="Создает новые эстонские примеры предложений с пропусками для интерактивного конструктора ответа.",
+)
+async def get_more_examples(request: MoreExamplesRequest) -> MoreExamplesResponse:
+    try:
+        templates = await gemini_tutor_service.generate_more_examples(
+            task_title=request.task_title,
+            theme_explanation=request.theme_explanation or "",
+            vocabulary=request.vocabulary,
+            current_template=request.current_template,
+            grade=request.grade,
+            tier=request.tier,
+        )
+        return MoreExamplesResponse(templates=templates)
+    except Exception as e:
+        logger.error(f"Error generating more examples: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка генерации дополнительных примеров: {str(e)}",
+        )
+
