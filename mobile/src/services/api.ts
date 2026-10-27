@@ -47,6 +47,40 @@ export interface QuickTranslateResponse {
   target_lang: string;
 }
 
+let lastKnownRequestId: string = '';
+
+export function getLastRequestId(): string {
+  return lastKnownRequestId;
+}
+
+export function setLastRequestId(id: string): void {
+  lastKnownRequestId = id;
+}
+
+export function generateClientRequestId(): string {
+  const rand = Math.random().toString(36).substring(2, 8);
+  const id = `req_${Date.now()}_${rand}`;
+  lastKnownRequestId = id;
+  return id;
+}
+
+export interface FeedbackPayload {
+  category: 'bug' | 'feature';
+  message: string;
+  contact?: string;
+  device_model?: string;
+  os_version?: string;
+  app_version?: string;
+  current_grade?: number;
+  last_request_id?: string;
+  client_time?: string;
+}
+
+export interface FeedbackResponse {
+  success: boolean;
+  message: string;
+}
+
 /**
  * Formats any network, HTTP, or unexpected error into a user-friendly Russian explanation.
  * Eliminates technical stack traces, internal paths, and raw system exceptions.
@@ -341,9 +375,53 @@ export async function quickTranslate(
       throw await parseErrorResponse(response);
     }
 
+    const reqId = response.headers.get('x-request-id');
+    if (reqId) {
+      setLastRequestId(reqId);
+    }
+
     return (await response.json()) as QuickTranslateResponse;
   } catch (err: any) {
     captureException(err, { endpoint, context: 'quickTranslate' });
+    if (err instanceof ApiError) {
+      throw err;
+    }
+    throw new ApiError(0, formatFriendlyErrorMessage(err), undefined, err);
+  }
+}
+
+/**
+ * Отправляет баг-репорт или идею разработчику в Telegram с привязкой к телеметрии.
+ */
+export async function sendFeedback(
+  payload: FeedbackPayload,
+  baseUrl: string = API_BASE_URL
+): Promise<FeedbackResponse> {
+  const endpoint = `${baseUrl}/api/v1/feedback`;
+  try {
+    const clientReqId = generateClientRequestId();
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-Request-ID': clientReqId,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const serverReqId = response.headers.get('x-request-id');
+    if (serverReqId) {
+      setLastRequestId(serverReqId);
+    }
+
+    if (!response.ok) {
+      throw await parseErrorResponse(response);
+    }
+
+    return (await response.json()) as FeedbackResponse;
+  } catch (err: any) {
+    captureException(err, { endpoint, context: 'sendFeedback' });
     if (err instanceof ApiError) {
       throw err;
     }

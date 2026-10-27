@@ -51,11 +51,12 @@ import { DrawerMenu, DrawerTabType } from './src/components/DrawerMenu';
 import { ComingSoonCard } from './src/components/ComingSoonCard';
 import { AvatarPickerModal } from './src/components/AvatarPickerModal';
 import { QuickTranslatorScreen } from './src/screens/QuickTranslatorScreen';
+import { FeedbackScreen } from './src/screens/FeedbackScreen';
 
 // Initialize Sentry stub/client once at entry
 initSentry();
 
-type TabType = 'study' | 'dictionary' | 'translator' | 'tests' | 'reading' | 'settings';
+type TabType = 'study' | 'dictionary' | 'translator' | 'tests' | 'reading' | 'settings' | 'feedback';
 type Tab2Mode = 'vocab' | 'history';
 
 interface SessionLesson {
@@ -1978,6 +1979,12 @@ function MainApp() {
           />
         )}
         {currentTab === 'settings' && renderSettingsTab()}
+        {currentTab === 'feedback' && (
+          <FeedbackScreen
+            onBack={() => switchTab('study')}
+            currentGrade={profile.grade}
+          />
+        )}
       </ScrollView>
 
       {/* Navigation Drawer Component (No Bottom Tab Bar) */}

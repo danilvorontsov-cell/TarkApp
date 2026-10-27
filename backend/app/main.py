@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 import traceback
+import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +14,7 @@ from app.routers.analyze import router as analyze_router
 from app.routers.health import router as health_router
 from app.routers.voice import router as voice_router
 from app.routers.translate import router as translate_router
+from app.routers.feedback import router as feedback_router
 from app.services.telegram_alert import send_telegram_alert
 
 # Setup file loggers with rotation (backend/logs/app.log and backend/logs/error.log)
@@ -52,20 +54,25 @@ app.add_middleware(
 async def log_requests_middleware(request: Request, call_next):
     """
     Measures processing duration and logs all incoming requests (method, endpoint,
-    status_code, response time in ms) into backend/logs/app.log.
+    status_code, response time in ms, request_id) into backend/logs/app.log.
+    Adds X-Request-ID to response headers for end-to-end tracing.
     """
     start_time = time.perf_counter()
+    request_id = request.headers.get("x-request-id") or f"req_{uuid.uuid4().hex[:8]}"
+    request.state.request_id = request_id
+
     try:
         response = await call_next(request)
         process_time_ms = (time.perf_counter() - start_time) * 1000
+        response.headers["x-request-id"] = request_id
         logger.info(
-            f"{request.method} {request.url.path} - {response.status_code} - {process_time_ms:.2f}ms"
+            f"[{request_id}] {request.method} {request.url.path} - {response.status_code} - {process_time_ms:.2f}ms"
         )
         return response
     except Exception as exc:
         process_time_ms = (time.perf_counter() - start_time) * 1000
         logger.error(
-            f"{request.method} {request.url.path} - FAILED - {process_time_ms:.2f}ms - error: {exc}"
+            f"[{request_id}] {request.method} {request.url.path} - FAILED - {process_time_ms:.2f}ms - error: {exc}"
         )
         raise exc
 
@@ -75,6 +82,7 @@ app.include_router(health_router)
 app.include_router(analyze_router)
 app.include_router(voice_router)
 app.include_router(translate_router)
+app.include_router(feedback_router)
 
 
 @app.exception_handler(HTTPException)

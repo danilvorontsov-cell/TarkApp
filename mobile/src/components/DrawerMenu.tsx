@@ -16,7 +16,7 @@ import { Theme } from '../theme/colors';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 320);
 
-export type DrawerTabType = 'study' | 'dictionary' | 'translator' | 'tests' | 'reading' | 'settings';
+export type DrawerTabType = 'study' | 'dictionary' | 'translator' | 'tests' | 'reading' | 'settings' | 'feedback';
 
 interface DrawerMenuProps {
   isOpen: boolean;
@@ -234,8 +234,28 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
         {/* Thin Divider Line */}
         <View style={styles.divider} />
 
-        {/* Drawer Footer (Settings + Login/Logout) */}
+        {/* Drawer Footer (Feedback + Settings + Login/Logout) */}
         <View style={styles.drawerFooter}>
+          {/* Feedback Item */}
+          <TouchableOpacity
+            style={[styles.menuItem, activeTab === 'feedback' && styles.menuItemActive]}
+            onPress={() => {
+              onSelectTab('feedback');
+              onClose();
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.menuItemIcon}>💬</Text>
+            <Text
+              style={[
+                styles.menuItemText,
+                activeTab === 'feedback' && styles.menuItemTextActive,
+              ]}
+            >
+              Связь с разработчиком
+            </Text>
+          </TouchableOpacity>
+
           {/* Settings & Profile Item */}
           <TouchableOpacity
             style={[styles.menuItem, activeTab === 'settings' && styles.menuItemActive]}
