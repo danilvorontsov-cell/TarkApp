@@ -2,9 +2,11 @@ import base64
 import logging
 from typing import Optional, Union, List, Tuple
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
+from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database import get_db
 from app.models.page_analysis import (
     AgeTier,
     AnalyzePageJsonRequest,
@@ -14,14 +16,15 @@ from app.models.page_analysis import (
     UserProfile,
 )
 from app.services.gemini_service import gemini_tutor_service
-from app.routers.license import verify_device_access
+from app.services import license_service
+from app.routers.license import verify_review_access
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/v1",
     tags=["Analysis"],
-    dependencies=[Depends(verify_device_access)],
+    dependencies=[Depends(verify_review_access)],
 )
 
 ALLOWED_MIME_TYPES = {
@@ -31,6 +34,12 @@ ALLOWED_MIME_TYPES = {
     "image/heic",
     "image/jpg",
 }
+
+
+def _extract_device_id(raw_val: object) -> str:
+    if isinstance(raw_val, str):
+        return raw_val.strip()
+    return ""
 
 
 @router.post(
@@ -58,6 +67,8 @@ async def analyze_page(
         description="Для обратной совместимости со старыми клиентами (одиночная тема)"
     ),
     nickname: Optional[str] = Form(default="Друг", description="Имя ученика для персонализации"),
+    x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
+    db: Session = Depends(get_db),
 ) -> PageAnalysisResponse:
     target_files: List[UploadFile] = []
     if files:
@@ -109,10 +120,15 @@ async def analyze_page(
     )
 
     try:
-        return await gemini_tutor_service.analyze_page(
+        result = await gemini_tutor_service.analyze_page(
             profile=profile,
             images=images_data,
         )
+        # Deduct 1 review attempt only upon successful generation
+        dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")
+        if dev_id and isinstance(db, Session):
+            license_service.deduct_review_attempt(dev_id, db)
+        return result
     except Exception as e:
         logger.error(f"Error analyzing page: {e}", exc_info=True)
         raise HTTPException(
@@ -128,7 +144,11 @@ async def analyze_page(
     summary="Анализ страницы через Base64 JSON payload",
     description="Альтернативный эндпоинт для клиентов, передающих base64 строку вместо multipart/form-data. Поддерживает одиночные и множественные страницы.",
 )
-async def analyze_page_json(request: AnalyzePageJsonRequest) -> PageAnalysisResponse:
+async def analyze_page_json(
+    request: AnalyzePageJsonRequest,
+    x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
+    db: Session = Depends(get_db),
+) -> PageAnalysisResponse:
     images_data: List[Tuple[bytes, str]] = []
 
     # 1. Проверяем список изображений
@@ -177,10 +197,15 @@ async def analyze_page_json(request: AnalyzePageJsonRequest) -> PageAnalysisResp
     )
 
     try:
-        return await gemini_tutor_service.analyze_page(
+        result = await gemini_tutor_service.analyze_page(
             profile=profile,
             images=images_data,
         )
+        # Deduct 1 review attempt only upon successful generation
+        dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")
+        if dev_id and isinstance(db, Session):
+            license_service.deduct_review_attempt(dev_id, db)
+        return result
     except Exception as e:
         logger.error(f"Error analyzing page via JSON: {e}", exc_info=True)
         raise HTTPException(

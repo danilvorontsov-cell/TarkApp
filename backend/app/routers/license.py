@@ -44,6 +44,27 @@ async def verify_device_access(
     return check_res
 
 
+async def verify_review_access(
+    x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
+    db: Session = Depends(get_db),
+):
+    """
+    FastAPI Dependency for textbook review endpoints (/api/v1/analyze-page*).
+    Verifies trial expiration and the 5 free reviews allowance.
+    """
+    device_id = (x_device_id or "").strip()
+    if not device_id:
+        if settings.APP_ENV in ("development", "test"):
+            device_id = "dev-test-device"
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": "TRIAL_EXPIRED", "message": "Заголовок X-Device-ID обязателен для проверки лицензии"},
+            )
+
+    return license_service.verify_review_allowance(device_id, db)
+
+
 @router.get(
     "/status",
     response_model=LicenseStatusResponse,
@@ -58,6 +79,9 @@ def get_license_status(
     status_data = license_service.check_device_access(device_id, db)
     return LicenseStatusResponse(
         is_active=status_data["allowed"],
+        has_key=status_data.get("has_key", False),
+        free_reviews_left=status_data.get("free_reviews_left", 5),
+        max_free_reviews=status_data.get("max_free_reviews", 5),
         days_left=status_data["days_left"],
         expires_at=status_data["expires_at"],
         device_id=status_data["device_id"],
@@ -83,6 +107,9 @@ def activate_access_key(
             success=True,
             message=res["message"],
             is_active=res["is_active"],
+            has_key=res.get("has_key", True),
+            free_reviews_left=res.get("free_reviews_left", 5),
+            max_free_reviews=res.get("max_free_reviews", 5),
             days_left=res["days_left"],
             expires_at=res["expires_at"],
         )

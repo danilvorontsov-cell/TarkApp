@@ -19,6 +19,7 @@ interface LicenseActivationModalProps {
   onClose: () => void;
   onActivated: (status: LicenseStatus) => void;
   isBlocking?: boolean;
+  reason?: 'trial_expired' | 'reviews_limit_reached' | null;
 }
 
 export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
@@ -26,6 +27,7 @@ export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
   onClose,
   onActivated,
   isBlocking = false,
+  reason = null,
 }) => {
   const [keyCode, setKeyCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -49,6 +51,9 @@ export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
       setTimeout(() => {
         onActivated({
           is_active: res.is_active,
+          has_key: res.has_key ?? true,
+          free_reviews_left: res.free_reviews_left,
+          max_free_reviews: res.max_free_reviews,
           days_left: res.days_left,
           expires_at: res.expires_at,
           activated_key: trimmed,
@@ -72,6 +77,20 @@ export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
       onClose();
     }
   };
+
+  const modalTitle =
+    reason === 'reviews_limit_reached'
+      ? 'Бесплатные разборы закончились'
+      : isBlocking
+      ? 'Пробный период завершен'
+      : 'Ввод ключа доступа';
+
+  const modalSubtitle =
+    reason === 'reviews_limit_reached'
+      ? 'Вы использовали все 5 бесплатных разборов страниц. Введите ключ доступа для безлимитной помощи с уроками.'
+      : isBlocking
+      ? '14 дней бесплатного пробного периода истекли. Введите промокод или ключ бета-тестера для возобновления доступа.'
+      : 'Введите ключ доступа для продления периода работы TarkApp.';
 
   return (
     <Modal
@@ -104,14 +123,8 @@ export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
                   )}
                 </View>
 
-                <Text style={styles.title}>
-                  {isBlocking ? 'Пробный период завершен' : 'Ввод ключа доступа'}
-                </Text>
-                <Text style={styles.subtitle}>
-                  {isBlocking
-                    ? '14 дней бесплатного пробного периода истекли. Введите промокод или ключ бета-тестера для возобновления доступа.'
-                    : 'Введите ключ доступа для продления периода работы TarkApp.'}
-                </Text>
+                <Text style={styles.title}>{modalTitle}</Text>
+                <Text style={styles.subtitle}>{modalSubtitle}</Text>
 
                 {/* Input Field */}
                 <View style={styles.inputContainer}>

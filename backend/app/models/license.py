@@ -18,6 +18,7 @@ class Device(Base):
     trial_expires_at = Column(DateTime, nullable=False)
     has_active_access = Column(Boolean, default=True)
     activated_key = Column(String, nullable=True)
+    free_reviews_left = Column(Integer, default=5, nullable=False)
 
 
 class AccessKey(Base):
@@ -37,6 +38,9 @@ class AccessKey(Base):
 
 class LicenseStatusResponse(BaseModel):
     is_active: bool
+    has_key: bool = False
+    free_reviews_left: int = 5
+    max_free_reviews: int = 5
     days_left: int
     expires_at: str
     device_id: Optional[str] = None
@@ -51,5 +55,8 @@ class KeyActivateResponse(BaseModel):
     success: bool
     message: str
     is_active: bool
+    has_key: bool = True
+    free_reviews_left: int = 5
+    max_free_reviews: int = 5
     days_left: int
     expires_at: str

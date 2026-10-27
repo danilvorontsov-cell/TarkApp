@@ -79,6 +79,9 @@ export function notifyTrialExpired(): void {
 
 export interface LicenseStatus {
   is_active: boolean;
+  has_key?: boolean;
+  free_reviews_left?: number;
+  max_free_reviews?: number;
   days_left: number;
   expires_at: string;
   device_id?: string;
@@ -89,6 +92,9 @@ export interface KeyActivateResponse {
   success: boolean;
   message: string;
   is_active: boolean;
+  has_key?: boolean;
+  free_reviews_left?: number;
+  max_free_reviews?: number;
   days_left: number;
   expires_at: string;
 }
@@ -305,12 +311,15 @@ async function parseErrorResponse(response: Response): Promise<ApiError> {
     // Non-JSON response
   }
 
-  // Intercept HTTP 403 with TRIAL_EXPIRED
+  // Intercept HTTP 403 with TRIAL_EXPIRED or REVIEWS_LIMIT_REACHED
   if (
     response.status === 403 &&
-    (errorCode === 'TRIAL_EXPIRED' || friendlyMessage.includes('пробного периода'))
+    (errorCode === 'TRIAL_EXPIRED' ||
+      errorCode === 'REVIEWS_LIMIT_REACHED' ||
+      friendlyMessage.includes('пробного периода') ||
+      friendlyMessage.includes('Бесплатные разборы закончились'))
   ) {
-    errorCode = 'TRIAL_EXPIRED';
+    errorCode = errorCode || (friendlyMessage.includes('Бесплатные разборы') ? 'REVIEWS_LIMIT_REACHED' : 'TRIAL_EXPIRED');
     notifyTrialExpired();
   }
 

@@ -1,5 +1,5 @@
 from pathlib import Path
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 from app.config import settings
@@ -39,3 +39,15 @@ def init_db():
     # Import all models to ensure they are registered with Base.metadata
     from app.models.license import Device, AccessKey  # noqa: F401
     Base.metadata.create_all(bind=engine)
+
+    # Lightweight migration: ensure free_reviews_left column exists in devices table
+    with engine.connect() as conn:
+        try:
+            result = conn.execute(text("PRAGMA table_info(devices)")).fetchall()
+            col_names = [row[1] for row in result]
+            if "free_reviews_left" not in col_names and "device_id" in col_names:
+                conn.execute(text("ALTER TABLE devices ADD COLUMN free_reviews_left INTEGER DEFAULT 5 NOT NULL"))
+                conn.commit()
+        except Exception:
+            pass
+

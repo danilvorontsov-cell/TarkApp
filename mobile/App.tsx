@@ -110,6 +110,7 @@ function MainApp() {
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null);
   const [isKeyModalVisible, setIsKeyModalVisible] = useState<boolean>(false);
   const [isTrialBlockedModalVisible, setIsTrialBlockedModalVisible] = useState<boolean>(false);
+  const [modalBlockReason, setModalBlockReason] = useState<'trial_expired' | 'reviews_limit_reached' | null>(null);
 
   const edgePanResponder = useRef(
     PanResponder.create({
@@ -186,6 +187,7 @@ function MainApp() {
 
     // Register trial expired blocker listener
     setOnTrialExpiredListener(() => {
+      setModalBlockReason('reviews_limit_reached');
       setIsTrialBlockedModalVisible(true);
     });
 
@@ -417,10 +419,28 @@ function MainApp() {
 
       const data = await analyzePagesJson(payload, profile, API_BASE_URL);
 
+      // Decrement free reviews counter immediately in local state upon success
+      if (licenseStatus && !licenseStatus.has_key) {
+        setLicenseStatus({
+          ...licenseStatus,
+          free_reviews_left: Math.max(0, (licenseStatus.free_reviews_left ?? 1) - 1),
+        });
+        // Silently sync latest status from server
+        getLicenseStatus().then(setLicenseStatus).catch(() => {});
+      }
+
       setAnalysis(data);
       setShowAlternativeExplanation(false);
       await recordNewLesson(data, imagesList);
     } catch (err: any) {
+      if (
+        err?.code === 'REVIEWS_LIMIT_REACHED' ||
+        err?.message?.includes('Бесплатные разборы закончились')
+      ) {
+        setModalBlockReason('reviews_limit_reached');
+        setIsTrialBlockedModalVisible(true);
+        return;
+      }
       Alert.alert(
         'Ошибка анализа страниц',
         formatFriendlyErrorMessage(err)
@@ -432,6 +452,13 @@ function MainApp() {
   };
 
   const handleTakePhoto = async (mode: 'replace' | 'append' = 'replace') => {
+    // Check if free review allowance ran out
+    if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 5) <= 0) {
+      setModalBlockReason('reviews_limit_reached');
+      setIsTrialBlockedModalVisible(true);
+      return;
+    }
+
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
@@ -472,6 +499,13 @@ function MainApp() {
   };
 
   const handlePickImage = async (mode: 'replace' | 'append' = 'replace') => {
+    // Check if free review allowance ran out
+    if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 5) <= 0) {
+      setModalBlockReason('reviews_limit_reached');
+      setIsTrialBlockedModalVisible(true);
+      return;
+    }
+
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
@@ -512,6 +546,13 @@ function MainApp() {
   };
 
   const handleAddPagePrompt = () => {
+    // Check if free review allowance ran out
+    if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 5) <= 0) {
+      setModalBlockReason('reviews_limit_reached');
+      setIsTrialBlockedModalVisible(true);
+      return;
+    }
+
     Alert.alert(
       'Добавить страницу к уроку',
       'Если задание продолжается на другой странице или в тетради, добавьте фото для связного контекста:',
@@ -917,6 +958,39 @@ function MainApp() {
 
       {/* Action Buttons Section */}
       <View style={styles.actionsContainer}>
+        {/* Trial Review Limit / Active Subscription Badge */}
+        <View style={styles.reviewLimitBadgeRow}>
+          {licenseStatus?.has_key ? (
+            <View style={styles.subscriptionActiveBadge}>
+              <Text style={styles.subscriptionActiveBadgeText}>✓ Подписка активна (Безлимит)</Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={[
+                styles.reviewLimitBadge,
+                (licenseStatus?.free_reviews_left ?? 5) === 0 && styles.reviewLimitBadgeExhausted,
+              ]}
+              onPress={() => {
+                if ((licenseStatus?.free_reviews_left ?? 5) === 0) {
+                  setModalBlockReason('reviews_limit_reached');
+                  setIsTrialBlockedModalVisible(true);
+                }
+              }}
+              activeOpacity={(licenseStatus?.free_reviews_left ?? 5) === 0 ? 0.75 : 1}
+              accessibilityLabel={`Осталось ${licenseStatus?.free_reviews_left ?? 5} бесплатных разборов`}
+            >
+              <Text
+                style={[
+                  styles.reviewLimitBadgeText,
+                  (licenseStatus?.free_reviews_left ?? 5) === 0 && styles.reviewLimitBadgeTextExhausted,
+                ]}
+              >
+                🎁 Бесплатных разборов: {licenseStatus?.free_reviews_left ?? 5}/5
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
         {/* Main Primary Button: Device Camera */}
         <TouchableOpacity
           style={[
@@ -2088,12 +2162,13 @@ function MainApp() {
         isBlocking={false}
       />
 
-      {/* Global Blocking Modal for Expired Trial */}
+      {/* Global Blocking Modal for Expired Trial or Limit Reached */}
       <LicenseActivationModal
         visible={isTrialBlockedModalVisible}
         onClose={() => setIsTrialBlockedModalVisible(false)}
         onActivated={handleKeyActivated}
         isBlocking={true}
+        reason={modalBlockReason}
       />
     </View>
   );
@@ -3849,5 +3924,46 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     color: '#064E3B',
+  },
+  reviewLimitBadgeRow: {
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  reviewLimitBadge: {
+    backgroundColor: '#CFFAEE',
+    borderWidth: 1.5,
+    borderColor: '#5FEDC5',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reviewLimitBadgeExhausted: {
+    backgroundColor: '#FEE2E2',
+    borderColor: '#FCA5A5',
+  },
+  reviewLimitBadgeText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#064E3B',
+  },
+  reviewLimitBadgeTextExhausted: {
+    color: '#B91C1C',
+  },
+  subscriptionActiveBadge: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.5,
+    borderColor: '#34D399',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  subscriptionActiveBadgeText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#047857',
   },
 });

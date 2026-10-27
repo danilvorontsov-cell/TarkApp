@@ -32,11 +32,15 @@ def test_first_seen_device_gets_14_day_trial(setup_db):
     res = license_service.check_device_access(device_id, db)
     assert res["allowed"] is True
     assert res["is_active"] is True
+    assert res["has_key"] is False
+    assert res["free_reviews_left"] == 5
+    assert res["max_free_reviews"] == 5
     assert res["days_left"] == 14
 
     dev_in_db = db.query(Device).filter(Device.device_id == device_id).first()
     assert dev_in_db is not None
     assert dev_in_db.has_active_access is True
+    assert dev_in_db.free_reviews_left == 5
     assert dev_in_db.trial_expires_at > datetime.utcnow()
 
 
@@ -162,3 +166,102 @@ def test_expired_device_blocked_on_protected_endpoint(setup_db):
     assert response.status_code == 403
     data = response.json()
     assert data["detail"]["error"] == "TRIAL_EXPIRED"
+
+
+def test_status_endpoint_returns_review_counters(setup_db):
+    device_id = "test-device-review-counters"
+    response = client.get("/api/v1/license/status", headers={"X-Device-ID": device_id})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["has_key"] is False
+    assert data["free_reviews_left"] == 5
+    assert data["max_free_reviews"] == 5
+    assert data["is_active"] is True
+
+
+def test_deduct_review_attempt_decreases_counter(setup_db):
+    db = setup_db
+    device_id = "test-device-deduct"
+
+    # Register device
+    license_service.check_device_access(device_id, db)
+
+    # Deduct 1 review
+    left1 = license_service.deduct_review_attempt(device_id, db)
+    assert left1 == 4
+
+    left2 = license_service.deduct_review_attempt(device_id, db)
+    assert left2 == 3
+
+
+def test_reviews_limit_reached_blocks_analysis(setup_db):
+    db = setup_db
+    device_id = "test-device-limit-reached"
+
+    # Pre-create device with 0 reviews left
+    dev = Device(
+        device_id=device_id,
+        first_seen_at=datetime.utcnow() - timedelta(days=1),
+        trial_expires_at=datetime.utcnow() + timedelta(days=13),
+        has_active_access=True,
+        free_reviews_left=0,
+    )
+    db.add(dev)
+    db.commit()
+
+    # Attempt to analyze page via JSON
+    payload = {
+        "images_base64": ["aGVsbG8="],
+        "mime_type": "image/jpeg",
+        "grade": 3,
+    }
+    response = client.post(
+        "/api/v1/analyze-page/json",
+        headers={"X-Device-ID": device_id},
+        json=payload,
+    )
+    assert response.status_code == 403
+    data = response.json()
+    assert data["detail"]["error"] == "REVIEWS_LIMIT_REACHED"
+    assert "Бесплатные разборы закончились" in data["detail"]["message"]
+
+
+def test_activated_key_grants_unlimited_reviews(setup_db):
+    db = setup_db
+    device_id = "test-device-unlimited"
+    key_code = "TEST-UNLIMITED-KEY"
+
+    # Create key and activate
+    key_obj = AccessKey(
+        key_code=key_code,
+        duration_days=30,
+        is_used=False,
+    )
+    db.add(key_obj)
+    db.commit()
+
+    # Pre-create device with 0 reviews left
+    dev = Device(
+        device_id=device_id,
+        first_seen_at=datetime.utcnow() - timedelta(days=1),
+        trial_expires_at=datetime.utcnow() + timedelta(days=13),
+        has_active_access=True,
+        free_reviews_left=0,
+    )
+    db.add(dev)
+    db.commit()
+
+    # Activate key
+    act_res = license_service.activate_key(device_id, key_code, db)
+    assert act_res["success"] is True
+    assert act_res["has_key"] is True
+
+    # Now verify_review_allowance should pass without error!
+    allowance = license_service.verify_review_allowance(device_id, db)
+    assert allowance["has_key"] is True
+    assert allowance["allowed"] is True
+
+    # And deducting should NOT decrement reviews for key holders
+    left = license_service.deduct_review_attempt(device_id, db)
+    assert left == 0  # unchanged
+
