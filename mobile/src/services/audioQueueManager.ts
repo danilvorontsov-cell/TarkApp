@@ -12,6 +12,7 @@ import {
   PlaybackState,
 } from './audioPlayer';
 import { PageAnalysisResponse } from '../types';
+import { getTierPolicy, SchoolTier } from './gradePolicy';
 
 export { PlaybackState } from './audioPlayer';
 
@@ -168,11 +169,19 @@ class AudioQueueManagerClass {
    * Priority 3 (150ms pause): how_to_answer (bilingual)
    * Priority 4 (300ms pause each): vocabulary words & examples
    */
-  public async prefetchLessonAudio(analysis: PageAnalysisResponse, baseUrl: string = API_BASE_URL) {
+  public async prefetchLessonAudio(
+    analysis: PageAnalysisResponse,
+    baseUrl: string = API_BASE_URL,
+    gradeOrTier?: number | SchoolTier
+  ) {
     await this.ensureCacheDir();
 
+    const policy = gradeOrTier !== undefined ? getTierPolicy(gradeOrTier) : null;
+    const isFullAudio = policy ? policy.fullAudioEnabled : true;
+    const isVocabAudio = policy ? policy.vocabAudioEnabled : true;
+
     // 1. Priority 1: Partner prompt (voice_prompt_script)
-    if (analysis.voice_prompt_script && analysis.voice_prompt_script.trim()) {
+    if (isFullAudio && analysis.voice_prompt_script && analysis.voice_prompt_script.trim()) {
       this.upsertItem({
         id: 'voice_prompt',
         text: analysis.voice_prompt_script,
@@ -192,7 +201,7 @@ class AudioQueueManagerClass {
     }
 
     // 2. Priority 2: Theme explanation (theme_explanation) with bilingual stitching
-    if (analysis.theme_explanation && analysis.theme_explanation.trim()) {
+    if (isFullAudio && analysis.theme_explanation && analysis.theme_explanation.trim()) {
       this.upsertItem({
         id: 'theme_explanation',
         text: analysis.theme_explanation,
@@ -203,7 +212,7 @@ class AudioQueueManagerClass {
     }
 
     // 2b. Priority 2: Alternative explanation (alt_explanation) with bilingual stitching
-    if (analysis.alternative_explanation && analysis.alternative_explanation.trim()) {
+    if (isFullAudio && analysis.alternative_explanation && analysis.alternative_explanation.trim()) {
       this.upsertItem({
         id: 'alt_explanation',
         text: analysis.alternative_explanation,
@@ -214,7 +223,7 @@ class AudioQueueManagerClass {
     }
 
     // 3. Priority 3: How to answer (how_to_answer) with bilingual stitching
-    if (analysis.how_to_answer && analysis.how_to_answer.trim()) {
+    if (isFullAudio && analysis.how_to_answer && analysis.how_to_answer.trim()) {
       this.upsertItem({
         id: 'how_to_answer',
         text: analysis.how_to_answer,
@@ -225,7 +234,7 @@ class AudioQueueManagerClass {
     }
 
     // 3b. Priority 3: Worked example (worked_example) with bilingual stitching
-    if (analysis.worked_example) {
+    if (isFullAudio && analysis.worked_example) {
       const we = analysis.worked_example;
       const ORDINAL_STEP_WORDS: Record<number, string> = {
         1: 'Первое',
@@ -257,7 +266,7 @@ class AudioQueueManagerClass {
     }
 
     // 4. Priority 4: Vocabulary terms and examples (one by one)
-    if (analysis.vocabulary && analysis.vocabulary.length > 0) {
+    if (isVocabAudio && analysis.vocabulary && analysis.vocabulary.length > 0) {
       analysis.vocabulary.forEach((item, idx) => {
         if (item.est && item.est.trim()) {
           this.upsertItem({

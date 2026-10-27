@@ -28,7 +28,14 @@ VOICE_FALLBACK_MAP = {
 
 # Семафор для параллельных WebSocket-запросов к Microsoft Edge-TTS (до 4 одновременных сокетов)
 # Заменяет жесткий одиночный Lock(), ускоряя склейку двуязычных фрагментов в 8-10 раз
-_tts_semaphore = asyncio.Semaphore(4)
+_tts_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_tts_semaphore() -> asyncio.Semaphore:
+    global _tts_semaphore
+    if _tts_semaphore is None:
+        _tts_semaphore = asyncio.Semaphore(4)
+    return _tts_semaphore
 
 # Серверные кэши синтезированного аудио в оперативной памяти (LRU-ограничение)
 _TTS_STREAM_CACHE: Dict[str, bytes] = {}
@@ -644,7 +651,7 @@ async def synthesize_segment(text: str, voice: str, delay: float = 0.0) -> bytes
         for vol in ([volume, "+0%"] if volume != "+0%" else ["+0%"]):
             try:
                 chunks: List[bytes] = []
-                async with _tts_semaphore:
+                async with _get_tts_semaphore():
                     communicate = edge_tts.Communicate(text=clean_text, voice=cand_voice, volume=vol)
                     async for chunk in communicate.stream():
                         if chunk.get("type") == "audio" and chunk.get("data"):
@@ -678,7 +685,7 @@ async def _synthesize_mono_audio_bytes(clean_text: str, voice: str) -> bytes:
         for vol in ([volume, "+0%"] if volume != "+0%" else ["+0%"]):
             try:
                 chunks_buffer: List[bytes] = []
-                async with _tts_semaphore:
+                async with _get_tts_semaphore():
                     communicate = edge_tts.Communicate(text=clean_text, voice=cand_voice, volume=vol)
                     async for chunk in communicate.stream():
                         if chunk.get("type") == "audio" and chunk.get("data"):

@@ -4,19 +4,36 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class AgeTier(str, Enum):
-    PRIMARY = "primary"        # 1–4 классы (Младшее звено)
-    MIDDLE = "middle"          # 5–9 классы (Среднее звено)
-    GYMNASIUM = "gymnasium"    # 10–12 классы (Старшее звено / Гимназия)
+    PRIMARY = "primary"        # 1–3 классы (Младшая школа / Algkool)
+    MIDDLE = "middle"          # 4–6 классы (Среднее звено I / Põhikool I)
+    HIGH = "high"              # 7–9 классы (Старшее звено / Põhikool II)
+    GYMNASIUM = "gymnasium"    # 10–12 классы (Гимназия / Gümnaasium)
 
     @classmethod
     def from_grade(cls, grade: int) -> "AgeTier":
-        if 1 <= grade <= 4:
+        if 1 <= grade <= 3:
             return cls.PRIMARY
-        elif 5 <= grade <= 9:
+        elif 4 <= grade <= 6:
             return cls.MIDDLE
+        elif 7 <= grade <= 9:
+            return cls.HIGH
         elif 10 <= grade <= 12:
             return cls.GYMNASIUM
         raise ValueError(f"Grade must be between 1 and 12, got: {grade}")
+
+
+def is_full_audio_enabled(grade_or_tier: Union[int, AgeTier]) -> bool:
+    """Returns True if long audio narration (prompt, explanation, example, steps) is permitted."""
+    if isinstance(grade_or_tier, int):
+        return grade_or_tier < 7
+    return grade_or_tier in (AgeTier.PRIMARY, AgeTier.MIDDLE)
+
+
+def is_sentence_frame_enabled(grade_or_tier: Union[int, AgeTier]) -> bool:
+    """Returns True if the gamified interactive sentence frame with drag-and-drop slots is shown."""
+    if isinstance(grade_or_tier, int):
+        return grade_or_tier < 10
+    return grade_or_tier != AgeTier.GYMNASIUM
 
 
 # Обратная совместимость для старых клиентов
@@ -29,7 +46,7 @@ class ThemeInterest(str, Enum):
     NEUTRAL = "neutral"
 
 
-# Дефолтные наборы трендовых интересов по трем возрастным звеньям (Fallback & Diversity Pool)
+# Дефолтные наборы трендовых интересов по четырем возрастным звеньям (Fallback & Diversity Pool)
 AGE_TIER_DEFAULT_INTERESTS = {
     AgeTier.PRIMARY: [
         "Roblox",
@@ -41,13 +58,22 @@ AGE_TIER_DEFAULT_INTERESTS = {
         "Сладости и выпечка",
     ],
     AgeTier.MIDDLE: [
+        "Футбол и спорт",
+        "Видеоигры и Brawl Stars",
+        "Музыка и треки",
+        "Скейт и трюки",
+        "Покупка гаджетов",
+        "Мемы и тренды",
+        "Настолки с друзьями",
+    ],
+    AgeTier.HIGH: [
         "Подростковый спорт и футбол",
-        "Современные видеоигры",
+        "CS:GO / Valorant",
         "Музыка и треки",
         "Скейт и самокаты",
-        "Покупка гаджетов и распаковки",
-        "Мемы и тренды",
-        "Кибертурниры",
+        "Гаджеты и технологии",
+        "Мемы и TikTok",
+        "Аниме и манга",
     ],
     AgeTier.GYMNASIUM: [
         "Реальные жизненные ситуации",

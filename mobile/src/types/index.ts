@@ -1,8 +1,16 @@
-export type AgeTier = 'primary' | 'middle' | 'gymnasium';
+export {
+  SchoolTier,
+  AgeTier,
+  TierConfig,
+  TIER_POLICIES,
+  getTierFromGrade,
+  getTierPolicy,
+} from '../services/gradePolicy';
+import { SchoolTier } from '../services/gradePolicy';
 
 export interface UserProfile {
   grade: number; // 1 - 12
-  tier: AgeTier;
+  tier: SchoolTier;
   interests: string[]; // Free-form list of student's hobbies and interests
   nickname: string;
   avatarUri?: string;
@@ -37,7 +45,7 @@ export interface SavedLessonCard {
   timestamp: number;
   dateFormatted: string;
   grade: number;
-  tier: AgeTier;
+  tier: SchoolTier;
   task_title: string;
   task_type?: 'Koolitöö' | 'Loodusõpetus' | 'Maailma Avastaja' | string;
   analysis: PageAnalysisResponse;
@@ -45,18 +53,9 @@ export interface SavedLessonCard {
   imageUris?: string[];
 }
 
-export function getTierFromGrade(grade: number): AgeTier {
-  if (grade >= 1 && grade <= 4) {
-    return 'primary';
-  }
-  if (grade >= 5 && grade <= 9) {
-    return 'middle';
-  }
-  return 'gymnasium';
-}
-
 // Popular suggested interests by age tier for quick addition
-export const AGE_SUGGESTIONS: Record<AgeTier, string[]> = {
+export const AGE_SUGGESTIONS: Record<SchoolTier, string[]> = {
+  // 1–3 классы (Младшая школа / Algkool)
   primary: [
     'Minecraft',
     'Roblox',
@@ -74,23 +73,43 @@ export const AGE_SUGGESTIONS: Record<AgeTier, string[]> = {
     'Самокаты и велики',
     'Покемоны',
   ],
+  // 4–6 классы (Среднее звено I / Põhikool I)
   middle: [
+    'Minecraft',
+    'Roblox',
+    'Brawl Stars',
+    'Футбол',
+    'Баскетбол',
+    'Видеоигры',
+    'Музыка и треки',
+    'Мемы',
+    'Скейт и трюки',
+    'Гаджеты',
+    'LEGO конструирование',
+    'Комиксы и манга',
+    'Настолки с друзьями',
+    'Плавание и спорт',
+    'Роботы и техника',
+  ],
+  // 7–9 классы (Старшее звено / Põhikool II)
+  high: [
     'Футбол',
     'Баскетбол',
     'Видеоигры',
     'CS:GO / Valorant',
-    'Minecraft / Roblox',
     'Музыка и треки',
     'Мемы и TikTok',
-    'Скейт и трюки',
+    'Скейт и самокаты',
     'Гаджеты и технологии',
     'Аниме и манга',
     'Кино и сериалы',
     'Блогинг и YouTube',
-    'Плавание и спорт',
+    'Плавание и фитнес',
     'Настолки с друзьями',
     'Графика и дизайн',
+    'Мода и стиль',
   ],
+  // 10–12 классы (Гимназия / Gümnaasium)
   gymnasium: [
     'IT и программирование',
     'Нейросети и AI',

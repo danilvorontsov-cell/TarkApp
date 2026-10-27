@@ -96,11 +96,11 @@ def test_bilingual_parser():
     segments = parse_bilingual_segments(text)
     assert len(segments) == 4
     assert segments[0][0] == "Найди слово:"
-    assert segments[0][1] == "ru-RU-DmitryNeural"
+    assert segments[0][1] == "ru-RU-SvetlanaNeural"
     assert segments[1][0] == "koolikott"
     assert segments[1][1] == "et-EE-KertNeural"
     assert segments[2][0] == "и скажи"
-    assert segments[2][1] == "ru-RU-DmitryNeural"
+    assert segments[2][1] == "ru-RU-SvetlanaNeural"
     assert segments[3][0] == "tere"
     assert segments[3][1] == "et-EE-KertNeural"
 
@@ -114,9 +114,11 @@ def test_voice_tts_empty_text(client):
 
 def test_age_tier_from_grade():
     assert AgeTier.from_grade(1) == AgeTier.PRIMARY
-    assert AgeTier.from_grade(4) == AgeTier.PRIMARY
-    assert AgeTier.from_grade(5) == AgeTier.MIDDLE
-    assert AgeTier.from_grade(9) == AgeTier.MIDDLE
+    assert AgeTier.from_grade(3) == AgeTier.PRIMARY
+    assert AgeTier.from_grade(4) == AgeTier.MIDDLE
+    assert AgeTier.from_grade(6) == AgeTier.MIDDLE
+    assert AgeTier.from_grade(7) == AgeTier.HIGH
+    assert AgeTier.from_grade(9) == AgeTier.HIGH
     assert AgeTier.from_grade(10) == AgeTier.GYMNASIUM
     assert AgeTier.from_grade(12) == AgeTier.GYMNASIUM
 
@@ -124,6 +126,29 @@ def test_age_tier_from_grade():
         AgeTier.from_grade(0)
     with pytest.raises(ValueError):
         AgeTier.from_grade(13)
+
+
+def test_audio_and_sentence_frame_policy():
+    from app.models.page_analysis import is_full_audio_enabled, is_sentence_frame_enabled
+    # 1-6 grades: full audio enabled
+    assert is_full_audio_enabled(1) is True
+    assert is_full_audio_enabled(6) is True
+    assert is_full_audio_enabled(AgeTier.PRIMARY) is True
+    assert is_full_audio_enabled(AgeTier.MIDDLE) is True
+
+    # 7-12 grades: full audio disabled
+    assert is_full_audio_enabled(7) is False
+    assert is_full_audio_enabled(12) is False
+    assert is_full_audio_enabled(AgeTier.HIGH) is False
+    assert is_full_audio_enabled(AgeTier.GYMNASIUM) is False
+
+    # sentence_frame enabled for 1-9 grades, disabled for gymnasium (10-12)
+    assert is_sentence_frame_enabled(1) is True
+    assert is_sentence_frame_enabled(9) is True
+    assert is_sentence_frame_enabled(AgeTier.HIGH) is True
+    assert is_sentence_frame_enabled(10) is False
+    assert is_sentence_frame_enabled(12) is False
+    assert is_sentence_frame_enabled(AgeTier.GYMNASIUM) is False
 
 
 def test_user_profile_interests_normalization():

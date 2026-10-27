@@ -244,8 +244,8 @@ class GeminiTutorService:
                 )
             )
 
-        # 5-9 классы (Среднее звено - природоведение / биология / физика)
-        elif tier == AgeTier.MIDDLE:
+        # 4-9 классы (Среднее и старшее звено - природоведение / биология / физика)
+        elif tier in (AgeTier.MIDDLE, AgeTier.HIGH):
             return PageAnalysisResponse(
                 task_title="Fotosüntees ja taime toitumine (Фотосинтез и питание растений)",
                 theme_explanation=(
@@ -469,7 +469,7 @@ class GeminiTutorService:
                 f"Meie koolitunnis uurime sõna [{w2}].",
                 f"See on väga tore ja [{w3}].",
             ]
-        elif tier == AgeTier.MIDDLE:
+        elif tier in (AgeTier.MIDDLE, AgeTier.HIGH):
             return [
                 f"Tunni teema selgitab, kuidas toimib [{w1}].",
                 f"Ülesande lahendamiseks on vaja tunda mõistet [{w2}].",

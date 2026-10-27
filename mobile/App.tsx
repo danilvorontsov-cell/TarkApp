@@ -20,12 +20,16 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import {
+  SchoolTier,
   AgeTier,
+  TierConfig,
+  TIER_POLICIES,
+  getTierFromGrade,
+  getTierPolicy,
   UserProfile,
   PageAnalysisResponse,
   SavedLessonCard,
   VocabularyItem,
-  getTierFromGrade,
   AGE_SUGGESTIONS,
 } from './src/types';
 import { StorageService } from './src/services/storage';
@@ -117,7 +121,10 @@ function MainApp() {
   ).current;
 
   const scrollViewRef = useRef<React.ElementRef<typeof ScrollView>>(null);
+  const tierPolicy = getTierPolicy(profile.grade || profile.tier);
   const isJunior = profile.tier === 'primary';
+  const isFullAudioEnabled = tierPolicy.fullAudioEnabled;
+  const isSentenceFrameEnabled = tierPolicy.sentenceFrameEnabled;
 
   useEffect(() => {
     StorageService.getProfile().then((saved) => {
@@ -156,7 +163,7 @@ function MainApp() {
         setCapturedImages(restoredImages);
         setIsSaved(true);
         // Start background prefetch for latest today lesson
-        AudioQueueManager.prefetchLessonAudio(todayItems[0].analysis, API_BASE_URL);
+        AudioQueueManager.prefetchLessonAudio(todayItems[0].analysis, API_BASE_URL, profile.grade);
       }
     });
 
@@ -363,7 +370,7 @@ function MainApp() {
 
     // Start background sequential audio prefetching with priority queue
     AudioQueueManager.clearQueue();
-    AudioQueueManager.prefetchLessonAudio(data, API_BASE_URL);
+    AudioQueueManager.prefetchLessonAudio(data, API_BASE_URL, profile.grade);
 
     scrollToTaskTop();
   };
@@ -659,7 +666,7 @@ function MainApp() {
     setCapturedImageUri(restored[0]?.uri || null);
     StorageService.isLessonSaved(item.analysis.task_title).then(setIsSaved);
     AudioQueueManager.clearQueue();
-    AudioQueueManager.prefetchLessonAudio(item.analysis, API_BASE_URL);
+    AudioQueueManager.prefetchLessonAudio(item.analysis, API_BASE_URL, profile.grade);
     scrollToTaskTop();
   };
 
@@ -676,7 +683,7 @@ function MainApp() {
     setIsSaved(true);
     setCurrentTab('study');
     AudioQueueManager.clearQueue();
-    AudioQueueManager.prefetchLessonAudio(item.analysis, API_BASE_URL);
+    AudioQueueManager.prefetchLessonAudio(item.analysis, API_BASE_URL, profile.grade);
     scrollToTaskTop();
   };
 
@@ -731,15 +738,8 @@ function MainApp() {
     );
   };
 
-  const getTierBadgeText = (tier: AgeTier) => {
-    switch (tier) {
-      case 'primary':
-        return 'Младшее звено (1–4 классы)';
-      case 'middle':
-        return 'Среднее звено (5–9 классы)';
-      case 'gymnasium':
-        return 'Гимназия (10–12 классы)';
-    }
+  const getTierBadgeText = (tier: SchoolTier) => {
+    return TIER_POLICIES[tier]?.name || 'Ученик';
   };
 
   const currentSuggestions = AGE_SUGGESTIONS[profile.tier] || [];
@@ -977,56 +977,58 @@ function MainApp() {
             </Text>
           </View>
 
-          {/* Card 2: Audio Hint (Аудиоподсказка к уроку) */}
-          <View style={styles.modularCard}>
-            <View style={styles.voiceHeroHeader}>
-              <Text style={styles.voiceHeroBadge}>🎧 ПОДСКАЗКА К УРОКУ</Text>
-              <Text style={styles.voiceHeroTitle}>
-                {loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice'
-                  ? '⏳ Подготовка подсказки...'
-                  : (playingId === 'voice_prompt' || playingId === 'senior_voice') && playbackState === 'playing'
-                  ? '🔊 Воспроизведение...'
-                  : (playingId === 'voice_prompt' || playingId === 'senior_voice') && playbackState === 'paused'
-                  ? '⏸ На паузе'
-                  : 'Послушай подсказку голосом:'}
-              </Text>
-            </View>
-            <Text style={styles.voiceScriptText}>{analysis.voice_prompt_script}</Text>
-            <TouchableOpacity
-              style={[
-                styles.voiceHeroPlayButton,
-                (playingId === 'voice_prompt' || playingId === 'senior_voice') &&
-                  (playbackState === 'playing'
-                    ? styles.voiceHeroPlayButtonActive
-                    : playbackState === 'paused'
-                    ? styles.voiceHeroPlayButtonPaused
-                    : null),
-              ]}
-              onPress={() =>
-                handlePlayAudio(
-                  analysis.voice_prompt_script,
-                  'ru',
-                  isJunior ? 'voice_prompt' : 'senior_voice'
-                )
-              }
-              activeOpacity={0.85}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                {(loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice') && (
-                  <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 8 }} />
-                )}
-                <Text style={styles.voiceHeroPlayText}>
-                  {(loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice')
-                    ? 'ЗАГРУЗКА ЗВУКА...'
-                    : (playingId === 'voice_prompt' || playingId === 'senior_voice')
-                    ? playbackState === 'playing'
-                      ? '⏸ ПАУЗА'
-                      : '▶ ПРОДОЛЖИТЬ'
-                    : '▶ СЛУШАТЬ ПОДСКАЗКУ'}
+          {/* Card 2: Audio Hint (Аудиоподсказка к уроку - только для 1–6 классов) */}
+          {isFullAudioEnabled && (
+            <View style={styles.modularCard}>
+              <View style={styles.voiceHeroHeader}>
+                <Text style={styles.voiceHeroBadge}>🎧 ПОДСКАЗКА К УРОКУ</Text>
+                <Text style={styles.voiceHeroTitle}>
+                  {loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice'
+                    ? '⏳ Подготовка подсказки...'
+                    : (playingId === 'voice_prompt' || playingId === 'senior_voice') && playbackState === 'playing'
+                    ? '🔊 Воспроизведение...'
+                    : (playingId === 'voice_prompt' || playingId === 'senior_voice') && playbackState === 'paused'
+                    ? '⏸ На паузе'
+                    : 'Послушай подсказку голосом:'}
                 </Text>
               </View>
-            </TouchableOpacity>
-          </View>
+              <Text style={styles.voiceScriptText}>{analysis.voice_prompt_script}</Text>
+              <TouchableOpacity
+                style={[
+                  styles.voiceHeroPlayButton,
+                  (playingId === 'voice_prompt' || playingId === 'senior_voice') &&
+                    (playbackState === 'playing'
+                      ? styles.voiceHeroPlayButtonActive
+                      : playbackState === 'paused'
+                      ? styles.voiceHeroPlayButtonPaused
+                      : null),
+                ]}
+                onPress={() =>
+                  handlePlayAudio(
+                    analysis.voice_prompt_script,
+                    'ru',
+                    isJunior ? 'voice_prompt' : 'senior_voice'
+                  )
+                }
+                activeOpacity={0.85}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                  {(loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice') && (
+                    <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 8 }} />
+                  )}
+                  <Text style={styles.voiceHeroPlayText}>
+                    {(loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice')
+                      ? 'ЗАГРУЗКА ЗВУКА...'
+                      : (playingId === 'voice_prompt' || playingId === 'senior_voice')
+                      ? playbackState === 'playing'
+                        ? '⏸ ПАУЗА'
+                        : '▶ ПРОДОЛЖИТЬ'
+                      : '▶ СЛУШАТЬ ПОДСКАЗКУ'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Card 3: Суть темы простыми словами */}
           <View style={styles.modularCard}>
@@ -1040,49 +1042,51 @@ function MainApp() {
               </View>
             ) : null}
 
-            <View style={styles.sectionAudioCenteredContainer}>
-              <TouchableOpacity
-                style={[
-                  styles.sectionAudioBtn,
-                  (showAlternativeExplanation
-                    ? playingId === 'alt_explanation'
-                    : playingId === 'theme_explanation') &&
-                    (playbackState === 'playing'
-                      ? styles.sectionAudioBtnActive
-                      : playbackState === 'paused'
-                      ? styles.sectionAudioBtnPaused
-                      : null),
-                ]}
-                onPress={() => {
-                  const targetText = showAlternativeExplanation
-                    ? analysis.alternative_explanation!
-                    : analysis.theme_explanation;
-                  const targetId = showAlternativeExplanation ? 'alt_explanation' : 'theme_explanation';
-                  handlePlayAudio(targetText, 'ru', targetId, true);
-                }}
-                activeOpacity={0.85}
-                accessibilityLabel="Озвучить суть темы"
-              >
-                {(showAlternativeExplanation
-                  ? loadingAudioId === 'alt_explanation'
-                  : loadingAudioId === 'theme_explanation') ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                    <Text style={[styles.sectionAudioBtnText, { marginLeft: 6 }]}>Загрузка...</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.sectionAudioBtnText}>
-                    {(showAlternativeExplanation
+            {isFullAudioEnabled && (
+              <View style={styles.sectionAudioCenteredContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.sectionAudioBtn,
+                    (showAlternativeExplanation
                       ? playingId === 'alt_explanation'
-                      : playingId === 'theme_explanation')
-                      ? playbackState === 'playing'
-                        ? '⏸ Пауза'
-                        : '▶ Продолжить'
-                      : '▶ Озвучить'}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
+                      : playingId === 'theme_explanation') &&
+                      (playbackState === 'playing'
+                        ? styles.sectionAudioBtnActive
+                        : playbackState === 'paused'
+                        ? styles.sectionAudioBtnPaused
+                        : null),
+                  ]}
+                  onPress={() => {
+                    const targetText = showAlternativeExplanation
+                      ? analysis.alternative_explanation!
+                      : analysis.theme_explanation;
+                    const targetId = showAlternativeExplanation ? 'alt_explanation' : 'theme_explanation';
+                    handlePlayAudio(targetText, 'ru', targetId, true);
+                  }}
+                  activeOpacity={0.85}
+                  accessibilityLabel="Озвучить суть темы"
+                >
+                  {(showAlternativeExplanation
+                    ? loadingAudioId === 'alt_explanation'
+                    : loadingAudioId === 'theme_explanation') ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <Text style={[styles.sectionAudioBtnText, { marginLeft: 6 }]}>Загрузка...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.sectionAudioBtnText}>
+                      {(showAlternativeExplanation
+                        ? playingId === 'alt_explanation'
+                        : playingId === 'theme_explanation')
+                        ? playbackState === 'playing'
+                          ? '⏸ Пауза'
+                          : '▶ Продолжить'
+                        : '▶ Озвучить'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
             <Text style={styles.explanationText}>
               {showAlternativeExplanation ? analysis.alternative_explanation : analysis.theme_explanation}
             </Text>
@@ -1193,58 +1197,60 @@ function MainApp() {
                 </Text>
               </View>
 
-              <View style={styles.sectionAudioCenteredContainer}>
-                <TouchableOpacity
-                  style={[
-                    styles.sectionAudioBtn,
-                    playingId === 'worked_example' &&
-                      (playbackState === 'playing'
-                        ? styles.sectionAudioBtnActive
-                        : playbackState === 'paused'
-                        ? styles.sectionAudioBtnPaused
-                        : null),
-                  ]}
-                  onPress={() => {
-                    const we = analysis.worked_example!;
-                    const ORDINAL_STEP_WORDS: Record<number, string> = {
-                      1: 'Первое',
-                      2: 'Второе',
-                      3: 'Третье',
-                      4: 'Четвертое',
-                      5: 'Пятое',
-                      6: 'Шестое',
-                      7: 'Седьмое',
-                      8: 'Восьмое',
-                      9: 'Девятое',
-                      10: 'Десятое',
-                    };
-                    const formattedSteps = we.steps.map((step, sIdx) => {
-                      const clean = step.replace(/^\d+[\.\)]\s*/, '').trim();
-                      const prefix = ORDINAL_STEP_WORDS[sIdx + 1] || `${sIdx + 1}-е`;
-                      return `${prefix}: ${clean}`;
-                    });
-                    const naidisAudioText = `${we.given}. Шаги решения: ${formattedSteps.join('. ')}. ${we.note || ''}`.trim();
-                    handlePlayAudio(naidisAudioText, 'ru', 'worked_example', true);
-                  }}
-                  activeOpacity={0.85}
-                  accessibilityLabel="Озвучить пример решения"
-                >
-                  {loadingAudioId === 'worked_example' ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                      <Text style={[styles.sectionAudioBtnText, { marginLeft: 6 }]}>Загрузка...</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.sectionAudioBtnText}>
-                      {playingId === 'worked_example'
-                        ? playbackState === 'playing'
-                          ? '⏸ Пауза'
-                          : '▶ Продолжить'
-                        : '▶ Озвучить пример'}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              </View>
+              {isFullAudioEnabled && (
+                <View style={styles.sectionAudioCenteredContainer}>
+                  <TouchableOpacity
+                    style={[
+                      styles.sectionAudioBtn,
+                      playingId === 'worked_example' &&
+                        (playbackState === 'playing'
+                          ? styles.sectionAudioBtnActive
+                          : playbackState === 'paused'
+                          ? styles.sectionAudioBtnPaused
+                          : null),
+                    ]}
+                    onPress={() => {
+                      const we = analysis.worked_example!;
+                      const ORDINAL_STEP_WORDS: Record<number, string> = {
+                        1: 'Первое',
+                        2: 'Второе',
+                        3: 'Третье',
+                        4: 'Четвертое',
+                        5: 'Пятое',
+                        6: 'Шестое',
+                        7: 'Седьмое',
+                        8: 'Восьмое',
+                        9: 'Девятое',
+                        10: 'Десятое',
+                      };
+                      const formattedSteps = we.steps.map((step, sIdx) => {
+                        const clean = step.replace(/^\d+[\.\)]\s*/, '').trim();
+                        const prefix = ORDINAL_STEP_WORDS[sIdx + 1] || `${sIdx + 1}-е`;
+                        return `${prefix}: ${clean}`;
+                      });
+                      const naidisAudioText = `${we.given}. Шаги решения: ${formattedSteps.join('. ')}. ${we.note || ''}`.trim();
+                      handlePlayAudio(naidisAudioText, 'ru', 'worked_example', true);
+                    }}
+                    activeOpacity={0.85}
+                    accessibilityLabel="Озвучить пример решения"
+                  >
+                    {loadingAudioId === 'worked_example' ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                        <Text style={[styles.sectionAudioBtnText, { marginLeft: 6 }]}>Загрузка...</Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.sectionAudioBtnText}>
+                        {playingId === 'worked_example'
+                          ? playbackState === 'playing'
+                            ? '⏸ Пауза'
+                            : '▶ Продолжить'
+                          : '▶ Озвучить пример'}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
 
               {/* Given condition / situation */}
               <View style={styles.naidisGivenBox}>
@@ -1279,56 +1285,81 @@ function MainApp() {
           {/* Card 5: Как решить задание самому */}
           <View style={styles.modularCard}>
             <Text style={styles.sectionHeader}>🎯 Как решить задание самому</Text>
-            <View style={styles.sectionAudioCenteredContainer}>
-              <TouchableOpacity
-                style={[
-                  styles.sectionAudioBtn,
-                  playingId === 'how_to_answer' &&
-                    (playbackState === 'playing'
-                      ? styles.sectionAudioBtnActive
-                      : playbackState === 'paused'
-                      ? styles.sectionAudioBtnPaused
-                      : null),
-                ]}
-                onPress={() =>
-                  handlePlayAudio(analysis.how_to_answer, 'ru', 'how_to_answer', true)
-                }
-                activeOpacity={0.85}
-                accessibilityLabel="Озвучить решение"
-              >
-                {loadingAudioId === 'how_to_answer' ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                    <Text style={[styles.sectionAudioBtnText, { marginLeft: 6 }]}>Загрузка...</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.sectionAudioBtnText}>
-                    {playingId === 'how_to_answer'
-                      ? playbackState === 'playing'
-                        ? '⏸ Пауза'
-                        : '▶ Продолжить'
-                      : '▶ Озвучить'}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
+            {isFullAudioEnabled && (
+              <View style={styles.sectionAudioCenteredContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.sectionAudioBtn,
+                    playingId === 'how_to_answer' &&
+                      (playbackState === 'playing'
+                        ? styles.sectionAudioBtnActive
+                        : playbackState === 'paused'
+                        ? styles.sectionAudioBtnPaused
+                        : null),
+                  ]}
+                  onPress={() =>
+                    handlePlayAudio(analysis.how_to_answer, 'ru', 'how_to_answer', true)
+                  }
+                  activeOpacity={0.85}
+                  accessibilityLabel="Озвучить решение"
+                >
+                  {loadingAudioId === 'how_to_answer' ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <Text style={[styles.sectionAudioBtnText, { marginLeft: 6 }]}>Загрузка...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.sectionAudioBtnText}>
+                      {playingId === 'how_to_answer'
+                        ? playbackState === 'playing'
+                          ? '⏸ Пауза'
+                          : '▶ Продолжить'
+                        : '▶ Озвучить'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
             <Text style={styles.instructionText}>{analysis.how_to_answer}</Text>
           </View>
 
-          {/* Card 6: Собери ответ на эстонском (PhraseBuilder) */}
-          <PhraseBuilder
-            template={analysis.answer_template}
-            vocabulary={analysis.vocabulary}
-            isJunior={isJunior}
-            onPlayAudio={handlePlayAudio}
-            playingId={playingId}
-            playbackState={playbackState}
-            loadingAudioId={loadingAudioId}
-            taskTitle={analysis.task_title}
-            themeExplanation={analysis.theme_explanation}
-            grade={profile.grade}
-            tier={profile.tier}
-          />
+          {/* Card 6: Собери ответ на эстонском (1–9 классы) / Формулировка для ответа (Гимназия 10–12) */}
+          {isSentenceFrameEnabled ? (
+            <PhraseBuilder
+              template={analysis.answer_template}
+              vocabulary={analysis.vocabulary}
+              isJunior={isJunior}
+              onPlayAudio={handlePlayAudio}
+              playingId={playingId}
+              playbackState={playbackState}
+              loadingAudioId={loadingAudioId}
+              taskTitle={analysis.task_title}
+              themeExplanation={analysis.theme_explanation}
+              grade={profile.grade}
+              tier={profile.tier}
+            />
+          ) : (
+            <View style={styles.modularCard}>
+              <View style={styles.academicHeaderRow}>
+                <View style={styles.academicBadge}>
+                  <Text style={styles.academicBadgeText}>Гимназия • Gümnaasium</Text>
+                </View>
+                <Text style={styles.sectionHeader}>
+                  📝 Формулировка для ответа (Näidissõnastus)
+                </Text>
+              </View>
+
+              <View style={styles.academicAnswerBox}>
+                <Text style={styles.academicAnswerText}>
+                  {(analysis.answer_template || '').replace(/\[(.*?)\]/g, '$1')}
+                </Text>
+              </View>
+
+              <Text style={styles.academicAnswerHint}>
+                💡 Готовый академический образец формулировки для экзаменационного или устного ответа в эстонской гимназии.
+              </Text>
+            </View>
+          )}
 
           {/* Card 7: Save Card Button */}
           <TouchableOpacity
@@ -2929,6 +2960,49 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     color: '#92400E',
+  },
+
+  // Gymnasium Academic Answer Card Styles
+  academicHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    marginBottom: 8,
+  },
+  academicBadge: {
+    backgroundColor: 'rgba(6, 78, 59, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(6, 78, 59, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  academicBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#064E3B',
+    letterSpacing: 0.5,
+  },
+  academicAnswerBox: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    padding: 16,
+    marginVertical: 10,
+  },
+  academicAnswerText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+    lineHeight: 24,
+  },
+  academicAnswerHint: {
+    fontSize: 13,
+    color: '#64748B',
+    lineHeight: 18,
+    marginTop: 4,
   },
   sectionHeaderJunior: {
     fontSize: 16,
