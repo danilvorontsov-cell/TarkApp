@@ -1602,15 +1602,13 @@ function MainApp() {
 
       {/* Profile Card */}
       <View style={[styles.card, isJunior ? styles.cardJunior : styles.cardSenior]}>
-        <View style={styles.cardHeaderRow}>
-          <Text style={[styles.cardTitle, isJunior && styles.cardTitleJunior]}>
-            👤 Имя и класс ученика
+        <Text style={[styles.cardTitle, isJunior && styles.cardTitleJunior]}>
+          👤 Имя и класс ученика
+        </Text>
+        <View style={[styles.tierTag, isJunior ? styles.tierTagJunior : styles.tierTagSenior]}>
+          <Text style={[styles.tierTagText, isJunior && styles.tierTagTextJunior]}>
+            {getTierBadgeText(profile.tier)}
           </Text>
-          <View style={[styles.tierTag, isJunior ? styles.tierTagJunior : styles.tierTagSenior]}>
-            <Text style={[styles.tierTagText, isJunior && styles.tierTagTextJunior]}>
-              {getTierBadgeText(profile.tier)}
-            </Text>
-          </View>
         </View>
         <Text style={styles.caption}>
           ИИ TarkApp адаптирует сложность объяснений и голос под класс ребёнка.
@@ -3475,6 +3473,9 @@ const styles = StyleSheet.create({
     fontSize: 16.5,
   },
   tierTag: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    marginBottom: 6,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: Theme.radius.badge,
