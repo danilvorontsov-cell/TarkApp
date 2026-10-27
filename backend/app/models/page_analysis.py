@@ -195,6 +195,10 @@ class PageAnalysisResponse(BaseModel):
         ...,
         description="Короткий поддерживающий текст (2-3 предложения) для мгновенной озвучки ребенку"
     )
+    is_acceptable: Optional[bool] = Field(
+        default=True,
+        description="Флаг пригодности снимка: False, если фото не читаемое/размытое и выдан обучающий fallback"
+    )
 
 
 class AnalyzePageJsonRequest(BaseModel):

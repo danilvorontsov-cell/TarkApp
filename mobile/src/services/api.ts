@@ -74,6 +74,10 @@ export class ApiError extends Error {
 let cachedDeviceId: string | null = null;
 const SECURE_DEVICE_ID_KEY = 'tarkapp_device_id';
 
+export function _resetCachedDeviceId(): void {
+  cachedDeviceId = null;
+}
+
 /**
  * Returns a persistent, tamper-resistant Device ID.
  * Uses expo-secure-store (iOS Keychain / Android Keystore) so that

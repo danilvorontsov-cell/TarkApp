@@ -170,6 +170,7 @@ class GeminiTutorService:
             how_to_answer="Сделай чёткое фото страницы учебника при хорошем освещении и нажми кнопку 'Попробовать снова'.",
             answer_template="Ma loen [ülesannet] ja õpin [hoolega].",
             voice_prompt_script=f"Привет, {nickname}! Сфотографируй страницу ещё раз поровнее, и мы сразу разберём задание!",
+            is_acceptable=False,
         )
 
     def _parse_json_response(self, text: str) -> PageAnalysisResponse:
