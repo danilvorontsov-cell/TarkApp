@@ -57,6 +57,7 @@ import { AvatarPickerModal } from './src/components/AvatarPickerModal';
 import { LicenseActivationModal } from './src/components/LicenseActivationModal';
 import { QuickTranslatorScreen } from './src/screens/QuickTranslatorScreen';
 import { FeedbackScreen } from './src/screens/FeedbackScreen';
+import { PaywallScreen } from './src/screens/PaywallScreen';
 
 // Initialize Sentry stub/client once at entry
 initSentry();
@@ -113,6 +114,7 @@ function MainApp() {
   const [isTrialBlockedModalVisible, setIsTrialBlockedModalVisible] = useState<boolean>(false);
   const [modalBlockReason, setModalBlockReason] = useState<'trial_expired' | 'reviews_limit_reached' | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [isPaywallVisible, setIsPaywallVisible] = useState<boolean>(false);
 
   const edgePanResponder = useRef(
     PanResponder.create({
@@ -190,7 +192,7 @@ function MainApp() {
     // Register trial expired blocker listener
     setOnTrialExpiredListener(() => {
       setModalBlockReason('reviews_limit_reached');
-      setIsTrialBlockedModalVisible(true);
+      setIsPaywallVisible(true);
     });
 
     const unsubAudio = AudioQueueManager.subscribe((state) => {
@@ -216,6 +218,7 @@ function MainApp() {
     setLicenseStatus(newStatus);
     setIsTrialBlockedModalVisible(false);
     setIsKeyModalVisible(false);
+    setIsPaywallVisible(false);
   };
 
   const handlePlayAudio = async (
@@ -471,7 +474,7 @@ function MainApp() {
     // Check if free review allowance ran out
     if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 5) <= 0) {
       setModalBlockReason('reviews_limit_reached');
-      setIsTrialBlockedModalVisible(true);
+      setIsPaywallVisible(true);
       return;
     }
 
@@ -521,7 +524,7 @@ function MainApp() {
     // Check if free review allowance ran out
     if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 5) <= 0) {
       setModalBlockReason('reviews_limit_reached');
-      setIsTrialBlockedModalVisible(true);
+      setIsPaywallVisible(true);
       return;
     }
 
@@ -576,7 +579,7 @@ function MainApp() {
     // Check if free review allowance ran out
     if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 5) <= 0) {
       setModalBlockReason('reviews_limit_reached');
-      setIsTrialBlockedModalVisible(true);
+      setIsPaywallVisible(true);
       return;
     }
 
@@ -1011,23 +1014,22 @@ function MainApp() {
         {/* Trial Review Limit / Active Subscription Badge */}
         <View style={styles.reviewLimitBadgeRow}>
           {licenseStatus?.has_key ? (
-            <View style={styles.subscriptionActiveBadge}>
+            <TouchableOpacity
+              style={styles.subscriptionActiveBadge}
+              onPress={() => setIsPaywallVisible(true)}
+              activeOpacity={0.8}
+            >
               <Text style={styles.subscriptionActiveBadgeText}>✓ Подписка активна (Безлимит)</Text>
-            </View>
+            </TouchableOpacity>
           ) : (
             <TouchableOpacity
               style={[
                 styles.reviewLimitBadge,
                 (licenseStatus?.free_reviews_left ?? 5) === 0 && styles.reviewLimitBadgeExhausted,
               ]}
-              onPress={() => {
-                if ((licenseStatus?.free_reviews_left ?? 5) === 0) {
-                  setModalBlockReason('reviews_limit_reached');
-                  setIsTrialBlockedModalVisible(true);
-                }
-              }}
-              activeOpacity={(licenseStatus?.free_reviews_left ?? 5) === 0 ? 0.75 : 1}
-              accessibilityLabel={`Осталось ${licenseStatus?.free_reviews_left ?? 5} бесплатных разборов`}
+              onPress={() => setIsPaywallVisible(true)}
+              activeOpacity={0.75}
+              accessibilityLabel={`Осталось ${licenseStatus?.free_reviews_left ?? 5} бесплатных разборов. Нажмите для выбора тарифа.`}
             >
               <Text
                 style={[
@@ -1988,11 +1990,19 @@ function MainApp() {
         )}
 
         <TouchableOpacity
+          style={styles.openPaywallBtn}
+          onPress={() => setIsPaywallVisible(true)}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.openPaywallBtnText}>💎 Выбрать тариф / Оформить PRO</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
           style={styles.activateKeyBtn}
           onPress={() => setIsKeyModalVisible(true)}
           activeOpacity={0.8}
         >
-          <Text style={styles.activateKeyBtnText}>🔑 Ввести ключ доступа</Text>
+          <Text style={styles.activateKeyBtnText}>🔑 Ввести промокод / ключ доступа</Text>
         </TouchableOpacity>
       </View>
 
@@ -2054,38 +2064,64 @@ function MainApp() {
           <Text style={styles.headerBrandTitle}>TarkApp</Text>
         </View>
 
-        <TouchableOpacity
-          style={[
-            styles.headerProfilePill,
-            !profile.nickname?.trim() && styles.headerProfilePillGuest,
-          ]}
-          onPress={() => switchTab(currentTab === 'settings' ? 'study' : 'settings')}
-          accessibilityLabel={
-            profile.nickname?.trim()
-              ? `Профиль: ${profile.nickname.trim()}`
-              : 'Войти в профиль'
-          }
-          accessibilityRole="button"
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          activeOpacity={0.75}
-        >
-          {profile.avatarUri ? (
-            <Image source={{ uri: profile.avatarUri }} style={styles.headerProfileAvatar} />
-          ) : (
-            <Text style={styles.headerProfileEmoji}>
-              {profile.nickname?.trim() ? '🧑‍🎓' : '👤'}
-            </Text>
-          )}
-          <Text
+        {/* Right Header Controls: PRO Badge & Profile */}
+        <View style={styles.headerRightGroup}>
+          <TouchableOpacity
             style={[
-              styles.headerProfileText,
-              !profile.nickname?.trim() && styles.headerProfileTextGuest,
+              styles.headerProBadge,
+              licenseStatus?.has_key && styles.headerProBadgeActive,
             ]}
-            numberOfLines={1}
+            onPress={() => setIsPaywallVisible(true)}
+            accessibilityLabel={
+              licenseStatus?.has_key ? 'Подписка PRO активна' : 'Оформить подписку PRO'
+            }
+            accessibilityRole="button"
+            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+            activeOpacity={0.8}
           >
-            {profile.nickname?.trim() ? profile.nickname.trim() : 'Войти'}
-          </Text>
-        </TouchableOpacity>
+            <Text
+              style={[
+                styles.headerProBadgeText,
+                licenseStatus?.has_key && styles.headerProBadgeTextActive,
+              ]}
+            >
+              {licenseStatus?.has_key ? '👑 PRO' : '⚡ PRO'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.headerProfilePill,
+              !profile.nickname?.trim() && styles.headerProfilePillGuest,
+            ]}
+            onPress={() => switchTab(currentTab === 'settings' ? 'study' : 'settings')}
+            accessibilityLabel={
+              profile.nickname?.trim()
+                ? `Профиль: ${profile.nickname.trim()}`
+                : 'Войти в профиль'
+            }
+            accessibilityRole="button"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            activeOpacity={0.75}
+          >
+            {profile.avatarUri ? (
+              <Image source={{ uri: profile.avatarUri }} style={styles.headerProfileAvatar} />
+            ) : (
+              <Text style={styles.headerProfileEmoji}>
+                {profile.nickname?.trim() ? '🧑‍🎓' : '👤'}
+              </Text>
+            )}
+            <Text
+              style={[
+                styles.headerProfileText,
+                !profile.nickname?.trim() && styles.headerProfileTextGuest,
+              ]}
+              numberOfLines={1}
+            >
+              {profile.nickname?.trim() ? profile.nickname.trim() : 'Войти'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Main Scrollable Content Area */}
@@ -2192,6 +2228,8 @@ function MainApp() {
         onChangeAvatar={handleSelectAvatarSource}
         vocabCount={savedVocab.length}
         onLogout={handleLogout}
+        onOpenPaywall={() => setIsPaywallVisible(true)}
+        hasPro={Boolean(licenseStatus?.has_key)}
       />
 
       {/* Attractive Centered Avatar Picker Modal */}
@@ -2202,6 +2240,14 @@ function MainApp() {
         onPickGallery={handlePickAvatarFromGallery}
         onRemovePhoto={handleRemoveAvatar}
         hasExistingPhoto={Boolean(profile.avatarUri)}
+      />
+
+      {/* Paywall & Subscription Screen */}
+      <PaywallScreen
+        visible={isPaywallVisible}
+        onClose={() => setIsPaywallVisible(false)}
+        onOpenKeyActivation={() => setIsKeyModalVisible(true)}
+        canClose={true}
       />
 
       {/* License Promo Key Activation Modal (Manual Entry) */}
@@ -2291,6 +2337,34 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 16,
     overflow: 'hidden',
+  },
+  headerRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerProBadge: {
+    backgroundColor: '#064E3B',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#5FEDC5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerProBadgeActive: {
+    backgroundColor: 'rgba(6, 78, 59, 0.15)',
+    borderColor: '#064E3B',
+  },
+  headerProBadgeText: {
+    color: '#5FEDC5',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  headerProBadgeTextActive: {
+    color: '#064E3B',
   },
   headerProfilePill: {
     flexDirection: 'row',
@@ -3970,19 +4044,35 @@ const styles = StyleSheet.create({
     color: darkTheme.textSecondary,
     marginBottom: 8,
   },
-  activateKeyBtn: {
+  openPaywallBtn: {
     backgroundColor: darkTheme.accent,
-    borderRadius: 12,
-    paddingVertical: 12,
+    borderRadius: 14,
+    paddingVertical: 13,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 6,
+    marginTop: 8,
+    marginBottom: 8,
     ...Theme.shadow.button,
   },
-  activateKeyBtnText: {
-    fontSize: 14,
+  openPaywallBtnText: {
+    fontSize: 14.5,
     fontWeight: '800',
     color: darkTheme.accentText,
+  },
+  activateKeyBtn: {
+    backgroundColor: darkTheme.cardBackground,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
+    borderRadius: 14,
+    paddingVertical: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  activateKeyBtnText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: darkTheme.textPrimary,
   },
   reviewLimitBadgeRow: {
     alignItems: 'center',

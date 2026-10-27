@@ -29,6 +29,8 @@ interface DrawerMenuProps {
   onChangeAvatar?: () => void;
   vocabCount?: number;
   onLogout?: () => void;
+  onOpenPaywall?: () => void;
+  hasPro?: boolean;
 }
 
 interface MenuItemDef {
@@ -49,6 +51,8 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
   onChangeAvatar,
   vocabCount = 0,
   onLogout,
+  onOpenPaywall,
+  hasPro = false,
 }) => {
   const insets = useSafeAreaInsets();
   const animProgress = useRef(new Animated.Value(0)).current;
@@ -230,6 +234,31 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
             );
           })}
         </View>
+
+        {/* PRO Subscription Banner */}
+        <TouchableOpacity
+          style={styles.proDrawerCard}
+          onPress={() => {
+            onClose();
+            if (onOpenPaywall) onOpenPaywall();
+          }}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.proDrawerIcon}>{hasPro ? '👑' : '💎'}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.proDrawerTitle}>
+              {hasPro ? 'Подписка активна' : 'Тарифы TarkApp PRO'}
+            </Text>
+            <Text style={styles.proDrawerSub}>
+              {hasPro ? 'Безлимитный доступ' : 'От 8.88 € / месяц'}
+            </Text>
+          </View>
+          <View style={[styles.proDrawerBadge, hasPro && styles.proDrawerBadgeActive]}>
+            <Text style={[styles.proDrawerBadgeText, hasPro && styles.proDrawerBadgeTextActive]}>
+              {hasPro ? 'PRO' : 'Выбрать'}
+            </Text>
+          </View>
+        </TouchableOpacity>
 
         {/* Thin Divider Line */}
         <View style={styles.divider} />
@@ -464,6 +493,48 @@ const styles = StyleSheet.create({
     backgroundColor: darkTheme.cardBorder,
     marginHorizontal: 18,
     marginVertical: 4,
+  },
+  proDrawerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 12,
+    marginBottom: 6,
+    padding: 12,
+    borderRadius: 16,
+    backgroundColor: '#1E292F',
+    borderWidth: 1,
+    borderColor: darkTheme.accent,
+  },
+  proDrawerIcon: {
+    fontSize: 22,
+    marginRight: 10,
+  },
+  proDrawerTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: darkTheme.textPrimary,
+  },
+  proDrawerSub: {
+    fontSize: 11.5,
+    color: darkTheme.textSecondary,
+    marginTop: 1,
+  },
+  proDrawerBadge: {
+    backgroundColor: darkTheme.accent,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  proDrawerBadgeActive: {
+    backgroundColor: 'rgba(95, 237, 197, 0.2)',
+  },
+  proDrawerBadgeText: {
+    color: darkTheme.accentText,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  proDrawerBadgeTextActive: {
+    color: darkTheme.accent,
   },
   drawerFooter: {
     paddingHorizontal: 12,
