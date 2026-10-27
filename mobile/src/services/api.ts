@@ -1,3 +1,6 @@
+import { Platform } from 'react-native';
+import * as Application from 'expo-application';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PageAnalysisResponse, UserProfile, VocabularyItem } from '../types';
 import { captureException } from './sentry';
 
@@ -15,6 +18,119 @@ export class ApiError extends Error {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+// ==========================================
+// Device ID & License Management
+// ==========================================
+
+let cachedDeviceId: string | null = null;
+
+export async function getDeviceId(): Promise<string> {
+  if (cachedDeviceId) {
+    return cachedDeviceId;
+  }
+
+  try {
+    const saved = await AsyncStorage.getItem('@tarkapp_device_id');
+    if (saved && saved.trim()) {
+      cachedDeviceId = saved.trim();
+      return cachedDeviceId;
+    }
+  } catch {}
+
+  let hardwareId: string | null = null;
+  try {
+    if (Platform.OS === 'android') {
+      hardwareId = Application.getAndroidId();
+    } else if (Platform.OS === 'ios') {
+      hardwareId = await Application.getIosIdForVendorAsync();
+    }
+  } catch {}
+
+  if (!hardwareId || !hardwareId.trim()) {
+    hardwareId = `dev_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+  }
+
+  cachedDeviceId = hardwareId.trim();
+  try {
+    await AsyncStorage.setItem('@tarkapp_device_id', cachedDeviceId);
+  } catch {}
+
+  return cachedDeviceId;
+}
+
+export type TrialExpiredCallback = () => void;
+let onTrialExpiredListener: TrialExpiredCallback | null = null;
+
+export function setOnTrialExpiredListener(callback: TrialExpiredCallback | null): void {
+  onTrialExpiredListener = callback;
+}
+
+export function notifyTrialExpired(): void {
+  if (onTrialExpiredListener) {
+    try {
+      onTrialExpiredListener();
+    } catch (e) {
+      console.warn('Error in trial expired listener:', e);
+    }
+  }
+}
+
+export interface LicenseStatus {
+  is_active: boolean;
+  days_left: number;
+  expires_at: string;
+  device_id?: string;
+  activated_key?: string;
+}
+
+export interface KeyActivateResponse {
+  success: boolean;
+  message: string;
+  is_active: boolean;
+  days_left: number;
+  expires_at: string;
+}
+
+export async function getLicenseStatus(baseUrl: string = API_BASE_URL): Promise<LicenseStatus> {
+  const deviceId = await getDeviceId();
+  const endpoint = `${baseUrl}/api/v1/license/status`;
+  const response = await fetch(endpoint, {
+    headers: {
+      Accept: 'application/json',
+      'X-Device-ID': deviceId,
+    },
+  });
+
+  if (!response.ok) {
+    throw await parseErrorResponse(response);
+  }
+
+  return (await response.json()) as LicenseStatus;
+}
+
+export async function activateAccessKey(
+  keyCode: string,
+  baseUrl: string = API_BASE_URL
+): Promise<KeyActivateResponse> {
+  const deviceId = await getDeviceId();
+  const endpoint = `${baseUrl}/api/v1/license/activate`;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'X-Device-ID': deviceId,
+    },
+    body: JSON.stringify({ key_code: keyCode }),
+  });
+
+  if (!response.ok) {
+    throw await parseErrorResponse(response);
+  }
+
+  return (await response.json()) as KeyActivateResponse;
 }
 
 export interface MoreExamplesRequest {
@@ -165,7 +281,14 @@ async function parseErrorResponse(response: Response): Promise<ApiError> {
 
   try {
     const errJson = await response.json();
-    if (errJson.message) {
+    if (errJson?.detail && typeof errJson.detail === 'object') {
+      if (errJson.detail.error) {
+        errorCode = errJson.detail.error;
+      }
+      if (errJson.detail.message) {
+        friendlyMessage = errJson.detail.message;
+      }
+    } else if (errJson.message) {
       friendlyMessage = errJson.message;
     } else if (typeof errJson.detail === 'string') {
       friendlyMessage = errJson.detail;
@@ -175,8 +298,20 @@ async function parseErrorResponse(response: Response): Promise<ApiError> {
     if (errJson.code) {
       errorCode = errJson.code;
     }
+    if (errJson.error && typeof errJson.error === 'string') {
+      errorCode = errJson.error;
+    }
   } catch {
     // Non-JSON response
+  }
+
+  // Intercept HTTP 403 with TRIAL_EXPIRED
+  if (
+    response.status === 403 &&
+    (errorCode === 'TRIAL_EXPIRED' || friendlyMessage.includes('пробного периода'))
+  ) {
+    errorCode = 'TRIAL_EXPIRED';
+    notifyTrialExpired();
   }
 
   if (response.status === 500 && !friendlyMessage.includes('Временный сбой')) {
@@ -195,11 +330,13 @@ export async function fetchMoreExamples(
 ): Promise<string[]> {
   const endpoint = `${baseUrl}/api/v1/more-examples`;
   try {
+    const deviceId = await getDeviceId();
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
+        'X-Device-ID': deviceId,
       },
       body: JSON.stringify(request),
     });
@@ -230,6 +367,7 @@ export async function analyzePage(
 ): Promise<PageAnalysisResponse> {
   const endpoint = `${baseUrl}/api/v1/analyze-page`;
   try {
+    const deviceId = await getDeviceId();
     const formData = new FormData();
 
     const filename = imageUri.split('/').pop() || 'textbook_page.jpg';
@@ -254,6 +392,7 @@ export async function analyzePage(
       body: formData,
       headers: {
         Accept: 'application/json',
+        'X-Device-ID': deviceId,
       },
     });
 
@@ -287,6 +426,7 @@ export async function analyzePagesJson(
 ): Promise<PageAnalysisResponse> {
   const endpoint = `${baseUrl}/api/v1/analyze-page/json`;
   try {
+    const deviceId = await getDeviceId();
     const validBase64Images = images
       .map((img) => img.base64)
       .filter((b): b is string => !!b && b.length > 0);
@@ -309,6 +449,7 @@ export async function analyzePagesJson(
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
+        'X-Device-ID': deviceId,
       },
       body: JSON.stringify(bodyPayload),
     });
@@ -362,11 +503,13 @@ export async function quickTranslate(
 ): Promise<QuickTranslateResponse> {
   const endpoint = `${baseUrl}/api/v1/translate/quick`;
   try {
+    const deviceId = await getDeviceId();
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
+        'X-Device-ID': deviceId,
       },
       body: JSON.stringify(request),
     });
@@ -399,6 +542,7 @@ export async function sendFeedback(
 ): Promise<FeedbackResponse> {
   const endpoint = `${baseUrl}/api/v1/feedback`;
   try {
+    const deviceId = await getDeviceId();
     const clientReqId = generateClientRequestId();
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -406,6 +550,7 @@ export async function sendFeedback(
         'Content-Type': 'application/json',
         Accept: 'application/json',
         'X-Request-ID': clientReqId,
+        'X-Device-ID': deviceId,
       },
       body: JSON.stringify(payload),
     });

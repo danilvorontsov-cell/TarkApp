@@ -10,11 +10,13 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.logger import setup_logging, app_logger, error_logger
+from app.database import init_db
 from app.routers.analyze import router as analyze_router
 from app.routers.health import router as health_router
 from app.routers.voice import router as voice_router
 from app.routers.translate import router as translate_router
 from app.routers.feedback import router as feedback_router
+from app.routers.license import router as license_router
 from app.services.telegram_alert import send_telegram_alert
 
 # Setup file loggers with rotation (backend/logs/app.log and backend/logs/error.log)
@@ -25,6 +27,11 @@ logger = app_logger
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION} ({settings.APP_ENV})")
+    try:
+        init_db()
+        logger.info("Database initialized successfully.")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
     yield
     logger.info(f"Shutting down {settings.APP_NAME}")
 
@@ -83,6 +90,7 @@ app.include_router(analyze_router)
 app.include_router(voice_router)
 app.include_router(translate_router)
 app.include_router(feedback_router)
+app.include_router(license_router)
 
 
 @app.exception_handler(HTTPException)

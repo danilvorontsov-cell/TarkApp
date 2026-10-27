@@ -42,6 +42,9 @@ import {
   analyzePagesJson,
   ImagePayload,
   formatFriendlyErrorMessage,
+  getLicenseStatus,
+  setOnTrialExpiredListener,
+  LicenseStatus,
 } from './src/services/api';
 import { PhraseBuilder } from './src/components/PhraseBuilder';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
@@ -50,6 +53,7 @@ import { Theme } from './src/theme/colors';
 import { DrawerMenu, DrawerTabType } from './src/components/DrawerMenu';
 import { ComingSoonCard } from './src/components/ComingSoonCard';
 import { AvatarPickerModal } from './src/components/AvatarPickerModal';
+import { LicenseActivationModal } from './src/components/LicenseActivationModal';
 import { QuickTranslatorScreen } from './src/screens/QuickTranslatorScreen';
 import { FeedbackScreen } from './src/screens/FeedbackScreen';
 
@@ -103,6 +107,9 @@ function MainApp() {
   const [expandedWord, setExpandedWord] = useState<string | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
   const [isAvatarModalVisible, setIsAvatarModalVisible] = useState<boolean>(false);
+  const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null);
+  const [isKeyModalVisible, setIsKeyModalVisible] = useState<boolean>(false);
+  const [isTrialBlockedModalVisible, setIsTrialBlockedModalVisible] = useState<boolean>(false);
 
   const edgePanResponder = useRef(
     PanResponder.create({
@@ -172,6 +179,16 @@ function MainApp() {
       setSavedVocab(v);
     });
 
+    // Check device license & trial status
+    getLicenseStatus()
+      .then((status) => setLicenseStatus(status))
+      .catch((err) => console.log('Could not load license status:', err));
+
+    // Register trial expired blocker listener
+    setOnTrialExpiredListener(() => {
+      setIsTrialBlockedModalVisible(true);
+    });
+
     const unsubAudio = AudioQueueManager.subscribe((state) => {
       setPlayingId(state.playingId);
       setPlaybackState(state.playbackState);
@@ -181,6 +198,7 @@ function MainApp() {
     return () => {
       unsubAudio();
       stopTts();
+      setOnTrialExpiredListener(null);
     };
   }, []);
 
@@ -188,6 +206,12 @@ function MainApp() {
     setTimeout(() => {
       scrollViewRef.current?.scrollTo({ y: 0, animated: true });
     }, 120);
+  };
+
+  const handleKeyActivated = (newStatus: LicenseStatus) => {
+    setLicenseStatus(newStatus);
+    setIsTrialBlockedModalVisible(false);
+    setIsKeyModalVisible(false);
   };
 
   const handlePlayAudio = async (
@@ -1803,6 +1827,51 @@ function MainApp() {
         )}
       </View>
 
+      {/* Subscription Status & License Key Card */}
+      <View style={[styles.card, isJunior ? styles.cardJunior : styles.cardSenior]}>
+        <Text style={[styles.cardTitle, isJunior && styles.cardTitleJunior]}>
+          🔑 Лицензия и подписка
+        </Text>
+        <Text style={styles.caption}>
+          Учёт доступа ведётся по уникальному номеру устройства без необходимости регистрации.
+        </Text>
+
+        <View style={styles.licenseStatusBox}>
+          <Text style={styles.licenseStatusLabel}>Статус подписки:</Text>
+          <Text
+            style={[
+              styles.licenseStatusValue,
+              licenseStatus && !licenseStatus.is_active && styles.licenseStatusExpired,
+            ]}
+          >
+            {licenseStatus
+              ? licenseStatus.is_active
+                ? `Пробный период (осталось ${licenseStatus.days_left} дн.)`
+                : 'Срок действия пробного периода завершен'
+              : 'Пробный период (осталось 14 дн.)'}
+          </Text>
+          {licenseStatus?.expires_at && (
+            <Text style={styles.licenseExpiryText}>
+              Действует до: {licenseStatus.expires_at.replace('T', ' ').replace('Z', ' UTC')}
+            </Text>
+          )}
+        </View>
+
+        {licenseStatus?.activated_key && (
+          <Text style={styles.licenseKeyInfo}>
+            Активирован ключ: <Text style={styles.bold}>{licenseStatus.activated_key}</Text>
+          </Text>
+        )}
+
+        <TouchableOpacity
+          style={styles.activateKeyBtn}
+          onPress={() => setIsKeyModalVisible(true)}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.activateKeyBtnText}>🔑 Ввести ключ доступа</Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Storage and Data Maintenance */}
       <View style={[styles.card, isJunior ? styles.cardJunior : styles.cardSenior]}>
         <Text style={[styles.cardTitle, isJunior && styles.cardTitleJunior]}>
@@ -2009,6 +2078,22 @@ function MainApp() {
         onPickGallery={handlePickAvatarFromGallery}
         onRemovePhoto={handleRemoveAvatar}
         hasExistingPhoto={Boolean(profile.avatarUri)}
+      />
+
+      {/* License Promo Key Activation Modal (Manual Entry) */}
+      <LicenseActivationModal
+        visible={isKeyModalVisible}
+        onClose={() => setIsKeyModalVisible(false)}
+        onActivated={handleKeyActivated}
+        isBlocking={false}
+      />
+
+      {/* Global Blocking Modal for Expired Trial */}
+      <LicenseActivationModal
+        visible={isTrialBlockedModalVisible}
+        onClose={() => setIsTrialBlockedModalVisible(false)}
+        onActivated={handleKeyActivated}
+        isBlocking={true}
       />
     </View>
   );
@@ -3719,5 +3804,50 @@ const styles = StyleSheet.create({
     color: Theme.colors.danger,
     fontWeight: '700',
     fontSize: 13,
+  },
+  licenseStatusBox: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 14,
+    padding: 14,
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  licenseStatusLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+    marginBottom: 3,
+  },
+  licenseStatusValue: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#064E3B',
+  },
+  licenseStatusExpired: {
+    color: '#DC2626',
+  },
+  licenseExpiryText: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 4,
+  },
+  licenseKeyInfo: {
+    fontSize: 12.5,
+    color: '#334155',
+    marginBottom: 8,
+  },
+  activateKeyBtn: {
+    backgroundColor: '#5FEDC5',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 6,
+    ...Theme.shadow.button,
+  },
+  activateKeyBtnText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#064E3B',
   },
 });

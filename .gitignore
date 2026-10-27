@@ -38,6 +38,11 @@ web-build/
 android/
 ios/
 
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
 # Python
 backend/.venv/
 .venv/

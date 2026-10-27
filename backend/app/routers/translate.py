@@ -1,13 +1,18 @@
 import base64
 import logging
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.models.translate import QuickTranslateRequest, QuickTranslateResponse
 from app.services.gemini_service import gemini_tutor_service
+from app.routers.license import verify_device_access
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/translate", tags=["Translate"])
+router = APIRouter(
+    prefix="/api/v1/translate",
+    tags=["Translate"],
+    dependencies=[Depends(verify_device_access)],
+)
 
 
 @router.post(

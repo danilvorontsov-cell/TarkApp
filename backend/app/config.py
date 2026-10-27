@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Max image upload size in MB (e.g. 10MB)
     MAX_IMAGE_SIZE_MB: int = 10
     
+    # Database settings (SQLite / SQLAlchemy)
+    DATABASE_URL: str = "sqlite:///./tarkapp.db"
+
     # Telegram Alerting & Topic Routing (Optional)
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_CHAT_ID: Optional[str] = None

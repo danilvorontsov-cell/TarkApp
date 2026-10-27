@@ -1,0 +1,353 @@
+import React, { useState } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  Modal,
+  TextInput,
+  TouchableOpacity,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  TouchableWithoutFeedback,
+} from 'react-native';
+import { Theme } from '../theme/colors';
+import { activateAccessKey, LicenseStatus } from '../services/api';
+
+interface LicenseActivationModalProps {
+  visible: boolean;
+  onClose: () => void;
+  onActivated: (status: LicenseStatus) => void;
+  isBlocking?: boolean;
+}
+
+export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
+  visible,
+  onClose,
+  onActivated,
+  isBlocking = false,
+}) => {
+  const [keyCode, setKeyCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const handleActivate = async () => {
+    const trimmed = keyCode.trim().toUpperCase();
+    if (!trimmed) {
+      setErrorMessage('Пожалуйста, введите ключ доступа.');
+      return;
+    }
+
+    setLoading(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const res = await activateAccessKey(trimmed);
+      setSuccessMessage(res.message || 'Ключ успешно активирован!');
+      setTimeout(() => {
+        onActivated({
+          is_active: res.is_active,
+          days_left: res.days_left,
+          expires_at: res.expires_at,
+          activated_key: trimmed,
+        });
+        setKeyCode('');
+        setSuccessMessage(null);
+        onClose();
+      }, 1200);
+    } catch (err: any) {
+      const msg = err?.message || 'Не удалось активировать ключ. Проверьте правильность кода.';
+      setErrorMessage(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDismiss = () => {
+    if (!isBlocking && !loading) {
+      setErrorMessage(null);
+      setSuccessMessage(null);
+      onClose();
+    }
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={handleDismiss}
+    >
+      <TouchableWithoutFeedback onPress={handleDismiss}>
+        <View style={styles.backdrop}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.keyboardAvoid}
+          >
+            <TouchableWithoutFeedback>
+              <View style={styles.modalCard}>
+                {/* Header Icon & Title */}
+                <View style={styles.headerRow}>
+                  <View style={[styles.iconCircle, isBlocking && styles.iconCircleBlocking]}>
+                    <Text style={styles.icon}>{isBlocking ? '🔒' : '🔑'}</Text>
+                  </View>
+                  {!isBlocking && (
+                    <TouchableOpacity
+                      style={styles.closeBtn}
+                      onPress={handleDismiss}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                      <Text style={styles.closeBtnText}>✕</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <Text style={styles.title}>
+                  {isBlocking ? 'Пробный период завершен' : 'Ввод ключа доступа'}
+                </Text>
+                <Text style={styles.subtitle}>
+                  {isBlocking
+                    ? '14 дней бесплатного пробного периода истекли. Введите промокод или ключ бета-тестера для возобновления доступа.'
+                    : 'Введите ключ доступа для продления периода работы TarkApp.'}
+                </Text>
+
+                {/* Input Field */}
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Код ключа:</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={keyCode}
+                    onChangeText={(val) => {
+                      setKeyCode(val.toUpperCase());
+                      if (errorMessage) setErrorMessage(null);
+                    }}
+                    placeholder="TARK-XXXX-XXXX"
+                    placeholderTextColor="#94A3B8"
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    editable={!loading && !successMessage}
+                  />
+                </View>
+
+                {/* Error Banner */}
+                {Boolean(errorMessage) && (
+                  <View style={styles.errorBox}>
+                    <Text style={styles.errorIcon}>⚠️</Text>
+                    <Text style={styles.errorText}>{errorMessage}</Text>
+                  </View>
+                )}
+
+                {/* Success Banner */}
+                {Boolean(successMessage) && (
+                  <View style={styles.successBox}>
+                    <Text style={styles.successIcon}>✓</Text>
+                    <Text style={styles.successText}>{successMessage}</Text>
+                  </View>
+                )}
+
+                {/* Submit Action Button */}
+                <TouchableOpacity
+                  style={[
+                    styles.actionBtn,
+                    loading && styles.actionBtnDisabled,
+                    Boolean(successMessage) && styles.actionBtnSuccess,
+                  ]}
+                  onPress={handleActivate}
+                  disabled={loading || Boolean(successMessage)}
+                  activeOpacity={0.85}
+                >
+                  {loading ? (
+                    <View style={styles.loadingRow}>
+                      <ActivityIndicator size="small" color="#064E3B" />
+                      <Text style={styles.actionBtnText}>Проверка ключа...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.actionBtnText}>
+                      {successMessage ? 'Успешно активировано!' : 'Активировать доступ'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+
+                {/* Dismiss option if blocking but user wants to browse settings */}
+                {isBlocking && (
+                  <TouchableOpacity
+                    style={styles.cancelLink}
+                    onPress={onClose}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.cancelLinkText}>Закрыть</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </TouchableWithoutFeedback>
+          </KeyboardAvoidingView>
+        </View>
+      </TouchableWithoutFeedback>
+    </Modal>
+  );
+};
+
+const styles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  keyboardAvoid: {
+    width: '100%',
+    alignItems: 'center',
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 22,
+    ...Theme.shadow.modal,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  iconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#CFFAEE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconCircleBlocking: {
+    backgroundColor: '#FEE2E2',
+  },
+  icon: {
+    fontSize: 24,
+  },
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 6,
+  },
+  subtitle: {
+    fontSize: 13.5,
+    lineHeight: 19,
+    color: '#64748B',
+    marginBottom: 18,
+  },
+  inputContainer: {
+    marginBottom: 14,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  input: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+    letterSpacing: 1.5,
+  },
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 14,
+    gap: 8,
+  },
+  errorIcon: {
+    fontSize: 16,
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 12.5,
+    color: '#B91C1C',
+    fontWeight: '600',
+  },
+  successBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#6EE7B7',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 14,
+    gap: 8,
+  },
+  successIcon: {
+    fontSize: 16,
+    color: '#047857',
+    fontWeight: 'bold',
+  },
+  successText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#047857',
+    fontWeight: '700',
+  },
+  actionBtn: {
+    backgroundColor: '#5FEDC5',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Theme.shadow.button,
+  },
+  actionBtnDisabled: {
+    opacity: 0.7,
+  },
+  actionBtnSuccess: {
+    backgroundColor: '#34D399',
+  },
+  actionBtnText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#064E3B',
+  },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  cancelLink: {
+    marginTop: 14,
+    alignItems: 'center',
+  },
+  cancelLinkText: {
+    fontSize: 13.5,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+});

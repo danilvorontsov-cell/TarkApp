@@ -2,7 +2,7 @@ import base64
 import logging
 from typing import Optional, Union, List, Tuple
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from app.config import settings
 from app.models.page_analysis import (
@@ -14,10 +14,15 @@ from app.models.page_analysis import (
     UserProfile,
 )
 from app.services.gemini_service import gemini_tutor_service
+from app.routers.license import verify_device_access
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1", tags=["Analysis"])
+router = APIRouter(
+    prefix="/api/v1",
+    tags=["Analysis"],
+    dependencies=[Depends(verify_device_access)],
+)
 
 ALLOWED_MIME_TYPES = {
     "image/jpeg",
