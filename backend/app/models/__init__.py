@@ -4,6 +4,7 @@ from app.models.page_analysis import (
     ThemeInterest,
     UserProfile,
     VocabularyItem,
+    WorkedExample,
     PageAnalysisResponse,
     AnalyzePageJsonRequest,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "ThemeInterest",
     "UserProfile",
     "VocabularyItem",
+    "WorkedExample",
     "PageAnalysisResponse",
     "AnalyzePageJsonRequest",
 ]

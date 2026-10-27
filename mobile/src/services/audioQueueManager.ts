@@ -161,6 +161,17 @@ class AudioQueueManagerClass {
       });
     }
 
+    // 2b. Priority 2: Alternative explanation (alt_explanation) with bilingual stitching
+    if (analysis.alternative_explanation && analysis.alternative_explanation.trim()) {
+      this.upsertItem({
+        id: 'alt_explanation',
+        text: analysis.alternative_explanation,
+        lang: 'ru',
+        bilingual: true,
+        priority: 2,
+      });
+    }
+
     // 3. Priority 3: How to answer (how_to_answer) with bilingual stitching
     if (analysis.how_to_answer && analysis.how_to_answer.trim()) {
       this.upsertItem({
@@ -170,6 +181,21 @@ class AudioQueueManagerClass {
         bilingual: true,
         priority: 3,
       });
+    }
+
+    // 3b. Priority 3: Worked example (worked_example) with bilingual stitching
+    if (analysis.worked_example) {
+      const we = analysis.worked_example;
+      const naidisAudioText = `${we.given}. ${we.steps.join('. ')}. ${we.note || ''}`;
+      if (naidisAudioText.trim()) {
+        this.upsertItem({
+          id: 'worked_example',
+          text: naidisAudioText,
+          lang: 'ru',
+          bilingual: true,
+          priority: 3,
+        });
+      }
     }
 
     // 4. Priority 4: Vocabulary terms and examples (one by one)

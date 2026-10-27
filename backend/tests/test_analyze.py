@@ -19,9 +19,12 @@ from app.services.gemini_service import GeminiTutorService
 def mock_gemini_service():
     """Ensures deterministic fast unit tests using pedagogical mock generator."""
     from app.services.gemini_service import gemini_tutor_service
+    original_key = gemini_tutor_service.api_key
     original_client = gemini_tutor_service._client
+    gemini_tutor_service.api_key = "mock"
     gemini_tutor_service._client = None
     yield
+    gemini_tutor_service.api_key = original_key
     gemini_tutor_service._client = original_client
 
 
@@ -182,6 +185,38 @@ def test_page_analysis_response_schema():
     assert model.vocabulary[0].est == "liidetav"
 
 
+def test_worked_example_and_alternative_explanation_schema():
+    payload = {
+        "task_title": "Liitmine ja tehete komponendid",
+        "theme_explanation": "Суть простыми словами через блоки Minecraft",
+        "alternative_explanation": "Запасное объяснение через LEGO детали",
+        "vocabulary": [
+            {
+                "est": "liidetav",
+                "ru": "слагаемое",
+                "example": "9 on esimene liidetav"
+            }
+        ],
+        "worked_example": {
+            "title": "Пример решения (Näidis)",
+            "given": "Если у нас 9 синих и 7 красных деталей",
+            "steps": [
+                "1. Складываем: 9 + 7 = 16",
+                "2. 16 on summa"
+            ],
+            "note": "По этому же образцу сделай примеры из своего учебника!"
+        },
+        "how_to_answer": "1. Сложи числа\n2. Запиши ответ",
+        "answer_template": "Summa on [16]",
+        "voice_prompt_script": "Привет, Алекс! Давай решим этот пример!"
+    }
+    model = PageAnalysisResponse.model_validate(payload)
+    assert model.alternative_explanation == "Запасное объяснение через LEGO детали"
+    assert model.worked_example is not None
+    assert model.worked_example.title == "Пример решения (Näidis)"
+    assert len(model.worked_example.steps) == 2
+
+
 # --- Test /api/v1/analyze-page (Multipart) ---
 
 def test_analyze_page_primary_minecraft(client, sample_image_bytes):
@@ -205,6 +240,14 @@ def test_analyze_page_primary_minecraft(client, sample_image_bytes):
     assert "how_to_answer" in data
     assert "answer_template" in data
     assert "voice_prompt_script" in data
+    assert "alternative_explanation" in data
+    assert "worked_example" in data
+
+    # Worked example checks
+    assert data["worked_example"] is not None
+    assert "title" in data["worked_example"]
+    assert "given" in data["worked_example"]
+    assert len(data["worked_example"]["steps"]) > 0
 
     # Content checks
     assert len(data["vocabulary"]) >= 2

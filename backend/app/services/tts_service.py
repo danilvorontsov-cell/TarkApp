@@ -76,9 +76,277 @@ def normalize_text_for_estonian_tts(text: str) -> str:
     return re.sub(r'\s+', ' ', t).strip()
 
 
+# Словарь и формы порядковых числительных для римских цифр (1..30)
+ROMAN_TO_INT = {
+    "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5,
+    "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10,
+    "XI": 11, "XII": 12, "XIII": 13, "XIV": 14, "XV": 15,
+    "XVI": 16, "XVII": 17, "XVIII": 18, "XIX": 19, "XX": 20,
+    "XXI": 21, "XXII": 22, "XXIII": 23, "XXIV": 24, "XXV": 25,
+    "XXVI": 26, "XXVII": 27, "XXVIII": 28, "XXIX": 29, "XXX": 30,
+}
+
+# (m_nom, gen_m_n, prep_m_n, nom_n, nom_f, f_other)
+ORDINAL_FORMS: Dict[int, Tuple[str, str, str, str, str, str]] = {
+    1: ("первый", "первого", "первом", "первое", "первая", "первой"),
+    2: ("второй", "второго", "втором", "второе", "вторая", "второй"),
+    3: ("третий", "третьего", "третьем", "третье", "третья", "третьей"),
+    4: ("четвертый", "четвертого", "четвертом", "четвертое", "четвертая", "четвертой"),
+    5: ("пятый", "пятого", "пятом", "пятое", "пятая", "пятой"),
+    6: ("шестой", "шестого", "шестом", "шестое", "шестая", "шестой"),
+    7: ("седьмой", "седьмого", "седьмом", "седьмое", "седьмая", "седьмой"),
+    8: ("восьмой", "восьмого", "восьмом", "восьмое", "восьмая", "восьмой"),
+    9: ("девятый", "девятого", "девятом", "девятое", "девятая", "девятой"),
+    10: ("десятый", "десятого", "десятом", "десятое", "десятая", "десятой"),
+    11: ("одиннадцатый", "одиннадцатого", "одиннадцатом", "одиннадцатое", "одиннадцатая", "одиннадцатой"),
+    12: ("двенадцатый", "двенадцатого", "двенадцатом", "двенадцатое", "двенадцатая", "двенадцатой"),
+    13: ("тринадцатый", "тринадцатого", "тринадцатом", "тринадцатое", "тринадцатая", "тринадцатой"),
+    14: ("четырнадцатый", "четырнадцатого", "четырнадцатом", "четырнадцатое", "четырнадцатая", "четырнадцатой"),
+    15: ("пятнадцатый", "пятнадцатого", "пятнадцатом", "пятнадцатое", "пятнадцатая", "пятнадцатой"),
+    16: ("шестнадцатый", "шестнадцатого", "шестнадцатом", "шестнадцатое", "шестнадцатая", "шестнадцатой"),
+    17: ("семнадцатый", "семнадцатого", "семнадцатом", "семнадцатое", "семнадцатая", "семнадцатой"),
+    18: ("восемнадцатый", "восемнадцатого", "восемнадцатом", "восемнадцатое", "восемнадцатая", "восемнадцатой"),
+    19: ("девятнадцатый", "девятнадцатого", "девятнадцатом", "девятнадцатое", "девятнадцатая", "девятнадцатой"),
+    20: ("двадцатый", "двадцатого", "двадцатом", "двадцатое", "двадцатая", "двадцатой"),
+    21: ("двадцать первый", "двадцать первого", "двадцать первом", "двадцать первое", "двадцать первая", "двадцать первой"),
+    22: ("двадцать второй", "двадцать второго", "двадцать втором", "двадцать второе", "двадцать вторая", "двадцать второй"),
+    23: ("двадцать третий", "двадцать третьего", "двадцать третьем", "двадцать третье", "двадцать третья", "двадцать третьей"),
+    24: ("двадцать четвертый", "двадцать четвертого", "двадцать четвертом", "двадцать четвертое", "двадцать четвертая", "двадцать четвертой"),
+    25: ("двадцать пятый", "двадцать пятого", "двадцать пятом", "двадцать пятое", "двадцать пятая", "двадцать пятой"),
+    26: ("двадцать шестой", "двадцать шестого", "двадцать шестом", "двадцать шестое", "двадцать шестая", "двадцать шестой"),
+    27: ("двадцать седьмой", "двадцать седьмого", "двадцать седьмом", "двадцать седьмое", "двадцать седьмая", "двадцать седьмой"),
+    28: ("двадцать восьмой", "двадцать восьмого", "двадцать восьмом", "двадцать восьмое", "двадцать восьмая", "двадцать восьмой"),
+    29: ("двадцать девятый", "двадцать девятого", "двадцать девятом", "двадцать девятое", "двадцать девятая", "двадцать девятой"),
+    30: ("тридцатый", "тридцатого", "тридцатом", "тридцатое", "тридцатая", "тридцатой"),
+}
+
+ROMAN_KEYS = sorted(ROMAN_TO_INT.keys(), key=lambda x: len(x), reverse=True)
+ROMAN_PATTERN = "|".join(ROMAN_KEYS)
+
+MATH_VAR_MAP = {
+    "x": "икс", "X": "икс",
+    "y": "игрек", "Y": "игрек",
+    "z": "зет", "Z": "зет",
+    "b": "бэ", "B": "бэ",
+    "c": "цэ", "C": "цэ",
+}
+
+
+def normalize_roman_numerals(text: str) -> str:
+    """
+    Находит римские цифры в русском контексте (век, тысячелетие, класс, глава, том или дефисные окончания)
+    и конвертирует их в словесный русский эквивалент с учетом грамматического падежа и рода:
+    - XXI век / XXI-й век -> двадцать первый век
+    - XXI века -> двадцать первого века
+    - XXI веке / в XXI в. -> двадцать первом веке
+    - XX век -> двадцатый век
+    - XIX век -> девятнадцатый век
+    - III тысячелетие -> третье тысячелетие
+    """
+    if not text:
+        return ""
+
+    # 1. Порядок: существительное перед римской цифрой (напр. "глава IV", "в главе IV", "том II", "класс V")
+    p_noun_first = re.compile(
+        r'(?i)\b(в|во)?\s*(глав[а-яё]*|класс[а-яё]*|том[а-яё]*)\s+(' + ROMAN_PATTERN + r')\b'
+    )
+    def repl_noun_first(m):
+        prep = m.group(1) or ""
+        noun = m.group(2)
+        roman = m.group(3).upper()
+        num = ROMAN_TO_INT.get(roman)
+        if not num:
+            return m.group(0)
+        noun_l = noun.lower()
+        if "глав" in noun_l:
+            form_idx = 4 if noun_l == "глава" else 5
+        elif "класс" in noun_l or "том" in noun_l:
+            form_idx = 2 if (prep or noun_l.endswith("е")) else (1 if noun_l.endswith("а") else 0)
+        else:
+            form_idx = 0
+        w = ORDINAL_FORMS[num][form_idx]
+        if prep:
+            return f"{prep} {noun} {w}"
+        return f"{noun} {w}"
+
+    t = p_noun_first.sub(repl_noun_first, text)
+
+    # 2. Римская цифра перед ключевым словом (напр. "XXI век", "в XXI в.", "в III тысячелетии", "XXI-й век")
+    p_num_first = re.compile(
+        r'(?i)(?:(\bв|во|на|о|об|обо|к|ко|до|с|со|от|после|около)\s+)?'
+        r'\b(' + ROMAN_PATTERN + r')(?:-([а-яё]+))?\s*'
+        r'\b(век[а-яё]*|в\b\.?|тысячелети[а-яё]*|класс[а-яё]*|глав[а-яё]*|том[а-яё]*)'
+    )
+    def repl_num_first(m):
+        prep = m.group(1) or ""
+        roman = m.group(2).upper()
+        suffix = (m.group(3) or "").lower()
+        noun = m.group(4)
+        noun_l = noun.lower().rstrip(".")
+        num = ROMAN_TO_INT.get(roman)
+        if not num:
+            return m.group(0)
+
+        prep_l = prep.lower()
+
+        # Век / в.
+        if noun_l in ("век", "века", "веке", "веку", "веком", "в", "вв"):
+            if prep_l in ("в", "во", "на", "о", "об", "обо") or noun_l == "веке" or suffix in ("м", "ом", "ем"):
+                form_idx = 2
+                actual_noun = "веке" if noun_l in ("в", "вв") else noun
+            elif prep_l in ("до", "с", "со", "от", "после", "около") or noun_l in ("века", "вв") or suffix in ("го", "ого"):
+                form_idx = 1
+                actual_noun = "века" if noun_l in ("в", "вв") else noun
+            elif prep_l in ("к", "ко") or noun_l == "веку" or suffix == "му":
+                form_idx = 2
+                actual_noun = noun
+            else:
+                form_idx = 0
+                actual_noun = "век" if noun_l in ("в", "вв") else noun
+
+        # Тысячелетие
+        elif "тысячелети" in noun_l:
+            if prep_l in ("в", "во", "о", "об") or noun_l.endswith("и") or suffix in ("м", "ом", "ем"):
+                form_idx = 2
+            elif prep_l in ("до", "с", "со", "от", "после") or noun_l.endswith("я") or suffix in ("го", "ого"):
+                form_idx = 1
+            else:
+                form_idx = 3
+            actual_noun = noun
+
+        # Класс
+        elif "класс" in noun_l:
+            if prep_l in ("в", "во") or noun_l.endswith("е") or suffix in ("м", "ом", "ем"):
+                form_idx = 2
+            elif noun_l.endswith("а") or suffix in ("го", "ого"):
+                form_idx = 1
+            else:
+                form_idx = 0
+            actual_noun = noun
+
+        # Глава
+        elif "глав" in noun_l:
+            if noun_l == "глава" and suffix not in ("й", "ой"):
+                form_idx = 4
+            else:
+                form_idx = 5
+            actual_noun = noun
+
+        # Том
+        elif "том" in noun_l:
+            if prep_l in ("в", "во") or noun_l.endswith("е"):
+                form_idx = 2
+            elif noun_l.endswith("а"):
+                form_idx = 1
+            else:
+                form_idx = 0
+            actual_noun = noun
+        else:
+            actual_noun = noun
+
+        w = ORDINAL_FORMS[num][form_idx]
+        if prep:
+            return f"{prep} {w} {actual_noun}"
+        return f"{w} {actual_noun}"
+
+    t = p_num_first.sub(repl_num_first, t)
+
+    # 3. Римская цифра с дефисным окончанием без существительного (напр. "XXI-й", "III-е")
+    p_standalone = re.compile(r'\b(' + ROMAN_PATTERN + r')-([а-яё]+)\b', re.IGNORECASE)
+    def repl_standalone(m):
+        roman = m.group(1).upper()
+        suffix = m.group(2).lower()
+        num = ROMAN_TO_INT.get(roman)
+        if not num:
+            return m.group(0)
+        if suffix in ("м", "ом", "ем"):
+            form_idx = 2
+        elif suffix in ("го", "ого"):
+            form_idx = 1
+        elif suffix in ("е", "ье", "ое"):
+            form_idx = 3
+        elif suffix in ("я", "ая"):
+            form_idx = 4
+        else:
+            form_idx = 0
+        return ORDINAL_FORMS[num][form_idx]
+
+    t = p_standalone.sub(repl_standalone, t)
+    return t
+
+
+def normalize_math_expressions(text: str) -> str:
+    """
+    Нормализует математические переменные и знаки в русском контексте:
+    - Одиночные латинские переменные x, y, z -> икс, игрек, зет
+    - a (в мат. контексте), b, c -> а, бэ, цэ
+    - Знаки формул: + -> плюс, - -> минус, = -> равно
+    Не затрагивает чистый эстонский текст (слова без кириллицы и без мат. знаков).
+    """
+    if not text:
+        return ""
+
+    has_cyrillic = bool(re.search(r'[а-яА-ЯёЁ]', text))
+    has_math_ops = bool(re.search(r'[=+*\/]|(?<=[0-9a-zA-Z])\s*[-−]\s*(?=[0-9a-zA-Z])', text))
+    if not (has_cyrillic or has_math_ops):
+        return text
+
+    t = text
+    # 1. Знаки действий: +, =, -
+    t = re.sub(r'(?<=[0-9a-zA-Zа-яА-ЯёЁ])\s*\+\s*(?=[0-9a-zA-Zа-яА-ЯёЁ])|\s+\+\s+', ' плюс ', t)
+    t = re.sub(r'\s*=\s*', ' равно ', t)
+    t = re.sub(r'(?<=[0-9a-zA-Z])\s*[-−]\s*(?=[0-9a-zA-Z])|\s+[-−]\s+', ' минус ', t)
+
+    # 2. Одиночные переменные x, y, z, b, c
+    for var, rep in MATH_VAR_MAP.items():
+        t = re.sub(r'\b' + var + r'\b', rep, t)
+
+    # 3. Переменная 'a' / 'A' в математическом окружении
+    t = re.sub(r'\b(плюс|минус|равно)\s+[aA]\b', r'\1 а', t)
+    t = re.sub(r'\b[aA]\s+(плюс|минус|равно)\b', r'а \1', t)
+    t = re.sub(r'\b(переменная|переменную|переменной|буква|букву|буквой)\s+[aA]\b', r'\1 а', t)
+
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
+
+
+def normalize_text_for_speech(text: str, is_russian_context: bool = True) -> str:
+    """
+    Комплексная предварительная нормализация текста перед синтезом речи:
+    - Римские цифры (XXI век -> двадцать первый век, III тысячелетие -> третье тысячелетие)
+    - Математические переменные и знаки (x + y = 15 -> икс плюс игрек равно 15)
+    """
+    if not text:
+        return ""
+    if not is_russian_context:
+        return text
+
+    # Защищаем чистые эстонские фразы в кавычках перед нормализацией
+    est_quotes: List[str] = []
+
+    def mask_est_quote(match):
+        q = match.group(0)
+        inner = q[1:-1].strip()
+        if not re.search(r'[а-яА-ЯёЁ=+*]', inner):
+            idx = len(est_quotes)
+            est_quotes.append(q)
+            return f"___EST_QUOTE_{idx}___"
+        return q
+
+    masked_text = re.sub(r'([«"“„][^»"”]+[»"”])', mask_est_quote, text)
+    norm_text = normalize_roman_numerals(masked_text)
+    norm_text = normalize_math_expressions(norm_text)
+
+    for idx, orig_q in enumerate(est_quotes):
+        norm_text = norm_text.replace(f"___EST_QUOTE_{idx}___", orig_q)
+
+    return norm_text
+
+
 def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
     """
     Разбивает двуязычный текст на последовательные сегменты (текст, голос):
+    - Предварительно нормализует римские цифры и математику в русском контексте.
     - Эстонские фразы и слова в кавычках («...», "...", “...”, „...“) -> et-EE-KertNeural (+20% громкости).
     - Эстонские слова и фразы в скобках ((...)) (напр. (loodusõpetus)) -> et-EE-KertNeural.
     - Отдельные эстонские слова/термины на латинице (loodusõpetus, matemaatika) -> et-EE-KertNeural.
@@ -86,6 +354,9 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
     """
     if not text or not text.strip():
         return [(text or "", DEFAULT_VOICE)]
+
+    # Предварительная нормализация римских цифр и математических переменных в русском контексте
+    text = normalize_text_for_speech(text, is_russian_context=True)
 
     est_char_pattern = re.compile(r'[A-Za-zõäöüšžÕÄÖÜŠŽ]')
     token_pattern = re.compile(

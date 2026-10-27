@@ -87,6 +87,7 @@ function MainApp() {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<PageAnalysisResponse | null>(null);
+  const [showAlternativeExplanation, setShowAlternativeExplanation] = useState<boolean>(false);
   const [sessionLessons, setSessionLessons] = useState<SessionLesson[]>([]);
   const [isSaved, setIsSaved] = useState(false);
   const [history, setHistory] = useState<SavedLessonCard[]>([]);
@@ -322,6 +323,7 @@ function MainApp() {
       const data = await analyzePagesJson(payload, profile, API_BASE_URL);
 
       setAnalysis(data);
+      setShowAlternativeExplanation(false);
       await recordNewLesson(data, imagesList);
     } catch (err: any) {
       Alert.alert(
@@ -507,6 +509,7 @@ function MainApp() {
 
   const handleSelectSessionLesson = (item: SessionLesson) => {
     setAnalysis(item.analysis);
+    setShowAlternativeExplanation(false);
     const restored = (item.imageUris && item.imageUris.length > 0)
       ? item.imageUris.map((u) => ({ uri: u, mimeType: 'image/jpeg' }))
       : item.imageUri
@@ -522,6 +525,7 @@ function MainApp() {
 
   const handleOpenHistoryItem = (item: SavedLessonCard) => {
     setAnalysis(item.analysis);
+    setShowAlternativeExplanation(false);
     const restored = (item.imageUris && item.imageUris.length > 0)
       ? item.imageUris.map((u) => ({ uri: u, mimeType: 'image/jpeg' }))
       : item.imageUri
@@ -900,31 +904,84 @@ function MainApp() {
           {/* Card 3: Суть темы простыми словами */}
           <View style={styles.modularCard}>
             <Text style={styles.sectionHeader}>💡 Суть темы простыми словами</Text>
+
+            {showAlternativeExplanation ? (
+              <View style={styles.altExplanationBadge}>
+                <Text style={styles.altExplanationBadgeText}>
+                  💡 Запасное объяснение через другую бытовую аналогию
+                </Text>
+              </View>
+            ) : null}
+
             <View style={styles.sectionAudioCenteredContainer}>
               <TouchableOpacity
                 style={[
                   styles.sectionAudioBtn,
-                  playingId === 'theme_explanation' && styles.sectionAudioBtnActive,
+                  (showAlternativeExplanation
+                    ? playingId === 'alt_explanation'
+                    : playingId === 'theme_explanation') && styles.sectionAudioBtnActive,
                 ]}
-                onPress={() =>
-                  handlePlayAudio(analysis.theme_explanation, 'ru', 'theme_explanation', true)
-                }
+                onPress={() => {
+                  const targetText = showAlternativeExplanation
+                    ? analysis.alternative_explanation!
+                    : analysis.theme_explanation;
+                  const targetId = showAlternativeExplanation ? 'alt_explanation' : 'theme_explanation';
+                  handlePlayAudio(targetText, 'ru', targetId, true);
+                }}
                 activeOpacity={0.85}
                 accessibilityLabel="Озвучить суть темы"
               >
-                {loadingAudioId === 'theme_explanation' ? (
+                {(showAlternativeExplanation
+                  ? loadingAudioId === 'alt_explanation'
+                  : loadingAudioId === 'theme_explanation') ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <ActivityIndicator size="small" color="#FFFFFF" />
                     <Text style={[styles.sectionAudioBtnText, { marginLeft: 6 }]}>Загрузка...</Text>
                   </View>
                 ) : (
                   <Text style={styles.sectionAudioBtnText}>
-                    {playingId === 'theme_explanation' ? '⏹ Стоп' : '🔊 Озвучить'}
+                    {(showAlternativeExplanation
+                      ? playingId === 'alt_explanation'
+                      : playingId === 'theme_explanation')
+                      ? '⏹ Стоп'
+                      : '🔊 Озвучить'}
                   </Text>
                 )}
               </TouchableOpacity>
             </View>
-            <Text style={styles.explanationText}>{analysis.theme_explanation}</Text>
+            <Text style={styles.explanationText}>
+              {showAlternativeExplanation ? analysis.alternative_explanation : analysis.theme_explanation}
+            </Text>
+
+            {/* Кнопка «Объяснить по-другому» в правом нижнем углу карточки */}
+            {analysis.alternative_explanation ? (
+              <View style={styles.altExplanationActionRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.altToggleBtnBottom,
+                    showAlternativeExplanation && styles.altToggleBtnBottomActive,
+                  ]}
+                  onPress={() => {
+                    if (playingId === 'theme_explanation' || playingId === 'alt_explanation') {
+                      stopTts();
+                      setPlayingId(null);
+                    }
+                    setShowAlternativeExplanation((prev) => !prev);
+                  }}
+                  activeOpacity={0.8}
+                  accessibilityLabel="Переключить объяснение темы"
+                >
+                  <Text
+                    style={[
+                      styles.altToggleBtnTextBottom,
+                      showAlternativeExplanation && styles.altToggleBtnTextBottomActive,
+                    ]}
+                  >
+                    {showAlternativeExplanation ? '🔄 Вернуть первое объяснение' : '🔄 Объяснить по-другому'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
           </View>
 
           {/* Card 4: Словарь урока (Sõnastik) */}
@@ -985,6 +1042,75 @@ function MainApp() {
               })}
             </View>
           </View>
+
+          {/* Card: Пример-образец (Näidis) — строго между словарём и алгоритмом */}
+          {analysis.worked_example ? (
+            <View style={styles.modularCard}>
+              <View style={styles.naidisHeaderRow}>
+                <View style={styles.naidisBadge}>
+                  <Text style={styles.naidisBadgeText}>Образец • Näidis</Text>
+                </View>
+                <Text style={styles.sectionHeader}>
+                  📝 {analysis.worked_example.title || 'Пример решения (Näidis)'}
+                </Text>
+              </View>
+
+              <View style={styles.sectionAudioCenteredContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.sectionAudioBtn,
+                    playingId === 'worked_example' && styles.sectionAudioBtnActive,
+                  ]}
+                  onPress={() => {
+                    const we = analysis.worked_example!;
+                    const naidisAudioText = `${we.given}. Шаги решения: ${we.steps.join('. ')}. ${we.note || ''}`;
+                    handlePlayAudio(naidisAudioText, 'ru', 'worked_example', true);
+                  }}
+                  activeOpacity={0.85}
+                  accessibilityLabel="Озвучить пример решения"
+                >
+                  {loadingAudioId === 'worked_example' ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <Text style={[styles.sectionAudioBtnText, { marginLeft: 6 }]}>Загрузка...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.sectionAudioBtnText}>
+                      {playingId === 'worked_example' ? '⏹ Стоп' : '🔊 Озвучить пример'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {/* Given condition / situation */}
+              <View style={styles.naidisGivenBox}>
+                <Text style={styles.naidisGivenLabel}>📋 УСЛОВИЕ / ДАНО:</Text>
+                <Text style={styles.naidisGivenText}>{analysis.worked_example.given}</Text>
+              </View>
+
+              {/* Step by step breakdown */}
+              <View style={styles.naidisStepsContainer}>
+                <Text style={styles.naidisStepsHeader}>Пошаговые действия:</Text>
+                {analysis.worked_example.steps.map((step, sIdx) => (
+                  <View key={sIdx} style={styles.naidisStepRow}>
+                    <View style={styles.naidisStepNumberBadge}>
+                      <Text style={styles.naidisStepNumberText}>{sIdx + 1}</Text>
+                    </View>
+                    <Text style={styles.naidisStepText}>{step.replace(/^\d+[\.\)]\s*/, '')}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {/* Concluding note / tip */}
+              {analysis.worked_example.note ? (
+                <View style={styles.naidisNoteBox}>
+                  <Text style={styles.naidisNoteText}>
+                    💡 <Text style={{ fontWeight: '700' }}>Совет:</Text> {analysis.worked_example.note}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
 
           {/* Card 5: Как решить задание самому */}
           <View style={styles.modularCard}>
@@ -2241,6 +2367,180 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: Theme.colors.textPrimary,
     marginBottom: 4,
+  },
+  sectionHeaderRowWithAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 4,
+  },
+  altToggleBtn: {
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Theme.colors.borderDark,
+    borderRadius: Theme.radius.chip,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  altToggleBtnActive: {
+    backgroundColor: Theme.colors.primaryTint,
+    borderColor: Theme.colors.primary,
+  },
+  altToggleBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Theme.colors.textSecondary,
+  },
+  altToggleBtnTextActive: {
+    color: Theme.colors.onPrimaryText,
+  },
+  altExplanationBadge: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE',
+    borderWidth: 1,
+    borderRadius: Theme.radius.badge,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  altExplanationBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#3730A3',
+  },
+  altExplanationActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 12,
+  },
+  altToggleBtnBottom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignSelf: 'flex-end',
+  },
+  altToggleBtnBottomActive: {
+    backgroundColor: '#CFFAEE',
+    borderColor: '#5FEDC5',
+  },
+  altToggleBtnTextBottom: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  altToggleBtnTextBottomActive: {
+    color: '#064E3B',
+    fontWeight: '700',
+  },
+
+  // Näidis (Worked Example) Styles
+  naidisHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    marginBottom: 4,
+  },
+  naidisBadge: {
+    backgroundColor: '#CFFAEE',
+    borderWidth: 1,
+    borderColor: '#5FEDC5',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: Theme.radius.badge,
+  },
+  naidisBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#064E3B',
+    letterSpacing: 0.5,
+  },
+  naidisGivenBox: {
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderLeftWidth: 3.5,
+    borderLeftColor: Theme.colors.voiceButton,
+    borderRadius: 8,
+    padding: 10,
+    marginVertical: 8,
+  },
+  naidisGivenLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Theme.colors.textSecondary,
+    marginBottom: 2,
+    letterSpacing: 0.4,
+  },
+  naidisGivenText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+    color: Theme.colors.textPrimary,
+  },
+  naidisStepsContainer: {
+    marginVertical: 6,
+    gap: 8,
+  },
+  naidisStepsHeader: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Theme.colors.textSecondary,
+    marginBottom: 2,
+  },
+  naidisStepRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    borderRadius: 10,
+    padding: 10,
+    gap: 10,
+  },
+  naidisStepNumberBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: Theme.colors.primaryTint,
+    borderWidth: 1,
+    borderColor: Theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  naidisStepNumberText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: Theme.colors.onPrimaryText,
+  },
+  naidisStepText: {
+    flex: 1,
+    fontSize: 13.5,
+    lineHeight: 20,
+    color: Theme.colors.textPrimary,
+  },
+  naidisNoteBox: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 8,
+  },
+  naidisNoteText: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#92400E',
   },
   sectionHeaderJunior: {
     fontSize: 16,

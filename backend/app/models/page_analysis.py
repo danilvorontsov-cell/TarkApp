@@ -117,6 +117,25 @@ class VocabularyItem(BaseModel):
     example: str = Field(..., description="Пример употребления в предложении на эстонском языке из контекста учебника")
 
 
+class WorkedExample(BaseModel):
+    title: str = Field(
+        default="Пример решения (Näidis)",
+        description="Заголовок примера (напр. 'Пример решения (Näidis)')"
+    )
+    given: str = Field(
+        ...,
+        description="Дано / исходная ситуация с конкретными вымышленными цифрами или мини-предложением (напр. 'Если у нас есть: 12 яблок на 3 тарелки')"
+    )
+    steps: List[str] = Field(
+        ...,
+        description="Пошаговые действия 'было -> сделали -> получили' (напр. ['1. Делим: 12 : 3 = 4', '2. Вывод: на каждой тарелке по 4 яблока'])"
+    )
+    note: Optional[str] = Field(
+        default="По этому же образцу сделай примеры из своего учебника!",
+        description="Поясняющий вывод или подсказка для самостоятельного решения"
+    )
+
+
 class PageAnalysisResponse(BaseModel):
     task_title: str = Field(
         ...,
@@ -126,9 +145,17 @@ class PageAnalysisResponse(BaseModel):
         ...,
         description="Суть темы простыми словами через динамически подобранную метафору увлечения"
     )
+    alternative_explanation: Optional[str] = Field(
+        default=None,
+        description="Запасное объяснение через другую бытовую аналогию (на случай клика 'Объяснить по-другому')"
+    )
     vocabulary: List[VocabularyItem] = Field(
         ...,
         description="Словарь ключевых академических терминов урока (эстонский + русский + пример)"
+    )
+    worked_example: Optional[WorkedExample] = Field(
+        default=None,
+        description="Наглядный пример решения (Näidis)"
     )
     how_to_answer: str = Field(
         ...,

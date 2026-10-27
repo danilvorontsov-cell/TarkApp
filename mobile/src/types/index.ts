@@ -13,10 +13,19 @@ export interface VocabularyItem {
   example: string;
 }
 
+export interface WorkedExample {
+  title: string;
+  given: string;
+  steps: string[];
+  note?: string;
+}
+
 export interface PageAnalysisResponse {
   task_title: string;
   theme_explanation: string;
+  alternative_explanation?: string;
   vocabulary: VocabularyItem[];
+  worked_example?: WorkedExample;
   how_to_answer: string;
   answer_template: string;
   voice_prompt_script: string;

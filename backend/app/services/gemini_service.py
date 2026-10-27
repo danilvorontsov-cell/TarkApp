@@ -15,6 +15,7 @@ from app.models.page_analysis import (
     PageAnalysisResponse,
     UserProfile,
     VocabularyItem,
+    WorkedExample,
 )
 from app.prompts.tutor_prompt import (
     ESTONIAN_TUTOR_SYSTEM_PROMPT,
@@ -191,6 +192,11 @@ class GeminiTutorService:
             return PageAnalysisResponse(
                 task_title="Liitmine ja tehete komponendid (Сложение и компоненты действий)",
                 theme_explanation=theme_expl,
+                alternative_explanation=(
+                    f"Или представь, что ты строишь замок из LEGO: "
+                    "соединяешь 9 синих деталей и 7 красных. "
+                    "Каждая кучка деталей — это 'liidetav' (слагаемое), а вся постройка целиком — это 'summa' (сумма)!"
+                ),
                 vocabulary=[
                     VocabularyItem(
                         est="liidetav",
@@ -213,6 +219,17 @@ class GeminiTutorService:
                         example="9 pluss 7 võrdub 16."
                     ),
                 ],
+                worked_example=WorkedExample(
+                    title="Пример решения (Näidis)",
+                    given="Например, в учебнике пример: 9 + 7 = ?",
+                    steps=[
+                        "1. Первое слагаемое: 9 (esimene liidetav)",
+                        "2. Второе слагаемое: 7 (teine liidetav)",
+                        "3. Складываем вместе: 9 + 7 = 16",
+                        "4. Вывод: Сумма равна 16 (summa on 16)"
+                    ],
+                    note="По этому же образцу найди слагаемые и реши остальные примеры на странице!"
+                ),
                 how_to_answer=(
                     "1. Найди в примере первое число (esimene liidetav).\n"
                     "2. Прибавь к нему второе число (teine liidetav).\n"
@@ -235,6 +252,10 @@ class GeminiTutorService:
                     "Лист растения — это природная фабрика! "
                     "Зеленые хлоропласты ловят солнечный свет (päikesevalgus), забирают воду (vesi) и углекислый газ (süsihappegaas), "
                     "а на выходе производят кислород (hapnik) и сахар для энергии (glükoos)."
+                ),
+                alternative_explanation=(
+                    "Если провести аналогию со смартфоном: солнечный свет — это зарядное устройство (valgusenergia), "
+                    "а лист растения — аккумулятор. Растение заряжается энергией, очищает воздух и производит кислород (hapnik)."
                 ),
                 vocabulary=[
                     VocabularyItem(
@@ -263,6 +284,16 @@ class GeminiTutorService:
                         example="Protsessi käivitamiseks on vaja valgusenergiat."
                     ),
                 ],
+                worked_example=WorkedExample(
+                    title="Пример ответа на уроке (Näidis)",
+                    given="Вопрос в задании: 'Kuidas toimub fotosüntees ja mis selle käigus tekib?'",
+                    steps=[
+                        "1. Что поступает в растение: Taim vajab vett ja süsihappegaasi.",
+                        "2. Источник энергии: Protsess toimub päikesevalguse abil kloroplastides.",
+                        "3. Что выделяется: Tekivad glükoos ja hapnik."
+                    ],
+                    note="Используй эти три предложения, чтобы ответить учителю или записать в тетрадь!"
+                ),
                 how_to_answer=(
                     "1. Посмотри на схему растения в учебнике.\n"
                     "2. Определи, какие 2 вещества поступают в лист (vesi ja süsihappegaas).\n"
@@ -287,6 +318,10 @@ class GeminiTutorService:
                     "В эстонской гимназической программе критически важно связывать причину и следствие с помощью "
                     "союзов 'kuna', 'seetõttu' и 'järelikult'."
                 ),
+                alternative_explanation=(
+                    "Аналогично логике доказательств в юриспруденции или IT-архитектуре: "
+                    "исходная посылка проверяется на верифицируемость, после чего формулируется безапелляционное резюме."
+                ),
                 vocabulary=[
                     VocabularyItem(
                         est="hüpotees",
@@ -309,6 +344,16 @@ class GeminiTutorService:
                         example="Katse kinnitas füüsikalist seaduspärasust."
                     ),
                 ],
+                worked_example=WorkedExample(
+                    title="Пример аргументации (Näidis)",
+                    given="Тезис для анализа: 'Tehnoloogia areng muudab noorte õppimisharjumusi.'",
+                    steps=[
+                        "1. Väide (Тезис): Digivahendid võimaldavad kiiremat juurdepääsu haridusressurssidele.",
+                        "2. Põhjendus (Обоснование): Kuna õpilased saavad infot reaalajas analüüsida, suureneb iseseisvus.",
+                        "3. Järeldus (Вывод): Seetõttu toetab e-õpe kaasaegsete oskuste kujunemist."
+                    ],
+                    note="Используйте эту триаду (тезис -> аргумент -> вывод) при написании академического эссе."
+                ),
                 how_to_answer=(
                     "1. Выделите ключевой вопрос или проблему параграфа.\n"
                     "2. Сформулируйте свою позицию (seisukoht).\n"
