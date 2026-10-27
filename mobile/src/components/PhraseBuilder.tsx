@@ -16,6 +16,7 @@ interface PhraseBuilderProps {
   isJunior: boolean;
   onPlayAudio: (text: string, lang: 'ru' | 'et', id: string) => void;
   playingId: string | null;
+  playbackState?: 'idle' | 'playing' | 'paused';
   loadingAudioId?: string | null;
   taskTitle?: string;
   themeExplanation?: string;
@@ -88,6 +89,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
   isJunior,
   onPlayAudio,
   playingId,
+  playbackState = 'idle',
   loadingAudioId,
   taskTitle,
   themeExplanation,
@@ -208,6 +210,8 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
   // If no slots exist, render plain template
   if (allSlots.length === 0) {
     const isPlaying = playingId === 'answer_template';
+    const isPlayingActive = isPlaying && playbackState === 'playing';
+    const isPlayingPaused = isPlaying && playbackState === 'paused';
     const isLoading = loadingAudioId === 'answer_template';
     return (
       <View style={[styles.container, isJunior ? styles.containerJunior : styles.containerSenior]}>
@@ -216,7 +220,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
             ✏️ Эстонский каркас ответа:
           </Text>
           <TouchableOpacity
-            style={[styles.audioBtn, isPlaying && styles.audioBtnActive]}
+            style={[styles.audioBtn, isPlayingActive && styles.audioBtnActive]}
             onPress={() => onPlayAudio(normalizeTextForTTS(template), 'et', 'answer_template')}
             disabled={isLoading}
           >
@@ -225,7 +229,13 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
                 <ActivityIndicator size="small" color="#92400E" style={{ marginRight: 6 }} />
               )}
               <Text style={styles.audioBtnText}>
-                {isLoading ? 'Загрузка...' : isPlaying ? '⏹ Стоп' : '🔊 Озвучить (et)'}
+                {isLoading
+                  ? 'Загрузка...'
+                  : isPlayingActive
+                  ? '⏸ Пауза'
+                  : isPlayingPaused
+                  ? '▶ Продолжить'
+                  : '▶ Озвучить (et)'}
               </Text>
             </View>
           </TouchableOpacity>
@@ -528,7 +538,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
             style={[
               styles.listenCompletedBtn,
               isJunior && styles.listenCompletedBtnJunior,
-              isCompletedPlaying && styles.listenCompletedBtnActive,
+              isCompletedPlaying && playbackState === 'playing' && styles.listenCompletedBtnActive,
             ]}
             onPress={() => onPlayAudio(getAssembledPhrase(), 'et', 'answer_template_completed')}
             disabled={isCompletedLoading}
@@ -542,7 +552,11 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
                 </>
               ) : (
                 <Text style={styles.listenCompletedBtnText}>
-                  {isCompletedPlaying ? '⏹ Остановить' : '🔊 Послушать свой ответ'}
+                  {isCompletedPlaying && playbackState === 'playing'
+                    ? '⏸ Пауза'
+                    : isCompletedPlaying && playbackState === 'paused'
+                    ? '▶ Продолжить'
+                    : '▶ Послушать свой ответ'}
                 </Text>
               )}
             </View>
@@ -613,6 +627,7 @@ const styles = StyleSheet.create({
     borderRadius: Theme.radius.card,
     padding: 16,
     marginTop: 14,
+    marginBottom: 16,
     ...Theme.shadow.card,
   },
   containerJunior: {

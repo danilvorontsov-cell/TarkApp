@@ -81,3 +81,70 @@ def test_estonian_vocabulary_preserved():
     assert segments2[0][1] == ESTONIAN_VOICE
     assert segments2[0][0] == "kass"
 
+
+def test_russian_ordinals_with_dot():
+    text = "Ребенок учится в 4. классе и делает 2. задание."
+    norm = normalize_text_for_speech(text)
+    assert norm == "Ребенок учится в четвертом классе и делает второе задание."
+
+    segments = parse_bilingual_segments(text)
+    assert len(segments) == 1
+    assert segments[0][1] == DEFAULT_VOICE
+    assert segments[0][0] == "Ребенок учится в четвертом классе и делает второе задание."
+
+
+def test_estonian_ordinals_with_dot():
+    # 4. klassis -> neljandas klassis
+    text = "Ta õpib 4. klassis."
+    norm = normalize_text_for_estonian_tts(text)
+    assert norm == "Ta õpib neljandas klassis."
+
+    # Harjutus 5. -> Harjutus 5
+    assert normalize_text_for_estonian_tts("Harjutus 5.") == "Harjutus 5"
+    assert normalize_text_for_estonian_tts("1. klass") == "esimene klass"
+    assert normalize_text_for_estonian_tts("2. harjutus") == "teine harjutus"
+    assert normalize_text_for_estonian_tts("2. ülesandes") == "teises ülesandes"
+
+
+def test_list_numbering_dot_removal():
+    text = "1. Сложи числа\n2. Запиши ответ"
+    norm = normalize_text_for_speech(text)
+    assert "1." not in norm
+    assert "2." not in norm
+    assert "Первое: Сложи числа" in norm
+    assert "Второе: Запиши ответ" in norm
+
+
+def test_math_division_colon_and_symbols():
+    # 15 : 3 = 5 -> 15 разделить на 3 равно 5 (вместо 'соотношение')
+    assert normalize_math_expressions("15 : 3 = 5") == "15 разделить на 3 равно 5"
+    assert normalize_math_expressions("24:6") == "24 разделить на 6"
+    assert normalize_math_expressions("x : 2 = 10") == "икс разделить на 2 равно 10"
+    assert normalize_math_expressions("15 ÷ 3 = 5") == "15 разделить на 3 равно 5"
+
+    # Словесное описание знака деления
+    assert "знак «разделить»" in normalize_math_expressions("Посмотри на знак : в примере")
+
+    # Сохранение стандартного времени (14:30 не превращается в деление)
+    assert "14:30" in normalize_math_expressions("Встреча в 14:30")
+
+
+def test_numbered_examples_and_steps_ordinal():
+    # Пример 1, Пример 2 -> Первый пример:, Второй пример:
+    text = "Пример 1: 15 : 3 = 5\nПример 2: 24 : 6 = 4"
+    norm = normalize_text_for_speech(text)
+    assert "Первый пример: 15 разделить на 3 равно 5" in norm
+    assert "Второй пример: 24 разделить на 6 равно 4" in norm
+
+    # Скобочная нумерация: 1), 2)
+    text_paren = "1) 15 : 3 = 5\n2) 20 : 4 = 5"
+    norm_paren = normalize_text_for_speech(text_paren)
+    assert "Первое: 15 разделить на 3 равно 5" in norm_paren
+    assert "Второе: 20 разделить на 4 равно 5" in norm_paren
+
+    # Шаги решения с двоеточием перед списком
+    text_steps = "Шаги решения: 1. Вычисли 15 : 3\n2. Запиши ответ"
+    norm_steps = normalize_text_for_speech(text_steps)
+    assert "Шаги решения: Первое: Вычисли 15 разделить на 3" in norm_steps
+    assert "Второе: Запиши ответ" in norm_steps
+

@@ -1,7 +1,19 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { API_BASE_URL } from './api';
-import { playTts, stopTts, AudioPlaybackCallbacks, getCurrentPlayingId } from './audioPlayer';
+import {
+  playTts,
+  stopTts,
+  pauseTts,
+  resumeTts,
+  getPlaybackState,
+  subscribePlaybackState,
+  AudioPlaybackCallbacks,
+  getCurrentPlayingId,
+  PlaybackState,
+} from './audioPlayer';
 import { PageAnalysisResponse } from '../types';
+
+export { PlaybackState } from './audioPlayer';
 
 export type AudioItemStatus = 'IDLE' | 'QUEUED' | 'LOADING' | 'READY' | 'ERROR';
 
@@ -17,8 +29,9 @@ export interface AudioQueueItem {
   onErrorCallbacks: Array<(err: any) => void>;
 }
 
-type QueueListener = (state: {
+export type QueueListener = (state: {
   playingId: string | null;
+  playbackState: PlaybackState;
   loadingAudioId: string | null;
   itemStatuses: Record<string, AudioItemStatus>;
 }) => void;
@@ -29,6 +42,7 @@ class AudioQueueManagerClass {
   private currentDownloadingId: string | null = null;
   private pendingUserPlayId: string | null = null;
   private currentlyPlayingId: string | null = null;
+  private playbackState: PlaybackState = 'idle';
   private listeners: Set<QueueListener> = new Set();
   private cacheDir: string = `${FileSystem.cacheDirectory || ''}tarkapp_audio/`;
   private dirInitialized: boolean = false;
@@ -36,6 +50,12 @@ class AudioQueueManagerClass {
 
   constructor() {
     this.ensureCacheDir();
+    // Reactively sync with underlying AudioPlayer playback state
+    subscribePlaybackState((state, playingId) => {
+      this.playbackState = state;
+      this.currentlyPlayingId = playingId;
+      this.notify();
+    });
   }
 
   private async ensureCacheDir() {
@@ -88,9 +108,11 @@ class AudioQueueManagerClass {
     });
 
     const activePlayId = this.currentlyPlayingId || getCurrentPlayingId();
+    const activePlaybackState = this.playbackState || getPlaybackState();
 
     const state = {
       playingId: activePlayId,
+      playbackState: activePlaybackState,
       loadingAudioId: this.pendingUserPlayId,
       itemStatuses,
     };
@@ -118,6 +140,25 @@ class AudioQueueManagerClass {
 
   public getPendingPlayId(): string | null {
     return this.pendingUserPlayId;
+  }
+
+  public getPlaybackState(): PlaybackState {
+    return this.playbackState || getPlaybackState();
+  }
+
+  public async pause(): Promise<void> {
+    await pauseTts();
+  }
+
+  public async resume(): Promise<void> {
+    await resumeTts();
+  }
+
+  public async stop(): Promise<void> {
+    await stopTts();
+    this.currentlyPlayingId = null;
+    this.pendingUserPlayId = null;
+    this.notify();
   }
 
   /**
@@ -186,7 +227,24 @@ class AudioQueueManagerClass {
     // 3b. Priority 3: Worked example (worked_example) with bilingual stitching
     if (analysis.worked_example) {
       const we = analysis.worked_example;
-      const naidisAudioText = `${we.given}. ${we.steps.join('. ')}. ${we.note || ''}`;
+      const ORDINAL_STEP_WORDS: Record<number, string> = {
+        1: 'Первое',
+        2: 'Второе',
+        3: 'Третье',
+        4: 'Четвертое',
+        5: 'Пятое',
+        6: 'Шестое',
+        7: 'Седьмое',
+        8: 'Восьмое',
+        9: 'Девятое',
+        10: 'Десятое',
+      };
+      const formattedSteps = we.steps.map((step, sIdx) => {
+        const clean = step.replace(/^\d+[\.\)]\s*/, '').trim();
+        const prefix = ORDINAL_STEP_WORDS[sIdx + 1] || `${sIdx + 1}-е`;
+        return `${prefix}: ${clean}`;
+      });
+      const naidisAudioText = `${we.given}. Шаги решения: ${formattedSteps.join('. ')}. ${we.note || ''}`.trim();
       if (naidisAudioText.trim()) {
         this.upsertItem({
           id: 'worked_example',
@@ -405,12 +463,14 @@ class AudioQueueManagerClass {
 
   /**
    * Handles user tapping an audio play button:
-   * 1. If currently playing this id -> toggle stop.
-   * 2. If user taps during LOADING state -> cancels waiting/loading state.
-   * 3. If already READY -> plays instantly from local cache (<10ms).
-   * 4. If QUEUED / LOADING -> elevates to top priority (0), shows spinner.
-   * 5. Fast Streaming Fallback: If local file download hasn't finished in 3.5 seconds,
-   *    switches seamlessly to live audio streaming without ever stalling or showing error.
+   * 1. If currently playing this id -> pauses audio without unloading buffer.
+   * 2. If currently paused on this id -> resumes audio from saved position.
+   * 3. If user taps during LOADING state -> cancels waiting/loading state.
+   * 4. If playing a different id -> stops previous track completely (seek to 0).
+   * 5. If READY on disk -> plays instantly from local cache.
+   * 6. If QUEUED / LOADING -> elevates to top priority (0), shows spinner.
+   * 7. Fast Streaming Fallback: If local file download hasn't finished in 3.5 seconds,
+   *    switches seamlessly to live audio streaming without stalling.
    */
   public async playOrEnqueue(
     id: string,
@@ -422,14 +482,15 @@ class AudioQueueManagerClass {
   ) {
     const cleanText = this.normalizeText(text);
 
-    // 1. Toggle off if already playing this id
+    // 1. Toggle pause/resume if user taps currently active id
     if (this.currentlyPlayingId === id || getCurrentPlayingId() === id) {
-      await stopTts();
-      this.currentlyPlayingId = null;
-      this.pendingUserPlayId = null;
-      callbacks?.onFinish?.();
-      this.notify();
-      return;
+      if (this.playbackState === 'playing') {
+        await this.pause();
+        return;
+      } else if (this.playbackState === 'paused') {
+        await this.resume();
+        return;
+      }
     }
 
     // 2. Toggle off if user taps while this item is currently waiting/loading
@@ -444,8 +505,8 @@ class AudioQueueManagerClass {
       return;
     }
 
-    // Stop whatever else was playing
-    await stopTts();
+    // 3. Stop whatever else was playing/paused when switching to another phrase
+    await this.stop();
     this.currentlyPlayingId = null;
 
     // Check existing item in queue
@@ -483,6 +544,12 @@ class AudioQueueManagerClass {
           this.pendingUserPlayId = null;
           this.notify();
           callbacks?.onStart?.();
+        },
+        onPause: () => {
+          callbacks?.onPause?.();
+        },
+        onResume: () => {
+          callbacks?.onResume?.();
         },
         onFinish: () => {
           this.currentlyPlayingId = null;
@@ -535,6 +602,12 @@ class AudioQueueManagerClass {
               this.notify();
               callbacks?.onStart?.();
             },
+            onPause: () => {
+              callbacks?.onPause?.();
+            },
+            onResume: () => {
+              callbacks?.onResume?.();
+            },
             onFinish: () => {
               this.currentlyPlayingId = null;
               this.notify();
@@ -574,6 +647,12 @@ class AudioQueueManagerClass {
           this.notify();
           callbacks?.onStart?.();
         },
+        onPause: () => {
+          callbacks?.onPause?.();
+        },
+        onResume: () => {
+          callbacks?.onResume?.();
+        },
         onFinish: () => {
           this.currentlyPlayingId = null;
           this.notify();
@@ -607,6 +686,12 @@ class AudioQueueManagerClass {
               this.notify();
               callbacks?.onStart?.();
             },
+            onPause: () => {
+              callbacks?.onPause?.();
+            },
+            onResume: () => {
+              callbacks?.onResume?.();
+            },
             onFinish: () => {
               this.currentlyPlayingId = null;
               this.notify();
@@ -635,9 +720,10 @@ class AudioQueueManagerClass {
   }
 
   /**
-   * Resets the queue when switching to a new lesson
+   * Resets the queue and stops any playing audio when switching lessons
    */
   public clearQueue() {
+    this.stop();
     this.queue.clear();
     this.pendingUserPlayId = null;
     this.currentlyPlayingId = null;

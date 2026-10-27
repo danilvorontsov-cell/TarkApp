@@ -42,11 +42,12 @@ export const Theme = {
     danger: '#EF4444',
     dangerBg: '#FEE2E2',
     overlay: 'rgba(15, 23, 42, 0.45)', // Drawer backdrop shadow
+    drawerPillBg: 'rgba(95, 237, 197, 0.22)',
   },
   radius: {
     badge: 8,
-    button: 12,
-    card: 16,
+    button: 14,
+    card: 20,
     chip: 20,
     circle: 9999,
   },
@@ -78,6 +79,20 @@ export const Theme = {
       shadowOpacity: 0.16,
       shadowRadius: 20,
       elevation: 16,
+    },
+    modal: {
+      shadowColor: '#0F172A',
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.18,
+      shadowRadius: 24,
+      elevation: 10,
+    },
+    button: {
+      shadowColor: '#064E3B',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 4,
+      elevation: 2,
     },
   },
 };

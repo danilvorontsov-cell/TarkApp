@@ -5,6 +5,7 @@ export interface UserProfile {
   tier: AgeTier;
   interests: string[]; // Free-form list of student's hobbies and interests
   nickname: string;
+  avatarUri?: string;
 }
 
 export interface VocabularyItem {

@@ -8,15 +8,15 @@ import {
   Dimensions,
   TouchableWithoutFeedback,
   PanResponder,
-  Platform,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Theme } from '../theme/colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.8, 320);
+const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 320);
 
-export type DrawerTabType = 'study' | 'dictionary' | 'tests' | 'reading' | 'settings';
+export type DrawerTabType = 'study' | 'dictionary' | 'translator' | 'tests' | 'reading' | 'settings';
 
 interface DrawerMenuProps {
   isOpen: boolean;
@@ -25,7 +25,10 @@ interface DrawerMenuProps {
   onSelectTab: (tab: DrawerTabType) => void;
   userNickname?: string;
   userGrade?: number;
+  avatarUri?: string;
+  onChangeAvatar?: () => void;
   vocabCount?: number;
+  onLogout?: () => void;
 }
 
 interface MenuItemDef {
@@ -33,7 +36,6 @@ interface MenuItemDef {
   icon: string;
   title: string;
   badge?: string;
-  isBadgePrimary?: boolean;
 }
 
 export const DrawerMenu: React.FC<DrawerMenuProps> = ({
@@ -41,9 +43,12 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
   onClose,
   activeTab,
   onSelectTab,
-  userNickname = 'Ученик',
-  userGrade = 3,
+  userNickname = 'Данил',
+  userGrade = 11,
+  avatarUri,
+  onChangeAvatar,
   vocabCount = 0,
+  onLogout,
 }) => {
   const insets = useSafeAreaInsets();
   const animProgress = useRef(new Animated.Value(0)).current;
@@ -92,28 +97,35 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
       badge: vocabCount > 0 ? String(vocabCount) : undefined,
     },
     {
-      id: 'tests',
-      icon: '🎯',
-      title: 'Подготовка к контрольным',
-      badge: 'Скоро',
-      isBadgePrimary: true,
+      id: 'translator',
+      icon: '🌐',
+      title: 'Быстрый переводчик',
     },
-    {
-      id: 'reading',
-      icon: '⚡',
-      title: 'Помощь в чтении',
-      badge: 'Скоро',
-      isBadgePrimary: true,
-    },
+    // Пункты «Подготовка к контрольным» и «Помощь в чтении» сохранены в коде без визуального отображения:
+    // {
+    //   id: 'tests',
+    //   icon: '🎯',
+    //   title: 'Подготовка к контрольным',
+    //   badge: 'Скоро',
+    // },
+    // {
+    //   id: 'reading',
+    //   icon: '⚡',
+    //   title: 'Помощь в чтении',
+    //   badge: 'Скоро',
+    // },
   ];
 
   if (!isOpen && (animProgress as any)._value === 0) {
     return null;
   }
 
+  const topPadding = Math.max(insets.top, 20);
+  const bottomPadding = Math.max(insets.bottom, 16);
+
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents={isOpen ? 'auto' : 'none'}>
-      {/* Backdrop */}
+      {/* Dimmed Backdrop */}
       <TouchableWithoutFeedback onPress={onClose}>
         <Animated.View
           style={[
@@ -125,39 +137,49 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
         />
       </TouchableWithoutFeedback>
 
-      {/* Drawer Panel */}
+      {/* Smooth Sliding Drawer Panel */}
       <Animated.View
         style={[
           styles.drawerContainer,
           {
-            paddingTop: insets.top,
-            paddingBottom: Math.max(insets.bottom, 16),
+            paddingBottom: bottomPadding,
             transform: [{ translateX }],
           },
         ]}
         {...panResponder.panHandlers}
       >
-        {/* Drawer Header (Onsen Mint Theme) */}
-        <View style={styles.drawerHeader}>
-          <View style={styles.brandRow}>
-            <View style={styles.brandIconBox}>
-              <Text style={styles.brandIconText}>🇪🇪</Text>
+        {/* Drawer Header (Solid Onsen #5FEDC5 with rounded bottom-right) */}
+        <View style={[styles.drawerHeader, { paddingTop: topPadding + 14 }]}>
+          {/* Avatar (Interactive: Tap to take photo or choose from gallery) */}
+          <TouchableOpacity
+            style={styles.avatarButton}
+            onPress={onChangeAvatar}
+            activeOpacity={0.8}
+            accessibilityLabel="Изменить аватарку"
+            accessibilityRole="button"
+          >
+            <View style={styles.avatarCircle}>
+              {avatarUri ? (
+                <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+              ) : (
+                <Text style={styles.avatarEmoji}>🧑‍🎓</Text>
+              )}
             </View>
-            <View style={styles.brandTextCol}>
-              <Text style={styles.brandTitle}>TarkApp</Text>
-              <Text style={styles.brandTagline}>Твой помощник в эстонской школе</Text>
+            <View style={styles.avatarEditBadge}>
+              <Text style={styles.avatarEditBadgeIcon}>📷</Text>
             </View>
-          </View>
+          </TouchableOpacity>
 
-          {/* User Profile Pill in Drawer Header */}
-          <View style={styles.profilePill}>
-            <Text style={styles.profilePillText}>
-              👤 {userNickname} • {userGrade} класс
-            </Text>
-          </View>
+          {/* User Nickname & Grade */}
+          <Text style={styles.headerSubtitle}>
+            {userNickname || 'Данил'} • {userGrade || 11} кл.
+          </Text>
+
+          {/* Greeting Title */}
+          <Text style={styles.headerGreeting}>Привет!</Text>
         </View>
 
-        {/* Navigation Items */}
+        {/* Navigation Sections */}
         <View style={styles.menuList}>
           {menuItems.map((item) => {
             const isActive = activeTab === item.id;
@@ -180,14 +202,13 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
                   <View
                     style={[
                       styles.badgeBox,
-                      item.isBadgePrimary ? styles.badgePrimary : styles.badgeDefault,
+                      item.badge === 'Скоро' ? styles.badgeSoon : styles.badgeCount,
                     ]}
                   >
                     <Text
-                      style={[
-                        styles.badgeText,
-                        item.isBadgePrimary ? styles.badgeTextPrimary : styles.badgeTextDefault,
-                      ]}
+                      style={
+                        item.badge === 'Скоро' ? styles.badgeSoonText : styles.badgeCountText
+                      }
                     >
                       {item.badge}
                     </Text>
@@ -198,10 +219,14 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
           })}
         </View>
 
-        {/* Drawer Footer */}
+        {/* Thin Divider Line */}
+        <View style={styles.divider} />
+
+        {/* Drawer Footer (Settings + Logout) */}
         <View style={styles.drawerFooter}>
+          {/* Settings Item */}
           <TouchableOpacity
-            style={[styles.footerItem, activeTab === 'settings' && styles.menuItemActive]}
+            style={[styles.menuItem, activeTab === 'settings' && styles.menuItemActive]}
             onPress={() => {
               onSelectTab('settings');
               onClose();
@@ -219,8 +244,23 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
             </Text>
           </TouchableOpacity>
 
+          {/* Logout Item */}
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => {
+              onClose();
+              if (onLogout) {
+                onLogout();
+              }
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.menuItemIcon}>🚪</Text>
+            <Text style={styles.menuItemText}>Выйти</Text>
+          </TouchableOpacity>
+
           <View style={styles.versionContainer}>
-            <Text style={styles.versionText}>v1.0.0-beta • Nordic Clean</Text>
+            <Text style={styles.versionText}>TarkApp • Nordic Onsen</Text>
           </View>
         </View>
       </Animated.View>
@@ -231,7 +271,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
 const styles = StyleSheet.create({
   backdrop: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: Theme.colors.overlay,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
   },
   drawerContainer: {
     position: 'absolute',
@@ -239,83 +279,89 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     width: DRAWER_WIDTH,
-    backgroundColor: Theme.colors.surface,
+    backgroundColor: '#FFFFFF',
+    borderTopRightRadius: 28,
+    borderBottomRightRadius: 28,
     ...Theme.shadow.drawer,
     flexDirection: 'column',
-    justifyContent: 'space-between',
+    overflow: 'hidden',
   },
   drawerHeader: {
-    backgroundColor: Theme.colors.primary,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(6, 78, 59, 0.12)',
+    backgroundColor: '#5FEDC5',
+    paddingHorizontal: 22,
+    paddingBottom: 24,
+    borderBottomRightRadius: 36,
   },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 14,
+  avatarButton: {
+    alignSelf: 'flex-start',
+    position: 'relative',
+    marginBottom: 8,
   },
-  brandIconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
+  avatarCircle: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
     backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
-    ...Theme.shadow.card,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    overflow: 'hidden',
+    ...Theme.shadow.chip,
   },
-  brandIconText: {
-    fontSize: 22,
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 29,
   },
-  brandTextCol: {
-    flex: 1,
+  avatarEmoji: {
+    fontSize: 28,
   },
-  brandTitle: {
-    fontSize: 22,
+  avatarEditBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#064E3B',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarEditBadgeIcon: {
+    fontSize: 10,
+    color: '#FFFFFF',
+  },
+  headerSubtitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#064E3B',
+    marginTop: 4,
+  },
+  headerGreeting: {
+    fontSize: 24,
     fontWeight: '800',
-    color: Theme.colors.onPrimaryText,
+    color: '#064E3B',
     letterSpacing: -0.3,
-  },
-  brandTagline: {
-    fontSize: 12,
-    color: Theme.colors.onPrimaryText,
-    opacity: 0.85,
     marginTop: 2,
-    fontWeight: '500',
-  },
-  profilePill: {
-    backgroundColor: 'rgba(255, 255, 255, 0.75)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: Theme.radius.chip,
-    alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderColor: 'rgba(6, 78, 59, 0.15)',
-  },
-  profilePillText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: Theme.colors.onPrimaryText,
   },
   menuList: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
   },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    borderLeftWidth: 4,
-    borderLeftColor: 'transparent',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    marginBottom: 4,
   },
   menuItemActive: {
-    backgroundColor: Theme.colors.slotSuccessBg,
-    borderLeftWidth: 4,
-    borderLeftColor: Theme.colors.primary,
+    backgroundColor: 'rgba(95, 237, 197, 0.22)',
   },
   menuItemIcon: {
     fontSize: 20,
@@ -326,55 +372,52 @@ const styles = StyleSheet.create({
   menuItemText: {
     fontSize: 15,
     fontWeight: '600',
-    color: Theme.colors.textPrimary,
+    color: '#0F172A',
     flex: 1,
   },
   menuItemTextActive: {
-    color: Theme.colors.onPrimaryText,
-    fontWeight: '800',
-  },
-  badgeBox: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: Theme.radius.badge,
-  },
-  badgePrimary: {
-    backgroundColor: Theme.colors.primary,
-  },
-  badgeDefault: {
-    backgroundColor: Theme.colors.border,
-  },
-  badgeText: {
-    fontSize: 11,
+    color: '#064E3B',
     fontWeight: '700',
   },
-  badgeTextPrimary: {
-    color: Theme.colors.onPrimaryText,
+  badgeBox: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 12,
   },
-  badgeTextDefault: {
-    color: Theme.colors.textSecondary,
+  badgeSoon: {
+    backgroundColor: '#F1F5F9',
+  },
+  badgeSoonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  badgeCount: {
+    backgroundColor: 'rgba(95, 237, 197, 0.4)',
+  },
+  badgeCountText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#064E3B',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+    marginHorizontal: 18,
+    marginVertical: 4,
   },
   drawerFooter: {
-    borderTopWidth: 1,
-    borderTopColor: Theme.colors.border,
+    paddingHorizontal: 12,
     paddingTop: 8,
   },
-  footerItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderLeftWidth: 4,
-    borderLeftColor: 'transparent',
-  },
   versionContainer: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 14,
     paddingTop: 10,
-    paddingBottom: 4,
+    paddingBottom: 2,
   },
   versionText: {
     fontSize: 11,
-    color: Theme.colors.textMuted,
+    color: '#94A3B8',
     fontWeight: '500',
   },
 });

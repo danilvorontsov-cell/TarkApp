@@ -53,19 +53,64 @@ def _store_in_cache(cache: Dict[str, bytes], key: str, data: bytes):
     cache[key] = data
 
 
+# Словарь эстонских порядковых числительных: (nominative, inessive, genitive)
+EST_ORDINALS: Dict[int, Tuple[str, str, str]] = {
+    1: ("esimene", "esimeses", "esimese"),
+    2: ("teine", "teises", "teise"),
+    3: ("kolmas", "kolmandas", "kolmanda"),
+    4: ("neljas", "neljandas", "neljanda"),
+    5: ("viies", "viiendas", "viienda"),
+    6: ("kuues", "kuuendas", "kuuenda"),
+    7: ("seitsmes", "seitsmendas", "seitsmenda"),
+    8: ("kaheksas", "kaheksandas", "kaheksanda"),
+    9: ("üheksas", "üheksandas", "üheksanda"),
+    10: ("kümnes", "kümnendas", "kümnenda"),
+    11: ("üheteistkümnes", "üheteistkümnendas", "üheteistkümnenda"),
+    12: ("kaheteistkümnes", "kaheteistkümnendas", "kaheteistkümnenda"),
+    21: ("kahekümne esimene", "kahekümne esimeses", "kahekümne esimese"),
+}
+
+
 def normalize_text_for_estonian_tts(text: str) -> str:
     """
     Нормализует эстонский текст для Edge-TTS:
+    - Конвертирует порядковые числительные с точкой (1. klass -> esimene klass, 4. klassis -> neljandas klassis,
+      2. harjutus -> teine harjutus, 2. ülesandes -> teises ülesandes).
+    - Для номеров без привязанных существительных (Harjutus 5.) срезает точку -> Harjutus 5.
     - Удаляет крестики и спецсимволы умножения (×, ✕, ✖, *).
     - Удаляет скобки [ ], { }, ( ).
-    - Исключает знаки препинания непосредственно встык с числами,
-      особенно точку после целых чисел (12. -> 12), из-за которой
-      количественные числительные ошибочно распознаются синтезатором как порядковые.
     - Разделяет пробелом знаки препинания и дефисы встык с числами.
     """
     if not text:
         return ""
-    t = re.sub(r'[\u00d7\u2715\u2716*]', ' ', text)
+
+    # 1. Порядковые числительные с точкой перед ключевыми существительными
+    est_ord_pattern = re.compile(
+        r'\b(\d+)\.\s*(klass[a-zõäöü]*|harjutus[a-zõäöü]*|ülesan[a-zõäöü]*|osa[a-zõäöü]*)\b',
+        re.IGNORECASE,
+    )
+
+    def repl_est_ord(m):
+        num = int(m.group(1))
+        noun = m.group(2)
+        noun_l = noun.lower()
+        forms = EST_ORDINALS.get(num)
+        if not forms:
+            return m.group(0)
+
+        # Inessive: klassis, harjutuses, ülesandes, osas (ends with 'is', 'es', 'des', 'as' but not 'ss')
+        if noun_l.endswith(('is', 'es', 'des', 'as')) and not noun_l.endswith('ss'):
+            w = forms[1]
+        elif noun_l.endswith(('i', 'e')) and noun_l != 'ülesanne':
+            w = forms[2]
+        else:
+            w = forms[0]
+        return f"{w} {noun}"
+
+    t = est_ord_pattern.sub(repl_est_ord, text)
+
+    # 2. Очистка символов и срез точки у оставшихся одиночных номеров (напр. Harjutus 5. -> Harjutus 5)
+    t = re.sub(r'[\u00d7\u2715\u2716*]', ' ', t)
     t = re.sub(r'[\[\]{}()]', ' ', t)
     t = re.sub(r'[/\\|]', ' ', t)
     t = re.sub(r'(\b\d+)\s*\.(?!\d)', r'\1 ', t)
@@ -281,38 +326,186 @@ def normalize_math_expressions(text: str) -> str:
     - Одиночные латинские переменные x, y, z -> икс, игрек, зет
     - a (в мат. контексте), b, c -> а, бэ, цэ
     - Знаки формул: + -> плюс, - -> минус, = -> равно
+    - Деление: знак : (двоеточие) и ÷ -> разделить на (вместо чтения как 'соотношение')
+    - Умножение: *, ·, × -> умножить на
+    - Словесные описания: 'знак :' -> 'знак «разделить»', 'знак *' -> 'знак «умножить»'
+    - Защищает стандартные форматы времени (напр. 'в 14:30').
     Не затрагивает чистый эстонский текст (слова без кириллицы и без мат. знаков).
     """
     if not text:
         return ""
 
     has_cyrillic = bool(re.search(r'[а-яА-ЯёЁ]', text))
-    has_math_ops = bool(re.search(r'[=+*\/]|(?<=[0-9a-zA-Z])\s*[-−]\s*(?=[0-9a-zA-Z])', text))
+    has_math_ops = bool(re.search(r'[=+*\/÷·×:]|(?<=[0-9a-zA-Z])\s*[-−]\s*(?=[0-9a-zA-Z])', text))
     if not (has_cyrillic or has_math_ops):
         return text
 
     t = text
-    # 1. Знаки действий: +, =, -
+
+    # Временно защищаем время HH:MM (напр. 14:30, 08:15)
+    time_placeholders = []
+    def mask_time(m):
+        idx = len(time_placeholders)
+        time_placeholders.append(m.group(0))
+        return f"___TIME_STAMP_{idx}___"
+
+    t = re.sub(r'\b([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*(=|[+\-*\/÷·×]))', mask_time, t)
+
+    # 1. Словесные описания знаков
+    t = re.sub(r'(?i)знак\s*[«"“„]?\s*[:÷]\s*[»"”]?|(?<=\()[:÷](?=\))', 'знак «разделить» ', t)
+    t = re.sub(r'(?i)знак\s*[«"“„]?\s*[*·×]\s*[»"”]?|(?<=\()[*·×](?=\))', 'знак «умножить» ', t)
+    t = re.sub(r'(?i)знак\s*[«"“„]?\s*\+\s*[»"”]?|(?<=\()\+(?=\))', 'знак «плюс» ', t)
+    t = re.sub(r'(?i)знак\s*[«"“„]?\s*[-−]\s*[»"”]?|(?<=\()[-−](?=\))', 'знак «минус» ', t)
+
+    # 2. Деление: двоеточие : или символ ÷ между операндами (числа, переменные, скобки)
+    t = re.sub(r'(?<=[0-9a-zA-Z\)])\s*[:÷]\s*(?=[0-9a-zA-Z\(])', ' разделить на ', t)
+
+    # 3. Умножение: *, ·, × между операндами
+    t = re.sub(r'(?<=[0-9a-zA-Z\)])\s*[*·×]\s*(?=[0-9a-zA-Z\(])', ' умножить на ', t)
+
+    # 4. Знаки действий: +, =, -
     t = re.sub(r'(?<=[0-9a-zA-Zа-яА-ЯёЁ])\s*\+\s*(?=[0-9a-zA-Zа-яА-ЯёЁ])|\s+\+\s+', ' плюс ', t)
     t = re.sub(r'\s*=\s*', ' равно ', t)
     t = re.sub(r'(?<=[0-9a-zA-Z])\s*[-−]\s*(?=[0-9a-zA-Z])|\s+[-−]\s+', ' минус ', t)
 
-    # 2. Одиночные переменные x, y, z, b, c
+    # 5. Одиночные переменные x, y, z, b, c
     for var, rep in MATH_VAR_MAP.items():
         t = re.sub(r'\b' + var + r'\b', rep, t)
 
-    # 3. Переменная 'a' / 'A' в математическом окружении
-    t = re.sub(r'\b(плюс|минус|равно)\s+[aA]\b', r'\1 а', t)
-    t = re.sub(r'\b[aA]\s+(плюс|минус|равно)\b', r'а \1', t)
+    # 6. Переменная 'a' / 'A' в математическом окружении
+    t = re.sub(r'\b(плюс|минус|равно|разделить на|умножить на)\s+[aA]\b', r'\1 а', t)
+    t = re.sub(r'\b[aA]\s+(плюс|минус|равно|разделить на|умножить на)\b', r'а \1', t)
     t = re.sub(r'\b(переменная|переменную|переменной|буква|букву|буквой)\s+[aA]\b', r'\1 а', t)
 
+    # Восстанавливаем время
+    for idx, orig_time in enumerate(time_placeholders):
+        t = t.replace(f"___TIME_STAMP_{idx}___", orig_time)
+
     t = re.sub(r'\s+', ' ', t).strip()
+    return t
+
+
+def normalize_russian_ordinals_with_dot(text: str) -> str:
+    """
+    Нормализует порядковые числительные и пронумерованные примеры в русском контексте:
+    - 4. класс -> четвертый класс
+    - в 4. классе -> в четвертом классе
+    - 2. задание -> второе задание
+    - во 2. задании -> во втором задании
+    - 1. шаг / 1. действие -> первое действие / первый шаг
+    - 2. шаг -> второе действие / второй шаг
+    - 1. пример / в 1. примере -> первый пример / в первом примере
+    - Пример 1 / Пример № 1: -> Первый пример:
+    - Шаг 1: -> Первый шаг:
+    - Задание 1: -> Первое задание:
+    - Отдельно стоящие номера в списках (1. Сложи числа -> Первое: Сложи числа, 1) -> Первое:),
+      гарантируя озвучивание порядковых номеров и устраняя паузы на точках в Edge-TTS.
+    """
+    if not text:
+        return ""
+
+    # 1. Число с точкой перед ключевым существительным: (\d+)\.\s*(класс|задание|действие|шаг|пункт|век|глава|часть|пример|упражнение)
+    pattern = re.compile(
+        r'(?i)(?:(\bв|во|на|о|об|к|ко|до|с|со|от|после|около)\s+)?'
+        r'\b(\d+)\.\s*'
+        r'\b(класс[а-яё]*|задани[а-яё]*|действи[а-яё]*|шаг[а-яё]*|пункт[а-яё]*|век[а-яё]*|глав[а-яё]*|част[а-яё]*|пример[а-яё]*|упражнени[а-яё]*)'
+    )
+
+    def repl(m):
+        prep = m.group(1) or ""
+        num = int(m.group(2))
+        noun = m.group(3)
+        forms = ORDINAL_FORMS.get(num)
+        if not forms:
+            return m.group(0)
+
+        prep_l = prep.lower()
+        noun_l = noun.lower()
+
+        # Средний род: задание, действие, упражнение
+        if "задани" in noun_l or "действи" in noun_l or "упражнени" in noun_l:
+            if prep_l in ("в", "во", "о", "об") or noun_l.endswith("и"):
+                form_idx = 2  # prep_m_n: втором
+            elif prep_l in ("до", "с", "со", "от", "после") or noun_l.endswith("я"):
+                form_idx = 1  # gen_m_n: второго
+            else:
+                form_idx = 3  # nom_n: второе, первое
+        # Женский род: глава, часть
+        elif "глав" in noun_l or "част" in noun_l:
+            if prep_l in ("в", "во", "на", "о", "об") or noun_l.endswith(("е", "и")):
+                form_idx = 5  # f_other: четвертой
+            else:
+                form_idx = 4  # nom_f: четвертая, первая
+        # Мужской род: класс, шаг, пункт, век, пример
+        else:
+            if prep_l in ("в", "во", "на", "о", "об") or noun_l.endswith("е"):
+                form_idx = 2  # prep_m: четвертом / первом
+            elif prep_l in ("до", "с", "со", "от", "после") or noun_l.endswith(("а", "у")):
+                form_idx = 1  # gen_m: четвертого / первого
+            else:
+                form_idx = 0  # nom_m: четвертый, первый
+
+        word = forms[form_idx]
+        if prep:
+            return f"{prep} {word} {noun}"
+        return f"{word} {noun}"
+
+    t = pattern.sub(repl, text)
+
+    # 2. Существительное перед числом: Пример 1:, Пример № 1, Шаг 2:, Задание 3:, Упражнение 1
+    pattern_noun_num = re.compile(
+        r'(?i)\b(пример|шаг|пункт|действие|задание|упражнение)\s*(?:№\s*)?(\d+)\b(\s*[:.)])?'
+    )
+
+    def repl_noun_num(m):
+        noun = m.group(1)
+        num = int(m.group(2))
+        punct = m.group(3) or ""
+        forms = ORDINAL_FORMS.get(num)
+        if not forms:
+            return m.group(0)
+
+        noun_l = noun.lower()
+        if noun_l in ("действие", "задание", "упражнение"):
+            ord_word = forms[3].capitalize()
+        else:
+            ord_word = forms[0].capitalize()
+
+        suffix = ": " if (":" in punct or "." in punct or ")" in punct) else " "
+        return f"{ord_word} {noun_l}{suffix}"
+
+    t = pattern_noun_num.sub(repl_noun_num, t)
+
+    # 3. Отдельно стоящие номера в списках (напр. '1. ', '1) ', '2. ', '2) ')
+    # в порядковые числительные 'Первое: ', 'Второе: '
+    pattern_list_item = re.compile(
+        r'(^|[\n\r]|(?<=[.!?:;])\s*)\b(\d+)[\.\)]\s+(?=[А-Яа-яЁёA-Za-z0-9«"“„])'
+    )
+
+    def repl_list_item(m):
+        prefix = m.group(1) or ""
+        if prefix and not prefix.endswith(('\n', '\r', ' ')):
+            prefix += " "
+        elif not prefix and m.start() > 0:
+            prefix = " "
+        num = int(m.group(2))
+        forms = ORDINAL_FORMS.get(num)
+        if forms:
+            ord_word = forms[3].capitalize()
+        else:
+            ord_word = f"{num}-е"
+        return f"{prefix}{ord_word}: "
+
+    t = pattern_list_item.sub(repl_list_item, t)
+
     return t
 
 
 def normalize_text_for_speech(text: str, is_russian_context: bool = True) -> str:
     """
     Комплексная предварительная нормализация текста перед синтезом речи:
+    - Порядковые числительные с точкой (в 4. классе -> в четвертом классе, 2. задание -> второе задание)
+    - Очистка лишних точек в списках для устранения неестественных пауз
     - Римские цифры (XXI век -> двадцать первый век, III тысячелетие -> третье тысячелетие)
     - Математические переменные и знаки (x + y = 15 -> икс плюс игрек равно 15)
     """
@@ -334,7 +527,8 @@ def normalize_text_for_speech(text: str, is_russian_context: bool = True) -> str
         return q
 
     masked_text = re.sub(r'([«"“„][^»"”]+[»"”])', mask_est_quote, text)
-    norm_text = normalize_roman_numerals(masked_text)
+    norm_text = normalize_russian_ordinals_with_dot(masked_text)
+    norm_text = normalize_roman_numerals(norm_text)
     norm_text = normalize_math_expressions(norm_text)
 
     for idx, orig_q in enumerate(est_quotes):

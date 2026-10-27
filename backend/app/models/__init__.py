@@ -8,6 +8,10 @@ from app.models.page_analysis import (
     PageAnalysisResponse,
     AnalyzePageJsonRequest,
 )
+from app.models.translate import (
+    QuickTranslateRequest,
+    QuickTranslateResponse,
+)
 
 __all__ = [
     "AgeTier",
@@ -18,4 +22,6 @@ __all__ = [
     "WorkedExample",
     "PageAnalysisResponse",
     "AnalyzePageJsonRequest",
+    "QuickTranslateRequest",
+    "QuickTranslateResponse",
 ]

@@ -30,7 +30,7 @@ import {
 } from './src/types';
 import { StorageService } from './src/services/storage';
 import { playTts, stopTts } from './src/services/audioPlayer';
-import { AudioQueueManager } from './src/services/audioQueueManager';
+import { AudioQueueManager, PlaybackState } from './src/services/audioQueueManager';
 import {
   API_BASE_URL,
   analyzePage,
@@ -45,11 +45,13 @@ import { initSentry } from './src/services/sentry';
 import { Theme } from './src/theme/colors';
 import { DrawerMenu, DrawerTabType } from './src/components/DrawerMenu';
 import { ComingSoonCard } from './src/components/ComingSoonCard';
+import { AvatarPickerModal } from './src/components/AvatarPickerModal';
+import { QuickTranslatorScreen } from './src/screens/QuickTranslatorScreen';
 
 // Initialize Sentry stub/client once at entry
 initSentry();
 
-type TabType = 'study' | 'dictionary' | 'tests' | 'reading' | 'settings';
+type TabType = 'study' | 'dictionary' | 'translator' | 'tests' | 'reading' | 'settings';
 type Tab2Mode = 'vocab' | 'history';
 
 interface SessionLesson {
@@ -85,6 +87,7 @@ function MainApp() {
   const [capturedImages, setCapturedImages] = useState<CapturedPageItem[]>([]);
   const [capturedImageUri, setCapturedImageUri] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [playbackState, setPlaybackState] = useState<PlaybackState>('idle');
   const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<PageAnalysisResponse | null>(null);
   const [showAlternativeExplanation, setShowAlternativeExplanation] = useState<boolean>(false);
@@ -94,6 +97,7 @@ function MainApp() {
   const [savedVocab, setSavedVocab] = useState<VocabularyItem[]>([]);
   const [expandedWord, setExpandedWord] = useState<string | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
+  const [isAvatarModalVisible, setIsAvatarModalVisible] = useState<boolean>(false);
 
   const edgePanResponder = useRef(
     PanResponder.create({
@@ -162,6 +166,7 @@ function MainApp() {
 
     const unsubAudio = AudioQueueManager.subscribe((state) => {
       setPlayingId(state.playingId);
+      setPlaybackState(state.playbackState);
       setLoadingAudioId(state.loadingAudioId);
     });
 
@@ -202,6 +207,38 @@ function MainApp() {
     } catch (err: any) {
       Alert.alert('Аудио', formatFriendlyErrorMessage(err));
     }
+  };
+
+  const switchTab = (tab: TabType) => {
+    AudioQueueManager.stop();
+    setCurrentTab(tab);
+  };
+
+  const switchTab2Mode = (mode: Tab2Mode) => {
+    AudioQueueManager.stop();
+    setTab2Mode(mode);
+  };
+
+  const handleLogout = () => {
+    setIsDrawerOpen(false);
+    Alert.alert(
+      'Выход из профиля',
+      'Вы уверены, что хотите завершить сессию и сбросить активный разбор?',
+      [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Выйти',
+          style: 'destructive',
+          onPress: () => {
+            AudioQueueManager.stop();
+            setAnalysis(null);
+            setCapturedImages([]);
+            setCapturedImageUri(null);
+            switchTab('study');
+          },
+        },
+      ]
+    );
   };
 
   const updateGrade = (grade: number) => {
@@ -349,7 +386,7 @@ function MainApp() {
 
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
-        allowsEditing: false,
+        allowsEditing: true,
         quality: 0.8,
         base64: true,
       });
@@ -357,6 +394,8 @@ function MainApp() {
       if (result.canceled || !result.assets || result.assets.length === 0) {
         return;
       }
+
+      AudioQueueManager.stop();
 
       const asset = result.assets[0];
       const newItem: CapturedPageItem = {
@@ -396,6 +435,8 @@ function MainApp() {
       if (result.canceled || !result.assets || result.assets.length === 0) {
         return;
       }
+
+      AudioQueueManager.stop();
 
       const newItems: CapturedPageItem[] = result.assets.map((asset) => ({
         uri: asset.uri,
@@ -450,6 +491,7 @@ function MainApp() {
           text: 'Да, переснять',
           style: 'destructive',
           onPress: () => {
+            AudioQueueManager.stop();
             setCapturedImages([]);
             setCapturedImageUri(null);
             setAnalysis(null);
@@ -462,6 +504,78 @@ function MainApp() {
         },
       ]
     );
+  };
+
+  const handleTakeAvatarPhoto = async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          'Доступ к камере',
+          'TarkApp требуется доступ к камере, чтобы сделать снимок для аватарки.'
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return;
+      }
+
+      const newUri = result.assets[0].uri;
+      const updatedProfile: UserProfile = { ...profile, avatarUri: newUri };
+      setProfile(updatedProfile);
+      await StorageService.saveProfile(updatedProfile);
+    } catch (err: any) {
+      Alert.alert('Ошибка', `Не удалось сделать снимок: ${err?.message || 'Сбой камеры'}`);
+    }
+  };
+
+  const handlePickAvatarFromGallery = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          'Доступ к галерее',
+          'TarkApp требуется доступ к галерее, чтобы выбрать фото для аватарки.'
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return;
+      }
+
+      const newUri = result.assets[0].uri;
+      const updatedProfile: UserProfile = { ...profile, avatarUri: newUri };
+      setProfile(updatedProfile);
+      await StorageService.saveProfile(updatedProfile);
+    } catch (err: any) {
+      Alert.alert('Ошибка', `Не удалось выбрать фото: ${err?.message || 'Сбой галереи'}`);
+    }
+  };
+
+  const handleRemoveAvatar = async () => {
+    const updatedProfile: UserProfile = { ...profile, avatarUri: undefined };
+    setProfile(updatedProfile);
+    await StorageService.saveProfile(updatedProfile);
+  };
+
+  const handleSelectAvatarSource = () => {
+    setIsAvatarModalVisible(true);
   };
 
   const handleSaveCard = async () => {
@@ -609,28 +723,6 @@ function MainApp() {
   // ==========================================
   const renderStudyTab = () => (
     <View>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerTopRow}>
-          <Text style={[styles.appTitle, isJunior && styles.appTitleJunior]}>
-            {isJunior ? '✨ 🇪🇪 TarkApp' : '🇪🇪 TarkApp'}
-          </Text>
-          <TouchableOpacity
-            style={[styles.pupilPill, isJunior && styles.pupilPillJunior]}
-            onPress={() => setCurrentTab('settings')}
-          >
-            <Text style={[styles.pupilPillText, isJunior && styles.pupilPillTextJunior]}>
-              👤 {profile.nickname || 'Ученик'} • {profile.grade} кл.
-            </Text>
-          </TouchableOpacity>
-        </View>
-        <Text style={[styles.subtitle, isJunior && styles.subtitleJunior]}>
-          {isJunior
-            ? 'Твой добрый помощник по эстонским урокам!'
-            : 'Адаптационный тьютор по эстонской школьной программе'}
-        </Text>
-      </View>
-
       {/* Сегодняшний урок - Session Carousel Bar */}
       {sessionLessons.length > 0 && (
         <View style={[styles.todaySection, isJunior && styles.todaySectionJunior]}>
@@ -866,8 +958,10 @@ function MainApp() {
               <Text style={styles.voiceHeroTitle}>
                 {loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice'
                   ? '⏳ Подготовка подсказки...'
-                  : playingId === 'voice_prompt' || playingId === 'senior_voice'
+                  : (playingId === 'voice_prompt' || playingId === 'senior_voice') && playbackState === 'playing'
                   ? '🔊 Воспроизведение...'
+                  : (playingId === 'voice_prompt' || playingId === 'senior_voice') && playbackState === 'paused'
+                  ? '⏸ На паузе'
                   : 'Послушай подсказку голосом:'}
               </Text>
             </View>
@@ -875,7 +969,12 @@ function MainApp() {
             <TouchableOpacity
               style={[
                 styles.voiceHeroPlayButton,
-                (playingId === 'voice_prompt' || playingId === 'senior_voice') && styles.voiceHeroPlayButtonActive,
+                (playingId === 'voice_prompt' || playingId === 'senior_voice') &&
+                  (playbackState === 'playing'
+                    ? styles.voiceHeroPlayButtonActive
+                    : playbackState === 'paused'
+                    ? styles.voiceHeroPlayButtonPaused
+                    : null),
               ]}
               onPress={() =>
                 handlePlayAudio(
@@ -894,7 +993,9 @@ function MainApp() {
                   {(loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice')
                     ? 'ЗАГРУЗКА ЗВУКА...'
                     : (playingId === 'voice_prompt' || playingId === 'senior_voice')
-                    ? '⏹ ОСТАНОВИТЬ ОЗВУЧКУ'
+                    ? playbackState === 'playing'
+                      ? '⏸ ПАУЗА'
+                      : '▶ ПРОДОЛЖИТЬ'
                     : '▶ СЛУШАТЬ ПОДСКАЗКУ'}
                 </Text>
               </View>
@@ -919,7 +1020,12 @@ function MainApp() {
                   styles.sectionAudioBtn,
                   (showAlternativeExplanation
                     ? playingId === 'alt_explanation'
-                    : playingId === 'theme_explanation') && styles.sectionAudioBtnActive,
+                    : playingId === 'theme_explanation') &&
+                    (playbackState === 'playing'
+                      ? styles.sectionAudioBtnActive
+                      : playbackState === 'paused'
+                      ? styles.sectionAudioBtnPaused
+                      : null),
                 ]}
                 onPress={() => {
                   const targetText = showAlternativeExplanation
@@ -943,8 +1049,10 @@ function MainApp() {
                     {(showAlternativeExplanation
                       ? playingId === 'alt_explanation'
                       : playingId === 'theme_explanation')
-                      ? '⏹ Стоп'
-                      : '🔊 Озвучить'}
+                      ? playbackState === 'playing'
+                        ? '⏸ Пауза'
+                        : '▶ Продолжить'
+                      : '▶ Озвучить'}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -962,10 +1070,7 @@ function MainApp() {
                     showAlternativeExplanation && styles.altToggleBtnBottomActive,
                   ]}
                   onPress={() => {
-                    if (playingId === 'theme_explanation' || playingId === 'alt_explanation') {
-                      stopTts();
-                      setPlayingId(null);
-                    }
+                    AudioQueueManager.stop();
                     setShowAlternativeExplanation((prev) => !prev);
                   }}
                   activeOpacity={0.8}
@@ -990,7 +1095,12 @@ function MainApp() {
             <View style={styles.vocabChipsContainer}>
               {analysis.vocabulary.map((v, idx) => {
                 const isVocabPlaying = playingId === `vocab_${idx}`;
+                const isVocabActive = isVocabPlaying && playbackState === 'playing';
+                const isVocabPaused = isVocabPlaying && playbackState === 'paused';
+
                 const isExPlaying = playingId === `vocab_ex_${idx}`;
+                const isExActive = isExPlaying && playbackState === 'playing';
+                const isExPaused = isExPlaying && playbackState === 'paused';
                 return (
                   <View key={idx} style={styles.vocabItemCard}>
                     <View style={styles.vocabPillRow}>
@@ -999,7 +1109,8 @@ function MainApp() {
                         <TouchableOpacity
                           style={[
                             styles.vocabCircleSpeaker,
-                            isVocabPlaying && styles.vocabCircleSpeakerActive,
+                            isVocabActive && styles.vocabCircleSpeakerActive,
+                            isVocabPaused && styles.vocabCircleSpeakerPaused,
                           ]}
                           onPress={() => handlePlayAudio(v.est, 'et', `vocab_${idx}`)}
                           accessibilityLabel={`Озвучить слово ${v.est}`}
@@ -1008,7 +1119,7 @@ function MainApp() {
                             <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.65 }] }} />
                           ) : (
                             <Text style={styles.vocabSpeakerIconWhite}>
-                              {isVocabPlaying ? '⏹' : '🔊'}
+                              {isVocabActive ? '⏸' : isVocabPaused ? '▶' : '🔊'}
                             </Text>
                           )}
                         </TouchableOpacity>
@@ -1021,7 +1132,8 @@ function MainApp() {
                         <TouchableOpacity
                           style={[
                             styles.vocabExampleCircleBtn,
-                            isExPlaying && styles.vocabCircleSpeakerActive,
+                            isExActive && styles.vocabCircleSpeakerActive,
+                            isExPaused && styles.vocabCircleSpeakerPaused,
                           ]}
                           onPress={() => handlePlayAudio(v.example, 'et', `vocab_ex_${idx}`)}
                           accessibilityLabel={`Озвучить пример ${v.example}`}
@@ -1030,7 +1142,7 @@ function MainApp() {
                             <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.6 }] }} />
                           ) : (
                             <Text style={styles.vocabExampleIconWhite}>
-                              {isExPlaying ? '⏹' : '🔊'}
+                              {isExActive ? '⏸' : isExPaused ? '▶' : '🔊'}
                             </Text>
                           )}
                         </TouchableOpacity>
@@ -1059,11 +1171,33 @@ function MainApp() {
                 <TouchableOpacity
                   style={[
                     styles.sectionAudioBtn,
-                    playingId === 'worked_example' && styles.sectionAudioBtnActive,
+                    playingId === 'worked_example' &&
+                      (playbackState === 'playing'
+                        ? styles.sectionAudioBtnActive
+                        : playbackState === 'paused'
+                        ? styles.sectionAudioBtnPaused
+                        : null),
                   ]}
                   onPress={() => {
                     const we = analysis.worked_example!;
-                    const naidisAudioText = `${we.given}. Шаги решения: ${we.steps.join('. ')}. ${we.note || ''}`;
+                    const ORDINAL_STEP_WORDS: Record<number, string> = {
+                      1: 'Первое',
+                      2: 'Второе',
+                      3: 'Третье',
+                      4: 'Четвертое',
+                      5: 'Пятое',
+                      6: 'Шестое',
+                      7: 'Седьмое',
+                      8: 'Восьмое',
+                      9: 'Девятое',
+                      10: 'Десятое',
+                    };
+                    const formattedSteps = we.steps.map((step, sIdx) => {
+                      const clean = step.replace(/^\d+[\.\)]\s*/, '').trim();
+                      const prefix = ORDINAL_STEP_WORDS[sIdx + 1] || `${sIdx + 1}-е`;
+                      return `${prefix}: ${clean}`;
+                    });
+                    const naidisAudioText = `${we.given}. Шаги решения: ${formattedSteps.join('. ')}. ${we.note || ''}`.trim();
                     handlePlayAudio(naidisAudioText, 'ru', 'worked_example', true);
                   }}
                   activeOpacity={0.85}
@@ -1076,7 +1210,11 @@ function MainApp() {
                     </View>
                   ) : (
                     <Text style={styles.sectionAudioBtnText}>
-                      {playingId === 'worked_example' ? '⏹ Стоп' : '🔊 Озвучить пример'}
+                      {playingId === 'worked_example'
+                        ? playbackState === 'playing'
+                          ? '⏸ Пауза'
+                          : '▶ Продолжить'
+                        : '▶ Озвучить пример'}
                     </Text>
                   )}
                 </TouchableOpacity>
@@ -1119,7 +1257,12 @@ function MainApp() {
               <TouchableOpacity
                 style={[
                   styles.sectionAudioBtn,
-                  playingId === 'how_to_answer' && styles.sectionAudioBtnActive,
+                  playingId === 'how_to_answer' &&
+                    (playbackState === 'playing'
+                      ? styles.sectionAudioBtnActive
+                      : playbackState === 'paused'
+                      ? styles.sectionAudioBtnPaused
+                      : null),
                 ]}
                 onPress={() =>
                   handlePlayAudio(analysis.how_to_answer, 'ru', 'how_to_answer', true)
@@ -1134,7 +1277,11 @@ function MainApp() {
                   </View>
                 ) : (
                   <Text style={styles.sectionAudioBtnText}>
-                    {playingId === 'how_to_answer' ? '⏹ Стоп' : '🔊 Озвучить'}
+                    {playingId === 'how_to_answer'
+                      ? playbackState === 'playing'
+                        ? '⏸ Пауза'
+                        : '▶ Продолжить'
+                      : '▶ Озвучить'}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -1149,6 +1296,7 @@ function MainApp() {
             isJunior={isJunior}
             onPlayAudio={handlePlayAudio}
             playingId={playingId}
+            playbackState={playbackState}
             loadingAudioId={loadingAudioId}
             taskTitle={analysis.task_title}
             themeExplanation={analysis.theme_explanation}
@@ -1223,7 +1371,7 @@ function MainApp() {
             styles.segmentBtn,
             tab2Mode === 'vocab' && (isJunior ? styles.segmentBtnActiveJunior : styles.segmentBtnActiveSenior),
           ]}
-          onPress={() => setTab2Mode('vocab')}
+          onPress={() => switchTab2Mode('vocab')}
         >
           <Text
             style={[
@@ -1240,7 +1388,7 @@ function MainApp() {
             styles.segmentBtn,
             tab2Mode === 'history' && (isJunior ? styles.segmentBtnActiveJunior : styles.segmentBtnActiveSenior),
           ]}
-          onPress={() => setTab2Mode('history')}
+          onPress={() => switchTab2Mode('history')}
         >
           <Text
             style={[
@@ -1272,7 +1420,12 @@ function MainApp() {
               {savedVocab.map((item, idx) => {
                 const isExpanded = expandedWord === item.est;
                 const isPlaying = playingId === `saved_vocab_${item.est}`;
+                const isItemActive = isPlaying && playbackState === 'playing';
+                const isItemPaused = isPlaying && playbackState === 'paused';
+
                 const isExPlaying = playingId === `saved_ex_${item.est}`;
+                const isExActive = isExPlaying && playbackState === 'playing';
+                const isExPaused = isExPlaying && playbackState === 'paused';
 
                 return (
                   <TouchableOpacity
@@ -1291,14 +1444,18 @@ function MainApp() {
                           {item.est}
                         </Text>
                         <TouchableOpacity
-                          style={[styles.vocabCardSpeaker, isPlaying && styles.vocabCardSpeakerActive]}
+                          style={[
+                            styles.vocabCardSpeaker,
+                            isItemActive && styles.vocabCardSpeakerActive,
+                            isItemPaused && styles.vocabCardSpeakerPaused,
+                          ]}
                           onPress={() => handlePlayAudio(item.est, 'et', `saved_vocab_${item.est}`)}
                         >
                           {loadingAudioId === `saved_vocab_${item.est}` ? (
                             <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.7 }] }} />
                           ) : (
                             <Text style={styles.vocabCardSpeakerIcon}>
-                              {isPlaying ? '⏹' : '🔊'}
+                              {isItemActive ? '⏸' : isItemPaused ? '▶' : '🔊'}
                             </Text>
                           )}
                         </TouchableOpacity>
@@ -1320,7 +1477,8 @@ function MainApp() {
                           <TouchableOpacity
                             style={[
                               styles.vocabCardSpeaker,
-                              isExPlaying && styles.vocabCardSpeakerActive,
+                              isExActive && styles.vocabCardSpeakerActive,
+                              isExPaused && styles.vocabCardSpeakerPaused,
                             ]}
                             onPress={() => handlePlayAudio(item.example, 'et', `saved_ex_${item.est}`)}
                           >
@@ -1328,7 +1486,7 @@ function MainApp() {
                               <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.7 }] }} />
                             ) : (
                               <Text style={styles.vocabCardSpeakerIcon}>
-                                {isExPlaying ? '⏹' : '🔊'}
+                                {isExActive ? '⏸' : isExPaused ? '▶' : '🔊'}
                               </Text>
                             )}
                           </TouchableOpacity>
@@ -1431,6 +1589,35 @@ function MainApp() {
         <Text style={styles.caption}>
           ИИ TarkApp адаптирует сложность объяснений и голос под класс ребёнка.
         </Text>
+
+        {/* Avatar Settings Row */}
+        <View style={styles.settingsAvatarRow}>
+          <TouchableOpacity
+            style={styles.settingsAvatarButton}
+            onPress={handleSelectAvatarSource}
+            activeOpacity={0.8}
+            accessibilityLabel="Изменить аватарку"
+          >
+            <View style={styles.settingsAvatarCircle}>
+              {profile.avatarUri ? (
+                <Image source={{ uri: profile.avatarUri }} style={styles.settingsAvatarImage} />
+              ) : (
+                <Text style={styles.settingsAvatarEmoji}>🧑‍🎓</Text>
+              )}
+            </View>
+            <View style={styles.settingsAvatarBadge}>
+              <Text style={styles.settingsAvatarBadgeIcon}>📷</Text>
+            </View>
+          </TouchableOpacity>
+          <View style={styles.settingsAvatarInfo}>
+            <Text style={styles.settingsAvatarTitle}>Аватарка ученика</Text>
+            <TouchableOpacity onPress={handleSelectAvatarSource} activeOpacity={0.7}>
+              <Text style={styles.settingsAvatarActionText}>
+                {profile.avatarUri ? '📸 Сменить фото' : '➕ Добавить фото'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
 
         <View style={styles.inputRow}>
           <Text style={[styles.label, isJunior && styles.labelJunior]}>
@@ -1582,13 +1769,18 @@ function MainApp() {
         </View>
 
         <TouchableOpacity
-          style={styles.headerProfilePill}
-          onPress={() => setCurrentTab('settings')}
-          accessibilityLabel="Профиль ученика"
+          style={styles.headerProfileBtn}
+          onPress={() => switchTab(currentTab === 'settings' ? 'study' : 'settings')}
+          accessibilityLabel="Профиль ученика и настройки"
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
-          <Text style={styles.headerProfileText}>
-            👤 {profile.nickname || 'Ученик'} • {profile.grade} кл.
-          </Text>
+          <View style={styles.headerProfileBadge}>
+            {profile.avatarUri ? (
+              <Image source={{ uri: profile.avatarUri }} style={styles.headerProfileAvatar} />
+            ) : (
+              <Text style={styles.headerProfileIconText}>👤⚙️</Text>
+            )}
+          </View>
         </TouchableOpacity>
       </View>
 
@@ -1598,7 +1790,7 @@ function MainApp() {
         contentContainerStyle={[
           styles.container,
           {
-            paddingBottom: 76 + bottomInset,
+            paddingBottom: Math.max(bottomInset, 20) + 16,
           },
         ]}
         showsVerticalScrollIndicator={false}
@@ -1606,6 +1798,15 @@ function MainApp() {
       >
         {currentTab === 'study' && renderStudyTab()}
         {currentTab === 'dictionary' && renderDictionaryTab()}
+        {currentTab === 'translator' && (
+          <QuickTranslatorScreen
+            onBackToStudy={() => switchTab('study')}
+            onVocabularySaved={async () => {
+              const updated = await StorageService.getSavedVocabulary();
+              setSavedVocab(updated);
+            }}
+          />
+        )}
         {currentTab === 'tests' && (
           <ComingSoonCard
             icon="🎯"
@@ -1633,7 +1834,7 @@ function MainApp() {
                 desc: 'Наглядный прогноз балла перед реальной контрольной работой в школе',
               },
             ]}
-            onBackToStudy={() => setCurrentTab('study')}
+            onBackToStudy={() => switchTab('study')}
           />
         )}
         {currentTab === 'reading' && (
@@ -1663,92 +1864,34 @@ function MainApp() {
                 desc: 'Рост скорости чтения (слов/мин) и словарного запаса',
               },
             ]}
-            onBackToStudy={() => setCurrentTab('study')}
+            onBackToStudy={() => switchTab('study')}
           />
         )}
         {currentTab === 'settings' && renderSettingsTab()}
       </ScrollView>
 
-      {/* Persistent Bottom Tab Bar with Dynamic Native Bottom Inset */}
-      <View
-        style={[
-          styles.bottomTabBar,
-          {
-            paddingBottom: bottomInset,
-            height: 58 + bottomInset,
-          },
-        ]}
-      >
-        <TouchableOpacity
-          style={[styles.tabItem, currentTab === 'study' && styles.tabItemActive]}
-          onPress={() => setCurrentTab('study')}
-        >
-          <Text style={styles.tabIcon}>📸</Text>
-          <Text
-            style={[
-              styles.tabLabel,
-              currentTab === 'study' && styles.tabLabelActive,
-            ]}
-          >
-            Разбор
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tabItem, currentTab === 'dictionary' && styles.tabItemActive]}
-          onPress={() => setCurrentTab('dictionary')}
-        >
-          <View style={styles.tabBadgeWrapper}>
-            <Text style={styles.tabIcon}>📖</Text>
-            {savedVocab.length > 0 && (
-              <View style={styles.tabBadge}>
-                <Text style={styles.tabBadgeText}>{savedVocab.length}</Text>
-              </View>
-            )}
-          </View>
-          <Text
-            style={[
-              styles.tabLabel,
-              currentTab === 'dictionary' && styles.tabLabelActive,
-            ]}
-          >
-            Словарик
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tabItem, currentTab === 'settings' && styles.tabItemActive]}
-          onPress={() => setCurrentTab('settings')}
-        >
-          <Text style={styles.tabIcon}>⚙️</Text>
-          <Text
-            style={[
-              styles.tabLabel,
-              currentTab === 'settings' && styles.tabLabelActive,
-            ]}
-          >
-            Настройки
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.tabItem}
-          onPress={() => setIsDrawerOpen(true)}
-        >
-          <Text style={styles.tabIcon}>≡</Text>
-          <Text style={styles.tabLabel}>Меню</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Navigation Drawer Component */}
+      {/* Navigation Drawer Component (No Bottom Tab Bar) */}
       <DrawerMenu
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         activeTab={currentTab as DrawerTabType}
-        onSelectTab={(tab) => setCurrentTab(tab as TabType)}
-        userNickname={profile.nickname}
-        userGrade={profile.grade}
+        onSelectTab={(tab) => switchTab(tab as TabType)}
+        userNickname={profile.nickname || 'Данил'}
+        userGrade={profile.grade || 11}
+        avatarUri={profile.avatarUri}
+        onChangeAvatar={handleSelectAvatarSource}
         vocabCount={savedVocab.length}
+        onLogout={handleLogout}
+      />
+
+      {/* Attractive Centered Avatar Picker Modal */}
+      <AvatarPickerModal
+        visible={isAvatarModalVisible}
+        onClose={() => setIsAvatarModalVisible(false)}
+        onTakePhoto={handleTakeAvatarPhoto}
+        onPickGallery={handlePickAvatarFromGallery}
+        onRemovePhoto={handleRemoveAvatar}
+        hasExistingPhoto={Boolean(profile.avatarUri)}
       />
     </View>
   );
@@ -1776,12 +1919,12 @@ const styles = StyleSheet.create({
     backgroundColor: Theme.colors.background,
   },
   headerBar: {
-    backgroundColor: Theme.colors.primary,
+    backgroundColor: '#5FEDC5',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingBottom: 10,
     ...Theme.shadow.header,
   },
   headerMenuBtn: {
@@ -1791,37 +1934,109 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerMenuIcon: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: 'bold',
-    color: Theme.colors.onPrimaryText,
-    lineHeight: 32,
+    color: '#064E3B',
+    lineHeight: 30,
   },
   headerTitleCenter: {
     flex: 1,
     alignItems: 'center',
   },
   headerBrandTitle: {
-    fontSize: 20,
+    fontSize: 21,
     fontWeight: '800',
-    color: Theme.colors.onPrimaryText,
-    letterSpacing: 0.3,
+    color: '#064E3B',
+    letterSpacing: -0.3,
   },
-  headerProfilePill: {
-    backgroundColor: 'rgba(255, 255, 255, 0.85)',
-    paddingHorizontal: 10,
+  headerProfileBtn: {
+    width: 44,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerProfileBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(6, 78, 59, 0.12)',
+    paddingHorizontal: 8,
     paddingVertical: 5,
-    borderRadius: Theme.radius.chip,
-    borderWidth: 1,
-    borderColor: 'rgba(6, 78, 59, 0.15)',
+    borderRadius: 16,
+    overflow: 'hidden',
   },
-  headerProfileText: {
-    fontSize: 12,
+  headerProfileAvatar: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+  },
+  headerProfileIconText: {
+    fontSize: 15,
+  },
+  settingsAvatarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingVertical: 4,
+  },
+  settingsAvatarButton: {
+    position: 'relative',
+    marginRight: 14,
+  },
+  settingsAvatarCircle: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderWidth: 2,
+    borderColor: '#5FEDC5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  settingsAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 29,
+  },
+  settingsAvatarEmoji: {
+    fontSize: 28,
+  },
+  settingsAvatarBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#064E3B',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsAvatarBadgeIcon: {
+    fontSize: 10,
+    color: '#FFFFFF',
+  },
+  settingsAvatarInfo: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  settingsAvatarTitle: {
+    fontSize: 14.5,
     fontWeight: '700',
-    color: Theme.colors.onPrimaryText,
+    color: '#0F172A',
+    marginBottom: 3,
+  },
+  settingsAvatarActionText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#065F46',
   },
   container: {
     padding: 16,
-    paddingBottom: 90,
+    paddingBottom: 24,
   },
   studySubHeader: {
     marginBottom: 12,
@@ -1976,23 +2191,24 @@ const styles = StyleSheet.create({
   },
 
   welcomeCard: {
-    backgroundColor: Theme.colors.surface,
-    borderRadius: Theme.radius.card,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     padding: 22,
-    marginBottom: 14,
+    marginBottom: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: '#E2E8F0',
     ...Theme.shadow.card,
   },
   welcomeCardJunior: {
-    backgroundColor: Theme.colors.surface,
-    borderColor: Theme.colors.border,
-    borderRadius: Theme.radius.card,
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E2E8F0',
+    borderRadius: 20,
   },
   welcomeCardSenior: {
-    backgroundColor: Theme.colors.surface,
-    borderColor: Theme.colors.border,
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E2E8F0',
+    borderRadius: 20,
   },
   welcomeIcon: {
     fontSize: 38,
@@ -2019,27 +2235,27 @@ const styles = StyleSheet.create({
 
   // Action Buttons Section
   actionsContainer: {
-    marginBottom: 14,
+    marginBottom: 16,
   },
   actionButton: {
-    backgroundColor: Theme.colors.primary,
-    borderRadius: Theme.radius.card,
-    paddingVertical: 16,
+    backgroundColor: '#5FEDC5',
+    borderRadius: 14,
+    paddingVertical: 14,
     alignItems: 'center',
     marginBottom: 10,
-    ...Theme.shadow.card,
+    ...Theme.shadow.chip,
   },
   actionButtonJunior: {
-    backgroundColor: Theme.colors.primary,
-    borderRadius: Theme.radius.card,
+    backgroundColor: '#5FEDC5',
+    borderRadius: 14,
   },
   actionButtonSenior: {
-    backgroundColor: Theme.colors.primary,
-    borderRadius: Theme.radius.card,
+    backgroundColor: '#5FEDC5',
+    borderRadius: 14,
   },
   actionButtonText: {
-    color: Theme.colors.onPrimaryText,
-    fontSize: 16,
+    color: '#064E3B',
+    fontSize: 15,
     fontWeight: '800',
     letterSpacing: 0.2,
   },
@@ -2117,18 +2333,18 @@ const styles = StyleSheet.create({
   },
 
   previewCard: {
-    backgroundColor: Theme.colors.surface,
-    borderRadius: Theme.radius.card,
-    padding: 12,
-    marginBottom: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: '#E2E8F0',
     ...Theme.shadow.card,
   },
   previewCardJunior: {
-    borderColor: Theme.colors.border,
-    backgroundColor: Theme.colors.surface,
-    borderRadius: Theme.radius.card,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
   },
   previewHeaderRow: {
     flexDirection: 'row',
@@ -2140,9 +2356,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   previewLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: Theme.colors.textPrimary,
+    fontSize: 15.5,
+    fontWeight: '800',
+    color: '#0F172A',
   },
   previewSubLabel: {
     fontSize: 11,
@@ -2260,28 +2476,33 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   modularCard: {
-    backgroundColor: Theme.colors.surface,
-    borderRadius: Theme.radius.card,
-    padding: 16,
-    marginBottom: 14,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: '#E2E8F0',
     ...Theme.shadow.card,
   },
   topicTitleCard: {
-    backgroundColor: '#CFFAEE',
-    borderColor: '#5FEDC5',
-    borderWidth: 1.5,
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    elevation: 0,
-    shadowOpacity: 0,
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E2E8F0',
+    borderWidth: 1,
+    borderRadius: 20,
+    paddingVertical: 18,
+    paddingHorizontal: 18,
+    marginBottom: 16,
+    ...Theme.shadow.card,
   },
   topicTitleCardJunior: {
-    backgroundColor: '#FEF3C7',
-    borderColor: '#FCD34D',
-    elevation: 0,
-    shadowOpacity: 0,
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E2E8F0',
+    borderWidth: 1,
+    borderRadius: 20,
+    paddingVertical: 18,
+    paddingHorizontal: 18,
+    marginBottom: 16,
+    ...Theme.shadow.card,
   },
   resultHeader: {
     flexDirection: 'row',
@@ -2289,17 +2510,20 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   resultTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '800',
-    color: Theme.colors.onPrimaryText,
+    color: '#0F172A',
     width: '100%',
-    lineHeight: 26,
+    lineHeight: 25,
     textAlign: 'left',
-    backgroundColor: 'transparent',
   },
   resultTitleJunior: {
-    color: '#78350F',
-    backgroundColor: 'transparent',
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0F172A',
+    width: '100%',
+    lineHeight: 25,
+    textAlign: 'left',
   },
   tierBadgeBox: {
     backgroundColor: Theme.colors.slotSuccessBg,
@@ -2325,17 +2549,17 @@ const styles = StyleSheet.create({
   },
   voiceHeroBadge: {
     fontSize: 11,
-    fontWeight: 'bold',
-    backgroundColor: Theme.colors.voiceButton,
+    fontWeight: '800',
+    backgroundColor: '#6366F1',
     color: '#FFFFFF',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
   },
   voiceHeroTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Theme.colors.textPrimary,
+    fontSize: 15.5,
+    fontWeight: '800',
+    color: '#0F172A',
   },
   voiceScriptText: {
     fontSize: 14.5,
@@ -2352,6 +2576,9 @@ const styles = StyleSheet.create({
   voiceHeroPlayButtonActive: {
     backgroundColor: Theme.colors.voiceButtonPressed,
   },
+  voiceHeroPlayButtonPaused: {
+    backgroundColor: '#D97706',
+  },
   voiceHeroPlayText: {
     color: '#FFFFFF',
     fontWeight: '700',
@@ -2363,10 +2590,10 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   sectionHeader: {
-    fontSize: 16,
+    fontSize: 16.5,
     fontWeight: '800',
-    color: Theme.colors.textPrimary,
-    marginBottom: 4,
+    color: '#0F172A',
+    marginBottom: 8,
   },
   sectionHeaderRowWithAction: {
     flexDirection: 'row',
@@ -2399,20 +2626,18 @@ const styles = StyleSheet.create({
     color: Theme.colors.onPrimaryText,
   },
   altExplanationBadge: {
-    backgroundColor: '#EEF2FF',
-    borderColor: '#C7D2FE',
-    borderWidth: 1,
-    borderRadius: Theme.radius.badge,
+    backgroundColor: 'rgba(95, 237, 197, 0.22)',
+    borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 4,
     alignSelf: 'flex-start',
-    marginTop: 6,
-    marginBottom: 4,
+    marginTop: 4,
+    marginBottom: 8,
   },
   altExplanationBadgeText: {
     fontSize: 11.5,
-    fontWeight: '600',
-    color: '#3730A3',
+    fontWeight: '700',
+    color: '#064E3B',
   },
   altExplanationActionRow: {
     flexDirection: 'row',
@@ -2453,15 +2678,13 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   naidisBadge: {
-    backgroundColor: '#CFFAEE',
-    borderWidth: 1,
-    borderColor: '#5FEDC5',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: Theme.radius.badge,
+    backgroundColor: 'rgba(95, 237, 197, 0.22)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
   },
   naidisBadgeText: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '800',
     color: '#064E3B',
     letterSpacing: 0.5,
@@ -2567,6 +2790,9 @@ const styles = StyleSheet.create({
   sectionAudioBtnActive: {
     backgroundColor: Theme.colors.voiceButtonPressed,
   },
+  sectionAudioBtnPaused: {
+    backgroundColor: '#D97706',
+  },
   sectionAudioBtnText: {
     fontSize: 14,
     fontWeight: '700',
@@ -2642,6 +2868,9 @@ const styles = StyleSheet.create({
   },
   vocabCircleSpeakerActive: {
     backgroundColor: Theme.colors.voiceButtonPressed,
+  },
+  vocabCircleSpeakerPaused: {
+    backgroundColor: '#D97706',
   },
   vocabSpeakerIconWhite: {
     fontSize: 12,
@@ -2883,6 +3112,9 @@ const styles = StyleSheet.create({
   vocabCardSpeakerActive: {
     backgroundColor: Theme.colors.voiceButtonPressed,
   },
+  vocabCardSpeakerPaused: {
+    backgroundColor: '#D97706',
+  },
   vocabCardSpeakerIcon: {
     fontSize: 12,
     color: '#FFFFFF',
@@ -3048,19 +3280,19 @@ const styles = StyleSheet.create({
 
   // Tab 3: Settings
   card: {
-    backgroundColor: Theme.colors.surface,
-    borderRadius: Theme.radius.card,
-    padding: 16,
-    marginBottom: 14,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: '#E2E8F0',
     ...Theme.shadow.card,
   },
   cardJunior: {
-    borderRadius: Theme.radius.card,
+    borderRadius: 20,
   },
   cardSenior: {
-    borderRadius: Theme.radius.card,
+    borderRadius: 20,
   },
   cardHeaderRow: {
     flexDirection: 'row',
@@ -3068,12 +3300,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cardTitle: {
-    fontSize: 17,
+    fontSize: 16.5,
     fontWeight: '800',
-    color: Theme.colors.textPrimary,
+    color: '#0F172A',
   },
   cardTitleJunior: {
-    fontSize: 17,
+    fontSize: 16.5,
   },
   tierTag: {
     paddingHorizontal: 10,
@@ -3238,76 +3470,5 @@ const styles = StyleSheet.create({
     color: Theme.colors.danger,
     fontWeight: '700',
     fontSize: 13,
-  },
-
-  // Bottom Tab Bar
-  bottomTabBar: {
-    flexDirection: 'row',
-    backgroundColor: Theme.colors.surface,
-    borderTopWidth: 1,
-    borderTopColor: Theme.colors.border,
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    paddingHorizontal: 10,
-    elevation: 10,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-  },
-  bottomTabBarJunior: {
-    backgroundColor: Theme.colors.surface,
-    borderTopColor: Theme.colors.border,
-  },
-  bottomTabBarSenior: {
-    backgroundColor: Theme.colors.surface,
-    borderTopColor: Theme.colors.border,
-  },
-  tabItem: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 6,
-  },
-  tabItemActive: {
-    opacity: 1,
-  },
-  tabIcon: {
-    fontSize: 20,
-    marginBottom: 2,
-  },
-  tabBadgeWrapper: {
-    position: 'relative',
-    alignItems: 'center',
-  },
-  tabBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -12,
-    backgroundColor: Theme.colors.primary,
-    borderRadius: 10,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-  },
-  tabBadgeText: {
-    color: Theme.colors.onPrimaryText,
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  tabLabel: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    color: Theme.colors.textSecondary,
-  },
-  tabLabelActive: {
-    color: Theme.colors.onPrimaryText,
-    fontWeight: '800',
-  },
-  tabLabelActiveJunior: {
-    color: Theme.colors.onPrimaryText,
-    fontWeight: '800',
-  },
-  tabLabelActiveSenior: {
-    color: Theme.colors.onPrimaryText,
-    fontWeight: '800',
   },
 });

@@ -30,6 +30,23 @@ export interface MoreExamplesResponse {
   templates: string[];
 }
 
+export interface QuickTranslateRequest {
+  text?: string;
+  image_base64?: string;
+  mime_type?: string;
+  source_lang?: string;
+  target_lang?: string;
+}
+
+export interface QuickTranslateResponse {
+  original_text: string;
+  translated_text: string;
+  base_forms?: string;
+  context_note?: string;
+  source_lang: string;
+  target_lang: string;
+}
+
 /**
  * Formats any network, HTTP, or unexpected error into a user-friendly Russian explanation.
  * Eliminates technical stack traces, internal paths, and raw system exceptions.
@@ -299,5 +316,37 @@ export async function checkBackendHealth(
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Быстрый школьный переводчик терминов, фраз или фрагментов учебника.
+ */
+export async function quickTranslate(
+  request: QuickTranslateRequest,
+  baseUrl: string = API_BASE_URL
+): Promise<QuickTranslateResponse> {
+  const endpoint = `${baseUrl}/api/v1/translate/quick`;
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw await parseErrorResponse(response);
+    }
+
+    return (await response.json()) as QuickTranslateResponse;
+  } catch (err: any) {
+    captureException(err, { endpoint, context: 'quickTranslate' });
+    if (err instanceof ApiError) {
+      throw err;
+    }
+    throw new ApiError(0, formatFriendlyErrorMessage(err), undefined, err);
   }
 }
