@@ -13,6 +13,7 @@ let currentPlayingId: string | null = null;
 let activeSubscription: { remove: () => void } | null = null;
 let playbackState: PlaybackState = 'idle';
 let currentCallbacks: AudioPlaybackCallbacks | null = null;
+let currentPlayToken: number = 0;
 
 export interface AudioPlaybackCallbacks {
   onStart?: () => void;
@@ -111,6 +112,7 @@ export const resume = resumeTts;
  * Stops playback completely, seeks to position 0, and releases the audio player instance.
  */
 export async function stopTts(): Promise<void> {
+  currentPlayToken++; // Invalidate any pending in-flight playback invocations
   const prevCallbacks = currentCallbacks;
   currentCallbacks = null;
   currentPlayingId = null;
@@ -189,14 +191,26 @@ export async function playTts(
     }
   }
 
+  // Assign fresh play token to prevent race conditions on rapid multi-clicks
+  const thisToken = ++currentPlayToken;
+
   // Stop any previous audio
   await stopTts();
+
+  // If another playTts was called while waiting for stopTts, cancel immediately
+  if (thisToken !== currentPlayToken) {
+    return null;
+  }
 
   if (!text || !text.trim()) {
     return null;
   }
 
   await ensureAudioMode();
+
+  if (thisToken !== currentPlayToken) {
+    return null;
+  }
 
   const isDirectUri =
     text.startsWith('file://') ||
@@ -209,10 +223,23 @@ export async function playTts(
     : `${baseUrl}/api/v1/voice/tts?text=${encodeURIComponent(text.trim())}&lang=${lang}${bilingualParam}`;
 
   try {
+    if (thisToken !== currentPlayToken) {
+      return null;
+    }
+
     currentPlayingId = playbackId;
     currentCallbacks = callbacks || null;
 
     const player = createAudioPlayer(url);
+
+    // If another sound was triggered during player creation, release and bail
+    if (thisToken !== currentPlayToken) {
+      try {
+        if (typeof player.release === 'function') player.release();
+      } catch {}
+      return null;
+    }
+
     activePlayer = player;
     playbackState = 'playing';
     notifyStateListeners();
@@ -220,6 +247,7 @@ export async function playTts(
     callbacks?.onStart?.();
 
     activeSubscription = player.addListener('playbackStatusUpdate', (status: AudioStatus) => {
+      if (thisToken !== currentPlayToken) return;
       if (status.didJustFinish) {
         stopTts();
       }
@@ -228,13 +256,15 @@ export async function playTts(
     player.play();
     return player;
   } catch (error) {
-    console.error('Failed to load or play TTS stream via expo-audio:', error);
-    currentPlayingId = null;
-    playbackState = 'idle';
-    activePlayer = null;
-    currentCallbacks = null;
-    notifyStateListeners();
-    callbacks?.onError?.(error);
+    if (thisToken === currentPlayToken) {
+      console.error('Failed to load or play TTS stream via expo-audio:', error);
+      currentPlayingId = null;
+      playbackState = 'idle';
+      activePlayer = null;
+      currentCallbacks = null;
+      notifyStateListeners();
+      callbacks?.onError?.(error);
+    }
     return null;
   }
 }

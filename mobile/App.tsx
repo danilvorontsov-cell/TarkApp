@@ -112,6 +112,7 @@ function MainApp() {
   const [isKeyModalVisible, setIsKeyModalVisible] = useState<boolean>(false);
   const [isTrialBlockedModalVisible, setIsTrialBlockedModalVisible] = useState<boolean>(false);
   const [modalBlockReason, setModalBlockReason] = useState<'trial_expired' | 'reviews_limit_reached' | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   const edgePanResponder = useRef(
     PanResponder.create({
@@ -406,6 +407,7 @@ function MainApp() {
   const processImagesAnalysis = async (imagesList: CapturedPageItem[]) => {
     if (!imagesList || imagesList.length === 0) return;
     setLoading(true);
+    setAnalysisError(null);
     setLoadingStep(
       imagesList.length > 1
         ? `Оптимизируем и анализируем ${imagesList.length} стр. материала...`
@@ -440,6 +442,7 @@ function MainApp() {
       }
 
       setAnalysis(data);
+      setAnalysisError(null);
       setShowAlternativeExplanation(false);
       await recordNewLesson(data, preparedImages);
     } catch (err: any) {
@@ -451,9 +454,11 @@ function MainApp() {
         setIsTrialBlockedModalVisible(true);
         return;
       }
+      const friendlyMsg = formatFriendlyErrorMessage(err);
+      setAnalysisError(friendlyMsg);
       Alert.alert(
         'Ошибка анализа страниц',
-        formatFriendlyErrorMessage(err)
+        friendlyMsg
       );
     } finally {
       setLoading(false);
@@ -462,6 +467,7 @@ function MainApp() {
   };
 
   const handleTakePhoto = async (mode: 'replace' | 'append' = 'replace') => {
+    setAnalysisError(null);
     // Check if free review allowance ran out
     if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 5) <= 0) {
       setModalBlockReason('reviews_limit_reached');
@@ -511,6 +517,7 @@ function MainApp() {
   };
 
   const handlePickImage = async (mode: 'replace' | 'append' = 'replace') => {
+    setAnalysisError(null);
     // Check if free review allowance ran out
     if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 5) <= 0) {
       setModalBlockReason('reviews_limit_reached');
@@ -614,6 +621,7 @@ function MainApp() {
             setCapturedImages([]);
             setCapturedImageUri(null);
             setAnalysis(null);
+            setAnalysisError(null);
             handleTakePhoto('replace');
           },
         },
@@ -973,6 +981,28 @@ function MainApp() {
               <Text style={styles.addPageText}>Добавить{'\n'}страницу</Text>
             </TouchableOpacity>
           </ScrollView>
+        </View>
+      )}
+
+      {/* Error / Retry Card when analysis fails */}
+      {analysisError && !loading && (
+        <View style={styles.errorRetryCard}>
+          <View style={styles.errorRetryHeader}>
+            <Text style={styles.errorRetryIcon}>⚠️</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.errorRetryTitle}>Не удалось разобрать материал</Text>
+              <Text style={styles.errorRetryMessage}>{analysisError}</Text>
+            </View>
+          </View>
+          {capturedImages.length > 0 && (
+            <TouchableOpacity
+              style={styles.retryBigButton}
+              onPress={() => processImagesAnalysis(capturedImages)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.retryBigButtonText}>🔄 Попробовать снова</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -3994,5 +4024,51 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: '#5FEDC5',
+  },
+  errorRetryCard: {
+    backgroundColor: '#261C1E',
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#7F1D1D',
+  },
+  errorRetryHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 14,
+  },
+  errorRetryIcon: {
+    fontSize: 26,
+    marginTop: 2,
+  },
+  errorRetryTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FCA5A5',
+    marginBottom: 4,
+  },
+  errorRetryMessage: {
+    fontSize: 14,
+    color: '#E2E8F0',
+    lineHeight: 20,
+  },
+  retryBigButton: {
+    backgroundColor: '#5FEDC5',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#5FEDC5',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  retryBigButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#064E3B',
   },
 });

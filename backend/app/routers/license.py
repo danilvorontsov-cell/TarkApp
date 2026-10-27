@@ -1,10 +1,11 @@
 import logging
 from typing import Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
+from app.limiter import safe_limit
 from app.models.license import (
     LicenseStatusResponse,
     KeyActivateRequest,
@@ -95,7 +96,9 @@ def get_license_status(
     summary="Активация ключа доступа для устройства",
     description="Продлевает срок доступа устройства на указанное в ключе количество дней (например, 30 дней).",
 )
+@safe_limit("5/minute")
 def activate_access_key(
+    request: Request,
     payload: KeyActivateRequest,
     x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
     db: Session = Depends(get_db),

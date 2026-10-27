@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # Database settings (SQLite / SQLAlchemy)
     DATABASE_URL: str = "sqlite:///./tarkapp.db"
 
+    # Rate Limiting settings (slowapi)
+    RATE_LIMITING_ENABLED: bool = True
+
     # Telegram Alerting & Topic Routing (Optional)
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_CHAT_ID: Optional[str] = None

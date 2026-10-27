@@ -66,9 +66,12 @@ async def send_telegram_message(
 
     telegram_url = f"https://api.telegram.org/bot{clean_token}/sendMessage"
 
+    # Ensure message does not exceed Telegram 4096 character limit
+    safe_text = text if len(text) <= 4000 else text[:3950] + "\n... [truncated]"
+
     payload: Dict[str, Any] = {
         "chat_id": clean_chat_id,
-        "text": text,
+        "text": safe_text,
     }
 
     if parse_mode:
@@ -142,7 +145,11 @@ async def send_telegram_alert(
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     exc_type = exc.__class__.__name__
-    exc_message = str(exc) or "No error message"
+    raw_exc_msg = str(exc) or "No error message"
+    # Truncate exception message to 1200 chars before HTML escaping to prevent Telegram 400
+    exc_message = (
+        raw_exc_msg if len(raw_exc_msg) <= 1200 else raw_exc_msg[:1200] + "... [truncated]"
+    )
 
     message_text = (
         f"🚨 <b>[TarkApp Critical Alert]</b>\n\n"
@@ -188,6 +195,8 @@ async def send_telegram_feedback(
     category_label = "🐞 ОШИБКА" if category == "bug" else "💡 ПОЖЕЛАНИЕ"
 
     raw_message = data.get("message", "").strip()
+    if len(raw_message) > 2000:
+        raw_message = raw_message[:2000] + "... [truncated]"
     safe_message = html.escape(raw_message)
 
     contact = html.escape(str(data.get("contact") or "").strip()) or "Не указан"

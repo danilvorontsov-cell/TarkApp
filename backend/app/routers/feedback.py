@@ -1,8 +1,9 @@
 import asyncio
 import logging
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Request, status
 
 from app.config import settings
+from app.limiter import safe_limit
 from app.models.feedback import FeedbackCreate, FeedbackResponse
 from app.services.telegram_alert import send_telegram_feedback
 
@@ -21,7 +22,8 @@ router = APIRouter(prefix="/api/v1", tags=["Feedback"])
         "и пересылает разработчику в Telegram с привязкой к Request ID."
     ),
 )
-async def submit_feedback(payload: FeedbackCreate) -> FeedbackResponse:
+@safe_limit("3/5minute")
+async def submit_feedback(request: Request, payload: FeedbackCreate) -> FeedbackResponse:
     # 1. Запись факта отправки фидбека в общий лог app.log
     logger.info(
         f"[FEEDBACK] category={payload.category} | contact={payload.contact} | "

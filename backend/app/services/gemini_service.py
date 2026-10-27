@@ -81,44 +81,96 @@ class GeminiTutorService:
                 f"выдели главную тему урока и разбери задания со всех страниц!]"
             )
 
-        try:
-            # Call Google GenAI SDK with structured response schema
-            image_parts = [
-                types.Part.from_bytes(data=ib, mime_type=mt)
-                for ib, mt in img_list
-            ]
-            contents = [
-                *image_parts,
-                user_prompt,
-            ]
+        # Call Google GenAI SDK with structured response schema and 1 automatic retry
+        image_parts = [
+            types.Part.from_bytes(data=ib, mime_type=mt)
+            for ib, mt in img_list
+        ]
+        contents = [
+            *image_parts,
+            user_prompt,
+        ]
 
-            config = types.GenerateContentConfig(
-                system_instruction=ESTONIAN_TUTOR_SYSTEM_PROMPT,
-                response_mime_type="application/json",
-                response_schema=PageAnalysisResponse,
-                temperature=0.2,
-            )
+        last_err: Optional[Exception] = None
+        for attempt in range(2):
+            try:
+                config = types.GenerateContentConfig(
+                    system_instruction=ESTONIAN_TUTOR_SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                    response_schema=PageAnalysisResponse,
+                    temperature=0.2 if attempt == 0 else 0.1,
+                )
 
-            response = await self.client.aio.models.generate_content(
-                model=self.model,
-                contents=contents,
-                config=config,
-            )
+                response = await self.client.aio.models.generate_content(
+                    model=self.model,
+                    contents=contents,
+                    config=config,
+                )
 
-            # Check if response.parsed was populated by the SDK
-            if hasattr(response, "parsed") and isinstance(response.parsed, PageAnalysisResponse):
-                return response.parsed
+                # Check if response.parsed was populated by the SDK
+                if hasattr(response, "parsed") and isinstance(response.parsed, PageAnalysisResponse):
+                    return response.parsed
 
-            # Otherwise parse response.text
-            raw_text = response.text or ""
-            return self._parse_json_response(raw_text)
+                # Otherwise parse response.text
+                raw_text = response.text or ""
+                return self._parse_json_response(raw_text)
 
-        except APIError as e:
-            logger.error(f"Gemini API error: {e}", exc_info=True)
-            raise RuntimeError(f"Ошибка вызова Gemini API: {e.message}") from e
-        except Exception as e:
-            logger.error(f"Unexpected error in analyze_page: {e}", exc_info=True)
-            raise
+            except APIError as e:
+                logger.error(f"Gemini API error (attempt {attempt + 1}): {e}", exc_info=True)
+                last_err = e
+                if attempt == 0:
+                    continue
+                return self._generate_emergency_fallback(profile)
+
+            except (ValueError, json.JSONDecodeError, Exception) as e:
+                logger.warning(f"Error parsing Gemini response (attempt {attempt + 1}): {e}")
+                last_err = e
+                if attempt == 0:
+                    continue
+                logger.error(f"Both attempts failed in analyze_page: {last_err}. Using emergency fallback.")
+                return self._generate_emergency_fallback(profile)
+
+        return self._generate_emergency_fallback(profile)
+
+    def _generate_emergency_fallback(self, profile: UserProfile) -> PageAnalysisResponse:
+        """Safe emergency fallback when Gemini returns malformed response or API breaks."""
+        nickname = profile.nickname or "Друг"
+        return PageAnalysisResponse(
+            task_title="Разбор учебного материала (Märge)",
+            theme_explanation=(
+                f"Привет, {nickname}! Мы получили твою фотографию, но из-за бликов или угла съёмки "
+                "нейросеть не смогла надёжно распознать весь текст задания. "
+                "Пожалуйста, сделай повторный снимок строго параллельно странице при хорошем освещении!"
+            ),
+            alternative_explanation=(
+                "Совет: держи камеру ровно над учебником, чтобы все буквы и формулы были чёткими."
+            ),
+            vocabulary=[
+                VocabularyItem(
+                    est="õppima",
+                    ru="учиться / изучать",
+                    example="Me õpime iga päev midagi uut."
+                ),
+                VocabularyItem(
+                    est="ülesanne",
+                    ru="задание / упражнение",
+                    example="Loe ülesande tekst hoolega läbi."
+                ),
+            ],
+            worked_example=WorkedExample(
+                title="Памятка по фотосъёмке учебника",
+                given="Если страница получилась размытой",
+                steps=[
+                    "1. Включи хорошее освещение в комнате",
+                    "2. Держи телефон ровно над страницей без наклона",
+                    "3. Нажми кнопку 'Попробовать снова'"
+                ],
+                note="Чёткий снимок помогает разобрать урок за 2 секунды!"
+            ),
+            how_to_answer="Сделай чёткое фото страницы учебника при хорошем освещении и нажми кнопку 'Попробовать снова'.",
+            answer_template="Ma loen [ülesannet] ja õpin [hoolega].",
+            voice_prompt_script=f"Привет, {nickname}! Сфотографируй страницу ещё раз поровнее, и мы сразу разберём задание!",
+        )
 
     def _parse_json_response(self, text: str) -> PageAnalysisResponse:
         """Cleans and parses raw JSON response text into PageAnalysisResponse."""

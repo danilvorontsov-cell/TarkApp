@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import * as Application from 'expo-application';
+import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PageAnalysisResponse, UserProfile, VocabularyItem } from '../types';
 import { captureException } from './sentry';
@@ -71,20 +72,46 @@ export class ApiError extends Error {
 // ==========================================
 
 let cachedDeviceId: string | null = null;
+const SECURE_DEVICE_ID_KEY = 'tarkapp_device_id';
 
+/**
+ * Returns a persistent, tamper-resistant Device ID.
+ * Uses expo-secure-store (iOS Keychain / Android Keystore) so that
+ * free reviews (5 attempts) and license status cannot be abused by
+ * uninstalling and reinstalling the app.
+ */
 export async function getDeviceId(): Promise<string> {
   if (cachedDeviceId) {
     return cachedDeviceId;
   }
 
+  // 1. Try reading from hardware-backed SecureStore (survives app reinstallation on iOS)
+  try {
+    const secureId = await SecureStore.getItemAsync(SECURE_DEVICE_ID_KEY);
+    if (secureId && secureId.trim()) {
+      cachedDeviceId = secureId.trim();
+      return cachedDeviceId;
+    }
+  } catch (err) {
+    console.warn('[SecureStore] Failed to read device ID:', err);
+  }
+
+  // 2. Migration fallback: check AsyncStorage if upgrading from older build
   try {
     const saved = await AsyncStorage.getItem('@tarkapp_device_id');
     if (saved && saved.trim()) {
       cachedDeviceId = saved.trim();
+      // Migrate forward to SecureStore
+      try {
+        await SecureStore.setItemAsync(SECURE_DEVICE_ID_KEY, cachedDeviceId, {
+          keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+        });
+      } catch {}
       return cachedDeviceId;
     }
   } catch {}
 
+  // 3. Hardware identifiers
   let hardwareId: string | null = null;
   try {
     if (Platform.OS === 'android') {
@@ -94,11 +121,22 @@ export async function getDeviceId(): Promise<string> {
     }
   } catch {}
 
+  // 4. Crypto-random fallback if hardware id is inaccessible
   if (!hardwareId || !hardwareId.trim()) {
     hardwareId = `dev_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
   }
 
   cachedDeviceId = hardwareId.trim();
+
+  // Persist to both SecureStore and AsyncStorage
+  try {
+    await SecureStore.setItemAsync(SECURE_DEVICE_ID_KEY, cachedDeviceId, {
+      keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+    });
+  } catch (err) {
+    console.warn('[SecureStore] Failed to save device ID:', err);
+  }
+
   try {
     await AsyncStorage.setItem('@tarkapp_device_id', cachedDeviceId);
   } catch {}

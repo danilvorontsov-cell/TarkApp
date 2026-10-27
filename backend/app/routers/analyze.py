@@ -2,11 +2,12 @@ import base64
 import logging
 from typing import Optional, Union, List, Tuple
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
+from app.limiter import safe_limit, get_device_or_ip
 from app.models.page_analysis import (
     AgeTier,
     AnalyzePageJsonRequest,
@@ -58,7 +59,9 @@ def _extract_device_id(raw_val: object) -> str:
         "Возвращает структурированный разбор на русском языке с эстонским словарем и каркасом ответа."
     ),
 )
+@safe_limit("10/minute", key_func=get_device_or_ip)
 async def analyze_page(
+    request: Request,
     files: Optional[List[UploadFile]] = File(default=None, description="Список файлов страниц (JPEG/PNG)"),
     file: Optional[UploadFile] = File(default=None, description="Одиночный файл изображения (для обратной совместимости)"),
     grade: int = Form(default=3, ge=1, le=12, description="Класс от 1 до 12"),
@@ -159,24 +162,26 @@ async def analyze_page(
     summary="Анализ страницы через Base64 JSON payload",
     description="Альтернативный эндпоинт для клиентов, передающих base64 строку вместо multipart/form-data. Поддерживает одиночные и множественные страницы.",
 )
+@safe_limit("10/minute", key_func=get_device_or_ip)
 async def analyze_page_json(
-    request: AnalyzePageJsonRequest,
+    payload: AnalyzePageJsonRequest,
+    request: Request = None,
     x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
     db: Session = Depends(get_db),
 ) -> PageAnalysisResponse:
     images_data: List[Tuple[bytes, str]] = []
 
     # 1. Проверяем список изображений
-    if request.images_base64 and len(request.images_base64) > 0:
-        for idx, b64_str in enumerate(request.images_base64):
+    if payload.images_base64 and len(payload.images_base64) > 0:
+        for idx, b64_str in enumerate(payload.images_base64):
             try:
                 ib = base64.b64decode(b64_str)
                 if ib:
                     mtype = "image/jpeg"
-                    if request.mime_types and idx < len(request.mime_types):
-                        mtype = request.mime_types[idx]
-                    elif request.mime_type:
-                        mtype = request.mime_type
+                    if payload.mime_types and idx < len(payload.mime_types):
+                        mtype = payload.mime_types[idx]
+                    elif payload.mime_type:
+                        mtype = payload.mime_type
                     images_data.append((ib, mtype))
             except Exception as e:
                 raise HTTPException(
@@ -185,11 +190,11 @@ async def analyze_page_json(
                 )
 
     # 2. Фолбэк на одиночное изображение (для обратной совместимости)
-    elif request.image_base64:
+    elif payload.image_base64:
         try:
-            image_bytes = base64.b64decode(request.image_base64)
+            image_bytes = base64.b64decode(payload.image_base64)
             if image_bytes:
-                images_data.append((image_bytes, request.mime_type or "image/jpeg"))
+                images_data.append((image_bytes, payload.mime_type or "image/jpeg"))
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -202,13 +207,13 @@ async def analyze_page_json(
             detail="Не передано ни одного корректного изображения для анализа.",
         )
 
-    resolved_tier = request.tier or AgeTier.from_grade(request.grade)
-    raw_interests = request.interests or request.theme_interest or []
+    resolved_tier = payload.tier or AgeTier.from_grade(payload.grade)
+    raw_interests = payload.interests or payload.theme_interest or []
     profile = UserProfile(
-        grade=request.grade,
+        grade=payload.grade,
         tier=resolved_tier,
         interests=raw_interests,
-        nickname=request.nickname or "Друг",
+        nickname=payload.nickname or "Друг",
     )
 
     dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")

@@ -9,8 +9,10 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
+from app.limiter import limiter
 from app.logger import setup_logging, app_logger, error_logger
 from app.database import init_db
 from app.routers.analyze import router as analyze_router
@@ -66,6 +68,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
@@ -117,6 +121,23 @@ static_dir = Path("static")
 static_dir.mkdir(parents=True, exist_ok=True)
 (static_dir / "audio").mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    """
+    Handles 429 Too Many Requests:
+    Returns structured JSON with user-friendly Russian message and Retry-After header.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={
+            "error": "RATE_LIMIT_EXCEEDED",
+            "message": "Слишком много запросов. Пожалуйста, подождите минуту перед повторной попыткой.",
+            "detail": str(exc.detail),
+        },
+        headers={"Retry-After": "60"},
+    )
 
 
 @app.exception_handler(HTTPException)
