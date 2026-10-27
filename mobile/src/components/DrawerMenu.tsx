@@ -11,7 +11,7 @@ import {
   Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Theme } from '../theme/colors';
+import { Theme, darkTheme } from '../theme/colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 320);
@@ -325,9 +325,11 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     width: DRAWER_WIDTH,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: darkTheme.cardBackground,
     borderTopRightRadius: 28,
     borderBottomRightRadius: 28,
+    borderRightWidth: 1,
+    borderRightColor: darkTheme.cardBorder,
     ...Theme.shadow.drawer,
     flexDirection: 'column',
     overflow: 'hidden',
@@ -347,11 +349,11 @@ const styles = StyleSheet.create({
     width: 58,
     height: 58,
     borderRadius: 29,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: darkTheme.cardBackground,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
-    borderColor: '#FFFFFF',
+    borderColor: darkTheme.cardBorder,
     overflow: 'hidden',
     ...Theme.shadow.chip,
   },
@@ -407,17 +409,17 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   menuItemActive: {
-    backgroundColor: 'rgba(95, 237, 197, 0.22)',
+    backgroundColor: 'rgba(95, 237, 197, 0.16)',
   },
   menuItemLogin: {
-    backgroundColor: '#CFFAEE',
+    backgroundColor: darkTheme.badgeFreeBg,
     borderWidth: 1,
-    borderColor: '#5FEDC5',
+    borderColor: darkTheme.accent,
   },
   menuItemLoginText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#064E3B',
+    color: darkTheme.badgeFreeText,
     flex: 1,
   },
   menuItemIcon: {
@@ -429,11 +431,11 @@ const styles = StyleSheet.create({
   menuItemText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     flex: 1,
   },
   menuItemTextActive: {
-    color: '#064E3B',
+    color: darkTheme.accent,
     fontWeight: '700',
   },
   badgeBox: {
@@ -442,24 +444,24 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   badgeSoon: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: darkTheme.badgeFreeBg,
   },
   badgeSoonText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: darkTheme.textMuted,
   },
   badgeCount: {
-    backgroundColor: 'rgba(95, 237, 197, 0.4)',
+    backgroundColor: 'rgba(95, 237, 197, 0.25)',
   },
   badgeCountText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#064E3B',
+    color: darkTheme.badgeFreeText,
   },
   divider: {
     height: 1,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: darkTheme.cardBorder,
     marginHorizontal: 18,
     marginVertical: 4,
   },
@@ -474,7 +476,7 @@ const styles = StyleSheet.create({
   },
   versionText: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: darkTheme.textMuted,
     fontWeight: '500',
   },
 });

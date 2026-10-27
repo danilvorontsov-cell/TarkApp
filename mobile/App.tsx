@@ -49,7 +49,7 @@ import {
 import { PhraseBuilder } from './src/components/PhraseBuilder';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { initSentry } from './src/services/sentry';
-import { Theme } from './src/theme/colors';
+import { Theme, darkTheme } from './src/theme/colors';
 import { DrawerMenu, DrawerTabType } from './src/components/DrawerMenu';
 import { ComingSoonCard } from './src/components/ComingSoonCard';
 import { AvatarPickerModal } from './src/components/AvatarPickerModal';
@@ -2554,23 +2554,25 @@ const styles = StyleSheet.create({
   },
 
   welcomeCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: darkTheme.cardBackground,
     borderRadius: 20,
     padding: 22,
     marginBottom: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: darkTheme.cardBorder,
     ...Theme.shadow.card,
   },
   welcomeCardJunior: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#E2E8F0',
+    backgroundColor: darkTheme.cardBackground,
+    borderColor: darkTheme.cardBorder,
+    borderWidth: 1,
     borderRadius: 20,
   },
   welcomeCardSenior: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#E2E8F0',
+    backgroundColor: darkTheme.cardBackground,
+    borderColor: darkTheme.cardBorder,
+    borderWidth: 1,
     borderRadius: 20,
   },
   welcomeIcon: {
@@ -2580,18 +2582,18 @@ const styles = StyleSheet.create({
   welcomeTitle: {
     fontSize: 19,
     fontWeight: '800',
-    color: Theme.colors.textPrimary,
+    color: darkTheme.textPrimary,
     marginBottom: 6,
     textAlign: 'center',
   },
   welcomeTitleJunior: {
     fontSize: 19,
     fontWeight: '800',
-    color: Theme.colors.textPrimary,
+    color: darkTheme.textPrimary,
   },
   welcomeDesc: {
     fontSize: 13.5,
-    color: Theme.colors.textSecondary,
+    color: darkTheme.textSecondary,
     textAlign: 'center',
     lineHeight: 20,
   },
@@ -2601,7 +2603,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   actionButton: {
-    backgroundColor: '#5FEDC5',
+    backgroundColor: darkTheme.accent,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
@@ -2609,15 +2611,15 @@ const styles = StyleSheet.create({
     ...Theme.shadow.chip,
   },
   actionButtonJunior: {
-    backgroundColor: '#5FEDC5',
+    backgroundColor: darkTheme.accent,
     borderRadius: 14,
   },
   actionButtonSenior: {
-    backgroundColor: '#5FEDC5',
+    backgroundColor: darkTheme.accent,
     borderRadius: 14,
   },
   actionButtonText: {
-    color: '#064E3B',
+    color: darkTheme.accentText,
     fontSize: 15,
     fontWeight: '800',
     letterSpacing: 0.2,
@@ -2640,9 +2642,9 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     flex: 1,
-    backgroundColor: Theme.colors.surface,
+    backgroundColor: darkTheme.cardBackground,
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: darkTheme.cardBorder,
     borderRadius: Theme.radius.button,
     paddingVertical: 12,
     alignItems: 'center',
@@ -2651,24 +2653,24 @@ const styles = StyleSheet.create({
   },
   secondaryButtonJunior: {
     borderRadius: Theme.radius.button,
-    borderColor: Theme.colors.border,
-    backgroundColor: Theme.colors.surface,
+    borderColor: darkTheme.cardBorder,
+    backgroundColor: darkTheme.cardBackground,
   },
   secondaryButtonText: {
     fontSize: 13.5,
     fontWeight: '700',
-    color: Theme.colors.textPrimary,
+    color: darkTheme.textPrimary,
   },
   secondaryButtonTextJunior: {
     fontSize: 13.5,
-    color: Theme.colors.textPrimary,
+    color: darkTheme.textPrimary,
   },
 
   tierPillInActionRow: {
     flex: 1,
-    backgroundColor: '#CFFAEE',
-    borderWidth: 1.5,
-    borderColor: '#5FEDC5',
+    backgroundColor: darkTheme.badgeFreeBg,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     borderRadius: Theme.radius.button,
     paddingVertical: 12,
     paddingHorizontal: 8,
@@ -2678,35 +2680,36 @@ const styles = StyleSheet.create({
     shadowOpacity: 0,
   },
   tierPillInActionRowJunior: {
-    backgroundColor: '#FEF3C7',
-    borderColor: '#FCD34D',
+    backgroundColor: '#2F2618',
+    borderColor: '#78350F',
     elevation: 0,
     shadowOpacity: 0,
   },
   tierPillInActionRowText: {
     fontSize: 12.5,
     fontWeight: '700',
-    color: Theme.colors.onPrimaryText,
+    color: darkTheme.badgeFreeText,
     textAlign: 'center',
     backgroundColor: 'transparent',
   },
   tierPillInActionRowTextJunior: {
-    color: '#78350F',
+    color: '#FBBF24',
     backgroundColor: 'transparent',
   },
 
   previewCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: darkTheme.cardBackground,
     borderRadius: 20,
     padding: 16,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: darkTheme.cardBorder,
     ...Theme.shadow.card,
   },
   previewCardJunior: {
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
+    borderColor: darkTheme.cardBorder,
+    backgroundColor: darkTheme.cardBackground,
+    borderWidth: 1,
     borderRadius: 20,
   },
   previewHeaderRow: {
@@ -2839,17 +2842,17 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   modularCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: darkTheme.cardBackground,
     borderRadius: 20,
     padding: 18,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: darkTheme.cardBorder,
     ...Theme.shadow.card,
   },
   topicTitleCard: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#E2E8F0',
+    backgroundColor: darkTheme.cardBackground,
+    borderColor: darkTheme.cardBorder,
     borderWidth: 1,
     borderRadius: 20,
     paddingVertical: 18,
@@ -2858,8 +2861,8 @@ const styles = StyleSheet.create({
     ...Theme.shadow.card,
   },
   topicTitleCardJunior: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#E2E8F0',
+    backgroundColor: darkTheme.cardBackground,
+    borderColor: darkTheme.cardBorder,
     borderWidth: 1,
     borderRadius: 20,
     paddingVertical: 18,
@@ -2875,7 +2878,7 @@ const styles = StyleSheet.create({
   resultTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     width: '100%',
     lineHeight: 25,
     textAlign: 'left',
@@ -2883,7 +2886,7 @@ const styles = StyleSheet.create({
   resultTitleJunior: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     width: '100%',
     lineHeight: 25,
     textAlign: 'left',
@@ -2922,12 +2925,12 @@ const styles = StyleSheet.create({
   voiceHeroTitle: {
     fontSize: 15.5,
     fontWeight: '800',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
   },
   voiceScriptText: {
     fontSize: 14.5,
     lineHeight: 22,
-    color: Theme.colors.textPrimary,
+    color: darkTheme.textPrimary,
     marginBottom: 12,
   },
   voiceHeroPlayButton: {
@@ -2955,7 +2958,7 @@ const styles = StyleSheet.create({
   sectionHeader: {
     fontSize: 16.5,
     fontWeight: '800',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     marginBottom: 8,
   },
   sectionHeaderRowWithAction: {
@@ -3086,10 +3089,10 @@ const styles = StyleSheet.create({
   naidisStepRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: darkTheme.cardBackground,
     borderWidth: 1,
-    borderColor: Theme.colors.border,
-    borderRadius: 10,
+    borderColor: darkTheme.cardBorder,
+    borderRadius: 12,
     padding: 10,
     gap: 10,
   },
@@ -3152,22 +3155,22 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   academicAnswerBox: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    borderRadius: 14,
+    backgroundColor: darkTheme.cardBackground,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
+    borderRadius: 20,
     padding: 16,
     marginVertical: 10,
   },
   academicAnswerText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     lineHeight: 24,
   },
   academicAnswerHint: {
     fontSize: 13,
-    color: '#64748B',
+    color: darkTheme.textSecondary,
     lineHeight: 18,
     marginTop: 4,
   },
@@ -3686,19 +3689,23 @@ const styles = StyleSheet.create({
 
   // Tab 3: Settings
   card: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: darkTheme.cardBackground,
     borderRadius: 20,
     padding: 18,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: darkTheme.cardBorder,
     ...Theme.shadow.card,
   },
   cardJunior: {
     borderRadius: 20,
+    borderColor: darkTheme.cardBorder,
+    backgroundColor: darkTheme.cardBackground,
   },
   cardSenior: {
     borderRadius: 20,
+    borderColor: darkTheme.cardBorder,
+    backgroundColor: darkTheme.cardBackground,
   },
   cardHeaderRow: {
     flexDirection: 'row',
@@ -3708,7 +3715,7 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16.5,
     fontWeight: '800',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
   },
   cardTitleJunior: {
     fontSize: 16.5,
@@ -3881,7 +3888,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   licenseStatusBox: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     borderRadius: 14,
     padding: 14,
     marginTop: 10,
@@ -3890,29 +3899,29 @@ const styles = StyleSheet.create({
   licenseStatusLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#64748B',
+    color: darkTheme.textSecondary,
     marginBottom: 3,
   },
   licenseStatusValue: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#064E3B',
+    color: darkTheme.accent,
   },
   licenseStatusExpired: {
-    color: '#DC2626',
+    color: '#EF4444',
   },
   licenseExpiryText: {
     fontSize: 11.5,
-    color: '#64748B',
+    color: darkTheme.textMuted,
     marginTop: 4,
   },
   licenseKeyInfo: {
     fontSize: 12.5,
-    color: '#334155',
+    color: darkTheme.textSecondary,
     marginBottom: 8,
   },
   activateKeyBtn: {
-    backgroundColor: '#5FEDC5',
+    backgroundColor: darkTheme.accent,
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
@@ -3923,16 +3932,16 @@ const styles = StyleSheet.create({
   activateKeyBtnText: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#064E3B',
+    color: darkTheme.accentText,
   },
   reviewLimitBadgeRow: {
     alignItems: 'center',
     marginBottom: 10,
   },
   reviewLimitBadge: {
-    backgroundColor: '#CFFAEE',
-    borderWidth: 1.5,
-    borderColor: '#5FEDC5',
+    backgroundColor: darkTheme.badgeFreeBg,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     paddingVertical: 6,
     paddingHorizontal: 14,
     borderRadius: 20,
@@ -3940,20 +3949,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   reviewLimitBadgeExhausted: {
-    backgroundColor: '#FEE2E2',
-    borderColor: '#FCA5A5',
+    backgroundColor: '#3E1D22',
+    borderColor: '#7F1D1D',
   },
   reviewLimitBadgeText: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#064E3B',
+    color: darkTheme.badgeFreeText,
   },
   reviewLimitBadgeTextExhausted: {
-    color: '#B91C1C',
+    color: '#FCA5A5',
   },
   subscriptionActiveBadge: {
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1.5,
+    backgroundColor: '#16382E',
+    borderWidth: 1,
     borderColor: '#34D399',
     paddingVertical: 6,
     paddingHorizontal: 14,
@@ -3964,6 +3973,6 @@ const styles = StyleSheet.create({
   subscriptionActiveBadgeText: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#047857',
+    color: '#5FEDC5',
   },
 });

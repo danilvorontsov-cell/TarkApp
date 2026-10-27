@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
-import { Theme } from '../theme/colors';
+import { Theme, darkTheme } from '../theme/colors';
 import { quickTranslate, QuickTranslateResponse } from '../services/api';
 import { StorageService } from '../services/storage';
 import { playTts, stopTts } from '../services/audioPlayer';
@@ -260,7 +260,7 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
               ? 'Введите слово, правило или фразу на эстонском...'
               : 'Введите школьный термин или фразу на русском...'
           }
-          placeholderTextColor="#94A3B8"
+          placeholderTextColor={darkTheme.textMuted}
           value={inputText}
           onChangeText={setInputText}
           multiline
@@ -413,18 +413,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 24,
+    backgroundColor: darkTheme.background,
   },
   topBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    backgroundColor: darkTheme.cardBackground,
+    borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: darkTheme.cardBorder,
     ...Theme.shadow.card,
   },
   titleRow: {
@@ -439,38 +440,38 @@ const styles = StyleSheet.create({
   bannerTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
   },
   bannerSubtitle: {
     fontSize: 12,
     fontWeight: '500',
-    color: '#64748B',
+    color: darkTheme.textSecondary,
     marginTop: 1,
   },
   backBtn: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: darkTheme.badgeFreeBg,
     alignItems: 'center',
     justifyContent: 'center',
   },
   backBtnText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#64748B',
+    color: darkTheme.textSecondary,
   },
   langBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    backgroundColor: darkTheme.cardBackground,
+    borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 8,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: darkTheme.cardBorder,
   },
   langPill: {
     flexDirection: 'row',
@@ -479,7 +480,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 10,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: Theme.colors.surfaceAlt,
   },
   langFlag: {
     fontSize: 16,
@@ -487,28 +488,28 @@ const styles = StyleSheet.create({
   langName: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
   },
   swapBtn: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#CFFAEE',
+    backgroundColor: darkTheme.badgeFreeBg,
     borderWidth: 1,
-    borderColor: '#5FEDC5',
+    borderColor: darkTheme.cardBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
   swapIcon: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#064E3B',
+    color: darkTheme.badgeFreeText,
   },
   inputCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: darkTheme.cardBackground,
     borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     padding: 14,
     marginBottom: 14,
     ...Theme.shadow.card,
@@ -516,7 +517,7 @@ const styles = StyleSheet.create({
   input: {
     fontSize: 16,
     lineHeight: 22,
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     minHeight: 88,
     textAlignVertical: 'top',
   },
@@ -527,7 +528,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: darkTheme.cardBorder,
     flexWrap: 'wrap',
     gap: 8,
   },
@@ -538,7 +539,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   toolChip: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: darkTheme.badgeFreeBg,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
@@ -546,12 +547,12 @@ const styles = StyleSheet.create({
   toolChipText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#64748B',
+    color: darkTheme.textSecondary,
   },
   toolChipCamera: {
-    backgroundColor: '#EEF2FF',
+    backgroundColor: '#1E293B',
     borderWidth: 1,
-    borderColor: '#C7D2FE',
+    borderColor: '#3B82F6',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
@@ -559,10 +560,10 @@ const styles = StyleSheet.create({
   toolChipCameraText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#4338CA',
+    color: '#60A5FA',
   },
   translateBtn: {
-    backgroundColor: '#5FEDC5',
+    backgroundColor: darkTheme.accent,
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 10,
@@ -576,13 +577,13 @@ const styles = StyleSheet.create({
   translateBtnText: {
     fontSize: 13.5,
     fontWeight: '800',
-    color: '#064E3B',
+    color: darkTheme.accentText,
   },
   resultCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: darkTheme.cardBackground,
     borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: '#5FEDC5',
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     padding: 16,
     ...Theme.shadow.card,
   },
@@ -595,7 +596,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   resultBadge: {
-    backgroundColor: '#CFFAEE',
+    backgroundColor: darkTheme.badgeFreeBg,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
@@ -603,11 +604,11 @@ const styles = StyleSheet.create({
   resultBadgeText: {
     fontSize: 10.5,
     fontWeight: '800',
-    color: '#064E3B',
+    color: darkTheme.badgeFreeText,
     letterSpacing: 0.4,
   },
   contextBadge: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: darkTheme.badgeFreeBg,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
@@ -615,34 +616,34 @@ const styles = StyleSheet.create({
   contextBadgeText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#475569',
+    color: darkTheme.textSecondary,
   },
   translatedText: {
     fontSize: 20,
     lineHeight: 28,
     fontWeight: '700',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     marginBottom: 12,
   },
   baseFormsBox: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: darkTheme.cardBorder,
     padding: 10,
     marginBottom: 14,
   },
   baseFormsLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#64748B',
+    color: darkTheme.textSecondary,
     marginBottom: 2,
     textTransform: 'uppercase',
   },
   baseFormsValue: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     fontStyle: 'italic',
   },
   resultActionsRow: {
@@ -654,38 +655,38 @@ const styles = StyleSheet.create({
   actionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: darkTheme.badgeFreeBg,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: darkTheme.cardBorder,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 7,
   },
   actionBtnActive: {
-    backgroundColor: '#CFFAEE',
-    borderColor: '#5FEDC5',
+    backgroundColor: 'rgba(95, 237, 197, 0.2)',
+    borderColor: darkTheme.accent,
   },
   actionBtnSuccess: {
-    backgroundColor: '#DCFCE7',
-    borderColor: '#86EFAC',
+    backgroundColor: '#14532D',
+    borderColor: '#22C55E',
   },
   actionBtnText: {
     fontSize: 12.5,
     fontWeight: '700',
-    color: '#334155',
+    color: darkTheme.textPrimary,
   },
   actionBtnVocab: {
-    backgroundColor: '#FEF3C7',
-    borderColor: '#FCD34D',
+    backgroundColor: '#382A17',
+    borderColor: '#78350F',
   },
   actionBtnVocabSaved: {
-    backgroundColor: '#CFFAEE',
-    borderColor: '#5FEDC5',
+    backgroundColor: darkTheme.badgeFreeBg,
+    borderColor: darkTheme.accent,
   },
   actionBtnVocabText: {
-    color: '#92400E',
+    color: '#FBBF24',
   },
   actionBtnVocabSavedText: {
-    color: '#064E3B',
+    color: darkTheme.badgeFreeText,
   },
 });

@@ -8,6 +8,7 @@ import {
   StatusBar,
 } from 'react-native';
 import { captureException } from '../services/sentry';
+import { darkTheme } from '../theme/colors';
 
 interface Props {
   children: ReactNode;
@@ -53,7 +54,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <SafeAreaView style={styles.safeArea}>
-          <StatusBar barStyle="dark-content" />
+          <StatusBar barStyle="light-content" />
           <View style={styles.container}>
             <View style={styles.card}>
               <View style={styles.iconCircle}>
@@ -94,41 +95,41 @@ export class ErrorBoundary extends Component<Props, State> {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: darkTheme.background,
   },
   container: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: darkTheme.background,
   },
   card: {
     width: '100%',
     maxWidth: 420,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
+    backgroundColor: darkTheme.cardBackground,
+    borderRadius: 20,
     paddingVertical: 36,
     paddingHorizontal: 24,
     alignItems: 'center',
-    shadowColor: '#0F172A',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.35,
     shadowRadius: 18,
     elevation: 4,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: darkTheme.cardBorder,
   },
   iconCircle: {
     width: 88,
     height: 88,
     borderRadius: 44,
-    backgroundColor: '#EEF2FF',
+    backgroundColor: darkTheme.badgeFreeBg,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
-    borderWidth: 2,
-    borderColor: '#E0E7FF',
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
   },
   iconText: {
     fontSize: 44,
@@ -136,48 +137,48 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#1E293B',
+    color: darkTheme.textPrimary,
     textAlign: 'center',
     marginBottom: 12,
   },
   description: {
     fontSize: 15,
     lineHeight: 22,
-    color: '#64748B',
+    color: darkTheme.textSecondary,
     textAlign: 'center',
     marginBottom: 26,
     paddingHorizontal: 12,
   },
   devErrorBox: {
     width: '100%',
-    backgroundColor: '#FEF2F2',
+    backgroundColor: '#3E1D22',
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: '#7F1D1D',
     borderRadius: 10,
     padding: 10,
     marginBottom: 20,
   },
   devErrorText: {
     fontSize: 12,
-    color: '#DC2626',
+    color: '#FCA5A5',
     fontFamily: 'monospace',
     textAlign: 'center',
   },
   resetButton: {
-    backgroundColor: '#059669',
+    backgroundColor: darkTheme.accent,
     paddingVertical: 14,
     paddingHorizontal: 32,
     borderRadius: 14,
     width: '100%',
     alignItems: 'center',
-    shadowColor: '#059669',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 3,
   },
   resetButtonText: {
-    color: '#FFFFFF',
+    color: darkTheme.accentText,
     fontSize: 16,
     fontWeight: '700',
     letterSpacing: 0.3,

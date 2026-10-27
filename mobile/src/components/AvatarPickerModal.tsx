@@ -8,7 +8,7 @@ import {
   TouchableWithoutFeedback,
   Dimensions,
 } from 'react-native';
-import { Theme } from '../theme/colors';
+import { Theme, darkTheme } from '../theme/colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const MODAL_WIDTH = Math.min(SCREEN_WIDTH * 0.88, 340);
@@ -131,14 +131,14 @@ const styles = StyleSheet.create({
   },
   card: {
     width: MODAL_WIDTH,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
+    backgroundColor: darkTheme.cardBackground,
+    borderRadius: 20,
     paddingHorizontal: 22,
     paddingTop: 24,
     paddingBottom: 18,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: darkTheme.cardBorder,
     position: 'relative',
     ...Theme.shadow.modal,
   },
@@ -149,25 +149,25 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: darkTheme.badgeFreeBg,
     justifyContent: 'center',
     alignItems: 'center',
   },
   closeBtnText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#64748B',
+    color: darkTheme.textSecondary,
   },
   iconCircle: {
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: '#5FEDC5',
+    backgroundColor: darkTheme.accent,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 12,
     borderWidth: 2,
-    borderColor: '#FFFFFF',
+    borderColor: darkTheme.cardBorder,
     ...Theme.shadow.chip,
   },
   iconEmoji: {
@@ -176,14 +176,14 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: '800',
-    color: '#064E3B',
+    color: darkTheme.textPrimary,
     textAlign: 'center',
     letterSpacing: -0.3,
   },
   subtitle: {
     fontSize: 13.5,
     fontWeight: '500',
-    color: '#64748B',
+    color: darkTheme.textSecondary,
     textAlign: 'center',
     marginTop: 4,
     marginBottom: 20,

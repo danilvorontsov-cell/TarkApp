@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import * as Device from 'expo-device';
 import * as Application from 'expo-application';
-import { Theme } from '../theme/colors';
+import { Theme, darkTheme } from '../theme/colors';
 import { sendFeedback, getLastRequestId } from '../services/api';
 
 interface FeedbackScreenProps {
@@ -161,7 +161,7 @@ export const FeedbackScreen: React.FC<FeedbackScreenProps> = ({
               ? 'Опишите проблему: какая страница учебника, какое слово или кнопка сработала не так...'
               : 'Опишите, какую функцию или тему вы хотели бы видеть в TarkApp...'
           }
-          placeholderTextColor="#94A3B8"
+          placeholderTextColor={darkTheme.textMuted}
           multiline
           numberOfLines={6}
           textAlignVertical="top"
@@ -176,7 +176,7 @@ export const FeedbackScreen: React.FC<FeedbackScreenProps> = ({
           value={contact}
           onChangeText={setContact}
           placeholder="Email или Telegram (если хотите получить ответ)"
-          placeholderTextColor="#94A3B8"
+          placeholderTextColor={darkTheme.textMuted}
           autoCapitalize="none"
           autoCorrect={false}
         />
@@ -214,10 +214,13 @@ const styles = StyleSheet.create({
   container: {
     width: '100%',
     paddingBottom: 24,
+    backgroundColor: darkTheme.background,
   },
   headerCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: darkTheme.cardBackground,
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     padding: 18,
     marginBottom: 14,
     ...Theme.shadow.card,
@@ -232,17 +235,17 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: darkTheme.badgeFreeBg,
   },
   backButtonText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#334155',
+    color: darkTheme.textSecondary,
   },
   badgeBox: {
-    backgroundColor: '#CFFAEE',
+    backgroundColor: darkTheme.badgeFreeBg,
     borderWidth: 1,
-    borderColor: '#5FEDC5',
+    borderColor: darkTheme.cardBorder,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -250,37 +253,39 @@ const styles = StyleSheet.create({
   badgeText: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#064E3B',
+    color: darkTheme.badgeFreeText,
   },
   title: {
     fontSize: 20,
     fontWeight: '800',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     marginBottom: 6,
     letterSpacing: -0.2,
   },
   subtitle: {
     fontSize: 13.5,
     lineHeight: 19,
-    color: '#64748B',
+    color: darkTheme.textSecondary,
   },
   formCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: darkTheme.cardBackground,
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     padding: 18,
     ...Theme.shadow.card,
   },
   fieldLabel: {
     fontSize: 13.5,
     fontWeight: '700',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     marginBottom: 8,
     marginTop: 6,
   },
   optionalLabel: {
     fontSize: 12,
     fontWeight: '400',
-    color: '#64748B',
+    color: darkTheme.textSecondary,
   },
   categoryRow: {
     flexDirection: 'row',
@@ -292,54 +297,54 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 8,
     borderRadius: 14,
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1.5,
-    borderColor: 'transparent',
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
   categoryTabActive: {
-    backgroundColor: '#CFFAEE',
-    borderColor: '#5FEDC5',
+    backgroundColor: darkTheme.badgeFreeBg,
+    borderColor: darkTheme.accent,
   },
   categoryTabText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#475569',
+    color: darkTheme.textSecondary,
     textAlign: 'center',
   },
   categoryTabTextActive: {
     fontWeight: '800',
-    color: '#064E3B',
+    color: darkTheme.badgeFreeText,
   },
   messageInput: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     borderRadius: 16,
     padding: 14,
     fontSize: 14,
     lineHeight: 20,
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     minHeight: 130,
     marginBottom: 14,
   },
   contactInput: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 14,
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     marginBottom: 14,
   },
   infoBox: {
     flexDirection: 'row',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: Theme.colors.surfaceAlt,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: darkTheme.cardBorder,
     borderRadius: 12,
     padding: 12,
     alignItems: 'flex-start',
@@ -354,10 +359,10 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     lineHeight: 17,
-    color: '#64748B',
+    color: darkTheme.textSecondary,
   },
   submitButton: {
-    backgroundColor: '#5FEDC5',
+    backgroundColor: darkTheme.accent,
     paddingVertical: 15,
     borderRadius: 14,
     alignItems: 'center',
@@ -375,7 +380,7 @@ const styles = StyleSheet.create({
   submitButtonText: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#064E3B',
+    color: darkTheme.accentText,
     letterSpacing: 0.2,
   },
 });

@@ -11,7 +11,7 @@ import {
   Platform,
   TouchableWithoutFeedback,
 } from 'react-native';
-import { Theme } from '../theme/colors';
+import { Theme, darkTheme } from '../theme/colors';
 import { activateAccessKey, LicenseStatus } from '../services/api';
 
 interface LicenseActivationModalProps {
@@ -137,7 +137,7 @@ export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
                       if (errorMessage) setErrorMessage(null);
                     }}
                     placeholder="TARK-XXXX-XXXX"
-                    placeholderTextColor="#94A3B8"
+                    placeholderTextColor={darkTheme.textMuted}
                     autoCapitalize="characters"
                     autoCorrect={false}
                     editable={!loading && !successMessage}
@@ -217,8 +217,10 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 380,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
+    backgroundColor: darkTheme.cardBackground,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     padding: 22,
     ...Theme.shadow.modal,
   },
@@ -232,12 +234,12 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#CFFAEE',
+    backgroundColor: darkTheme.badgeFreeBg,
     alignItems: 'center',
     justifyContent: 'center',
   },
   iconCircleBlocking: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#3F1E24',
   },
   icon: {
     fontSize: 24,
@@ -246,25 +248,25 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: darkTheme.badgeFreeBg,
     alignItems: 'center',
     justifyContent: 'center',
   },
   closeBtnText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#64748B',
+    color: darkTheme.textSecondary,
   },
   title: {
     fontSize: 20,
     fontWeight: '800',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     marginBottom: 6,
   },
   subtitle: {
     fontSize: 13.5,
     lineHeight: 19,
-    color: '#64748B',
+    color: darkTheme.textSecondary,
     marginBottom: 18,
   },
   inputContainer: {
@@ -273,19 +275,19 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#334155',
+    color: darkTheme.textSecondary,
     marginBottom: 6,
   },
   input: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    backgroundColor: Theme.colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 12,
     fontSize: 16,
     fontWeight: '700',
-    color: '#0F172A',
+    color: darkTheme.textPrimary,
     letterSpacing: 1.5,
   },
   errorBox: {
