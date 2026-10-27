@@ -2,6 +2,7 @@ import asyncio
 import logging
 from fastapi import APIRouter, status
 
+from app.config import settings
 from app.models.feedback import FeedbackCreate, FeedbackResponse
 from app.services.telegram_alert import send_telegram_feedback
 
@@ -29,9 +30,20 @@ async def submit_feedback(payload: FeedbackCreate) -> FeedbackResponse:
         f"msg={payload.message[:100]}..."
     )
 
-    # 2. Неблокирующая отправка в Telegram администратору
+    # 2. Неблокирующая отправка в Telegram супергруппу в соответствующий топик
+    target_thread_id = (
+        settings.TELEGRAM_TOPIC_BUGS
+        if payload.category == "bug"
+        else settings.TELEGRAM_TOPIC_FEATURES
+    )
+
     try:
-        asyncio.create_task(send_telegram_feedback(payload.model_dump()))
+        asyncio.create_task(
+            send_telegram_feedback(
+                payload.model_dump(),
+                message_thread_id=target_thread_id,
+            )
+        )
     except Exception as e:
         logger.warning(f"Could not spawn Telegram task for feedback: {e}")
 

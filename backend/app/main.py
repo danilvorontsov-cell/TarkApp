@@ -113,9 +113,17 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
     # Trigger Telegram alert in background task only if configured
-    if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_ADMIN_CHAT_ID:
+    if settings.TELEGRAM_BOT_TOKEN and settings.telegram_chat_id:
         try:
-            asyncio.create_task(send_telegram_alert(path, exc, 500))
+            asyncio.create_task(
+                send_telegram_alert(
+                    endpoint=path,
+                    exc=exc,
+                    status_code=500,
+                    tb=tb,
+                    message_thread_id=settings.TELEGRAM_TOPIC_ALERTS,
+                )
+            )
         except Exception as tel_err:
             logger.warning(f"Could not schedule Telegram alert: {tel_err}")
 
