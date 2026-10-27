@@ -43,8 +43,8 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
   onClose,
   activeTab,
   onSelectTab,
-  userNickname = 'Данил',
-  userGrade = 11,
+  userNickname = '',
+  userGrade = 3,
   avatarUri,
   onChangeAvatar,
   vocabCount = 0,
@@ -52,6 +52,8 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const animProgress = useRef(new Animated.Value(0)).current;
+  const hasUser = Boolean(userNickname && userNickname.trim().length > 0);
+  const displayName = hasUser ? userNickname.trim() : '';
 
   useEffect(() => {
     Animated.timing(animProgress, {
@@ -149,7 +151,15 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
         {...panResponder.panHandlers}
       >
         {/* Drawer Header (Solid Onsen #5FEDC5 with rounded bottom-right) */}
-        <View style={[styles.drawerHeader, { paddingTop: topPadding + 14 }]}>
+        <TouchableOpacity
+          style={[styles.drawerHeader, { paddingTop: topPadding + 14 }]}
+          onPress={() => {
+            onSelectTab('settings');
+            onClose();
+          }}
+          activeOpacity={0.85}
+          accessibilityLabel="Профиль ученика"
+        >
           {/* Avatar (Interactive: Tap to take photo or choose from gallery) */}
           <TouchableOpacity
             style={styles.avatarButton}
@@ -162,7 +172,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
               {avatarUri ? (
                 <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
               ) : (
-                <Text style={styles.avatarEmoji}>🧑‍🎓</Text>
+                <Text style={styles.avatarEmoji}>{hasUser ? '🧑‍🎓' : '👤'}</Text>
               )}
             </View>
             <View style={styles.avatarEditBadge}>
@@ -172,12 +182,14 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
 
           {/* User Nickname & Grade */}
           <Text style={styles.headerSubtitle}>
-            {userNickname || 'Данил'} • {userGrade || 11} кл.
+            {hasUser ? `${displayName} • ${userGrade} кл.` : 'Гость • Вход не выполнен'}
           </Text>
 
           {/* Greeting Title */}
-          <Text style={styles.headerGreeting}>Привет!</Text>
-        </View>
+          <Text style={styles.headerGreeting}>
+            {hasUser ? `Привет, ${displayName}!` : 'Нажмите, чтобы войти'}
+          </Text>
+        </TouchableOpacity>
 
         {/* Navigation Sections */}
         <View style={styles.menuList}>
@@ -222,9 +234,9 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
         {/* Thin Divider Line */}
         <View style={styles.divider} />
 
-        {/* Drawer Footer (Settings + Logout) */}
+        {/* Drawer Footer (Settings + Login/Logout) */}
         <View style={styles.drawerFooter}>
-          {/* Settings Item */}
+          {/* Settings & Profile Item */}
           <TouchableOpacity
             style={[styles.menuItem, activeTab === 'settings' && styles.menuItemActive]}
             onPress={() => {
@@ -240,24 +252,38 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
                 activeTab === 'settings' && styles.menuItemTextActive,
               ]}
             >
-              Настройки
+              Профиль и настройки
             </Text>
           </TouchableOpacity>
 
-          {/* Logout Item */}
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={() => {
-              onClose();
-              if (onLogout) {
-                onLogout();
-              }
-            }}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.menuItemIcon}>🚪</Text>
-            <Text style={styles.menuItemText}>Выйти</Text>
-          </TouchableOpacity>
+          {/* Dynamic Login / Logout Item */}
+          {hasUser ? (
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                onClose();
+                if (onLogout) {
+                  onLogout();
+                }
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.menuItemIcon}>🚪</Text>
+              <Text style={[styles.menuItemText, { color: '#DC2626' }]}>Выйти из профиля</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={[styles.menuItem, styles.menuItemLogin]}
+              onPress={() => {
+                onClose();
+                onSelectTab('settings');
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.menuItemIcon}>🔑</Text>
+              <Text style={styles.menuItemLoginText}>Войти / Задать имя</Text>
+            </TouchableOpacity>
+          )}
 
           <View style={styles.versionContainer}>
             <Text style={styles.versionText}>TarkApp • Nordic Onsen</Text>
@@ -362,6 +388,17 @@ const styles = StyleSheet.create({
   },
   menuItemActive: {
     backgroundColor: 'rgba(95, 237, 197, 0.22)',
+  },
+  menuItemLogin: {
+    backgroundColor: '#CFFAEE',
+    borderWidth: 1,
+    borderColor: '#5FEDC5',
+  },
+  menuItemLoginText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#064E3B',
+    flex: 1,
   },
   menuItemIcon: {
     fontSize: 20,

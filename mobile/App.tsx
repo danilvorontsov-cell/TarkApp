@@ -78,7 +78,7 @@ function MainApp() {
     grade: 3,
     tier: 'primary',
     interests: ['Minecraft', 'LEGO', 'Roblox'],
-    nickname: 'Алекс',
+    nickname: '',
   });
 
   const [interestsText, setInterestsText] = useState('Minecraft, LEGO, Roblox');
@@ -223,21 +223,47 @@ function MainApp() {
     setIsDrawerOpen(false);
     Alert.alert(
       'Выход из профиля',
-      'Вы уверены, что хотите завершить сессию и сбросить активный разбор?',
+      'Вы уверены, что хотите выйти из профиля и завершить сессию?',
       [
         { text: 'Отмена', style: 'cancel' },
         {
           text: 'Выйти',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
             AudioQueueManager.stop();
+            const cleared: UserProfile = {
+              ...profile,
+              nickname: '',
+              avatarUri: undefined,
+            };
+            setProfile(cleared);
+            await StorageService.saveProfile(cleared);
             setAnalysis(null);
             setCapturedImages([]);
             setCapturedImageUri(null);
-            switchTab('study');
+            switchTab('settings');
           },
         },
       ]
+    );
+  };
+
+  const handleSaveAndContinue = async () => {
+    const trimmed = (profile.nickname || '').trim();
+    if (!trimmed) {
+      Alert.alert(
+        'Укажите имя',
+        'Пожалуйста, введите имя или никнейм ученика перед сохранением.'
+      );
+      return;
+    }
+    const updated: UserProfile = { ...profile, nickname: trimmed };
+    setProfile(updated);
+    await StorageService.saveProfile(updated);
+    Alert.alert(
+      'Добро пожаловать!',
+      `Профиль активирован для: ${trimmed}. Все настройки и уроки сохранены!`,
+      [{ text: 'Отлично', onPress: () => switchTab('study') }]
     );
   };
 
@@ -1590,6 +1616,19 @@ function MainApp() {
           ИИ TarkApp адаптирует сложность объяснений и голос под класс ребёнка.
         </Text>
 
+        {/* Guest Onboarding Banner if Logged Out */}
+        {!profile.nickname?.trim() && (
+          <View style={styles.guestNoticeCard}>
+            <Text style={styles.guestNoticeIcon}>👋</Text>
+            <View style={styles.guestNoticeBody}>
+              <Text style={styles.guestNoticeTitle}>Вход не выполнен</Text>
+              <Text style={styles.guestNoticeText}>
+                Введите имя ученика и класс ниже, затем нажмите кнопку «Сохранить и войти».
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* Avatar Settings Row */}
         <View style={styles.settingsAvatarRow}>
           <TouchableOpacity
@@ -1708,6 +1747,30 @@ function MainApp() {
             })}
           </View>
         </View>
+
+        {/* Primary Save / Continue Button */}
+        <TouchableOpacity
+          style={styles.saveProfileBtn}
+          onPress={handleSaveAndContinue}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+        >
+          <Text style={styles.saveProfileBtnText}>
+            {profile.nickname?.trim() ? '✓ Сохранить настройки' : '🔑 Сохранить имя и войти'}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Logout Button if Logged In */}
+        {Boolean(profile.nickname?.trim()) && (
+          <TouchableOpacity
+            style={styles.logoutBtn}
+            onPress={handleLogout}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+          >
+            <Text style={styles.logoutBtnText}>🚪 Выйти из профиля</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Storage and Data Maintenance */}
@@ -1769,18 +1832,36 @@ function MainApp() {
         </View>
 
         <TouchableOpacity
-          style={styles.headerProfileBtn}
+          style={[
+            styles.headerProfilePill,
+            !profile.nickname?.trim() && styles.headerProfilePillGuest,
+          ]}
           onPress={() => switchTab(currentTab === 'settings' ? 'study' : 'settings')}
-          accessibilityLabel="Профиль ученика и настройки"
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityLabel={
+            profile.nickname?.trim()
+              ? `Профиль: ${profile.nickname.trim()}`
+              : 'Войти в профиль'
+          }
+          accessibilityRole="button"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          activeOpacity={0.75}
         >
-          <View style={styles.headerProfileBadge}>
-            {profile.avatarUri ? (
-              <Image source={{ uri: profile.avatarUri }} style={styles.headerProfileAvatar} />
-            ) : (
-              <Text style={styles.headerProfileIconText}>👤⚙️</Text>
-            )}
-          </View>
+          {profile.avatarUri ? (
+            <Image source={{ uri: profile.avatarUri }} style={styles.headerProfileAvatar} />
+          ) : (
+            <Text style={styles.headerProfileEmoji}>
+              {profile.nickname?.trim() ? '🧑‍🎓' : '👤'}
+            </Text>
+          )}
+          <Text
+            style={[
+              styles.headerProfileText,
+              !profile.nickname?.trim() && styles.headerProfileTextGuest,
+            ]}
+            numberOfLines={1}
+          >
+            {profile.nickname?.trim() ? profile.nickname.trim() : 'Войти'}
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -1876,8 +1957,8 @@ function MainApp() {
         onClose={() => setIsDrawerOpen(false)}
         activeTab={currentTab as DrawerTabType}
         onSelectTab={(tab) => switchTab(tab as TabType)}
-        userNickname={profile.nickname || 'Данил'}
-        userGrade={profile.grade || 11}
+        userNickname={profile.nickname || ''}
+        userGrade={profile.grade || 3}
         avatarUri={profile.avatarUri}
         onChangeAvatar={handleSelectAvatarSource}
         vocabCount={savedVocab.length}
@@ -1965,13 +2046,99 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
   },
+  headerProfilePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(6, 78, 59, 0.12)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 18,
+    maxWidth: 130,
+  },
+  headerProfilePillGuest: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#064E3B',
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+  },
+  headerProfileEmoji: {
+    fontSize: 15,
+    marginRight: 5,
+  },
   headerProfileAvatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    marginRight: 5,
+  },
+  headerProfileText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#064E3B',
+  },
+  headerProfileTextGuest: {
+    fontWeight: '800',
+    color: '#064E3B',
   },
   headerProfileIconText: {
     fontSize: 15,
+  },
+  guestNoticeCard: {
+    flexDirection: 'row',
+    backgroundColor: '#CFFAEE',
+    borderWidth: 1.5,
+    borderColor: '#5FEDC5',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  guestNoticeIcon: {
+    fontSize: 26,
+    marginRight: 10,
+  },
+  guestNoticeBody: {
+    flex: 1,
+  },
+  guestNoticeTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#064E3B',
+    marginBottom: 2,
+  },
+  guestNoticeText: {
+    fontSize: 13,
+    color: '#065F46',
+    lineHeight: 18,
+  },
+  saveProfileBtn: {
+    backgroundColor: '#064E3B',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 18,
+    ...Theme.shadow.button,
+  },
+  saveProfileBtnText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#5FEDC5',
+    letterSpacing: 0.2,
+  },
+  logoutBtn: {
+    borderWidth: 1.5,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+    paddingVertical: 12,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  logoutBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#DC2626',
   },
   settingsAvatarRow: {
     flexDirection: 'row',

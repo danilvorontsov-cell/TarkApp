@@ -11,7 +11,7 @@ const DEFAULT_PROFILE: UserProfile = {
   grade: 3,
   tier: 'primary',
   interests: ['Minecraft', 'LEGO', 'Roblox'],
-  nickname: 'Друг',
+  nickname: '',
 };
 
 // In-memory fallback cache to ensure instant, zero-crash performance
