@@ -17,7 +17,8 @@ from app.routers.voice import router as voice_router
 from app.routers.translate import router as translate_router
 from app.routers.feedback import router as feedback_router
 from app.routers.license import router as license_router
-from app.services.telegram_alert import send_telegram_alert
+from app.routers.telegram import router as telegram_router
+from app.services.telegram_alert import send_telegram_alert, start_telegram_polling
 
 # Setup file loggers with rotation (backend/logs/app.log and backend/logs/error.log)
 setup_logging()
@@ -32,7 +33,23 @@ async def lifespan(app: FastAPI):
         logger.info("Database initialized successfully.")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
+
+    polling_task = None
+    if settings.TELEGRAM_BOT_TOKEN and settings.ADMIN_TELEGRAM_ID:
+        try:
+            polling_task = asyncio.create_task(start_telegram_polling())
+        except Exception as e:
+            logger.warning(f"Could not start Telegram polling: {e}")
+
     yield
+
+    if polling_task and not polling_task.done():
+        polling_task.cancel()
+        try:
+            await polling_task
+        except asyncio.CancelledError:
+            pass
+
     logger.info(f"Shutting down {settings.APP_NAME}")
 
 
@@ -91,6 +108,7 @@ app.include_router(voice_router)
 app.include_router(translate_router)
 app.include_router(feedback_router)
 app.include_router(license_router)
+app.include_router(telegram_router)
 
 
 @app.exception_handler(HTTPException)

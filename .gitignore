@@ -8,6 +8,8 @@ backend/.env.*
 mobile/.env
 mobile/.env.*
 !mobile/.env.example
+backend/generated_keys.txt
+*generated_keys.txt
 
 # Dependencies
 node_modules/

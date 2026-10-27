@@ -11,6 +11,10 @@ from app.services.telegram_alert import (
     get_alert_history,
     _ALERT_HISTORY,
     _ALERT_DEBOUNCE_SECONDS,
+    is_admin_user,
+    handle_admin_telegram_command,
+    process_telegram_update,
+    start_telegram_polling,
 )
 
 __all__ = [
@@ -22,4 +26,8 @@ __all__ = [
     "get_alert_history",
     "_ALERT_HISTORY",
     "_ALERT_DEBOUNCE_SECONDS",
+    "is_admin_user",
+    "handle_admin_telegram_command",
+    "process_telegram_update",
+    "start_telegram_polling",
 ]

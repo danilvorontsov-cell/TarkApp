@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     TELEGRAM_TOPIC_FEATURES: Optional[int] = None
     TELEGRAM_TOPIC_ALERTS: Optional[int] = None
 
+    # Telegram Bot Admin (Optional - for /gen and /stats commands)
+    ADMIN_TELEGRAM_ID: Optional[str] = None
+
     @field_validator(
         "TELEGRAM_TOPIC_BUGS",
         "TELEGRAM_TOPIC_FEATURES",

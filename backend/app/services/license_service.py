@@ -1,16 +1,19 @@
 import math
 import logging
+import secrets
 from datetime import datetime, timedelta
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from fastapi import HTTPException, status as http_status
 from sqlalchemy.orm import Session
 
+from app.database import SessionLocal
 from app.models.license import Device, AccessKey
 
 logger = logging.getLogger("tarkapp.license")
 
 TRIAL_DURATION_DAYS: int = 14
 DEFAULT_FREE_REVIEWS: int = 5
+KEY_CHAR_SET: str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 
 def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
@@ -228,3 +231,188 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
         "days_left": days_left,
         "expires_at": expires_str,
     }
+
+
+# ==========================================
+# Administrative Key Management & Analytics
+# ==========================================
+
+def generate_key_code(prefix: str = "TARK") -> str:
+    """Generates an unambiguous, cryptographically secure readable key code (e.g. TARK-A7B2-C9D4)."""
+    clean_prefix = (prefix or "TARK").strip().upper()
+    part1 = "".join(secrets.choice(KEY_CHAR_SET) for _ in range(4))
+    part2 = "".join(secrets.choice(KEY_CHAR_SET) for _ in range(4))
+    return f"{clean_prefix}-{part1}-{part2}"
+
+
+def generate_access_keys(
+    count: int = 20,
+    days: int = 30,
+    prefix: str = "TARK",
+    db: Optional[Session] = None,
+) -> List[str]:
+    """
+    Generates a batch of unique cryptographic access keys, saves them in the database with is_used=False,
+    and returns the list of generated key codes.
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+
+    try:
+        created_keys: List[str] = []
+        now = datetime.utcnow()
+        attempts = 0
+        max_attempts = max(count * 10, 100)
+
+        while len(created_keys) < count and attempts < max_attempts:
+            attempts += 1
+            code = generate_key_code(prefix)
+
+            # Ensure global uniqueness
+            existing = db.query(AccessKey).filter(AccessKey.key_code == code).first()
+            if existing or code in created_keys:
+                continue
+
+            key_obj = AccessKey(
+                key_code=code,
+                duration_days=days,
+                is_used=False,
+                used_by_device=None,
+                created_at=now,
+                used_at=None,
+            )
+            db.add(key_obj)
+            created_keys.append(code)
+
+        db.commit()
+        logger.info(f"[LICENSE] Generated {len(created_keys)} new access keys with duration {days} days.")
+        return created_keys
+    finally:
+        if should_close:
+            db.close()
+
+
+def get_keys_stats(db: Optional[Session] = None) -> Dict[str, Any]:
+    """
+    Returns administrative statistics:
+    - total registered devices
+    - total keys
+    - free (unused) keys
+    - active keys (used and access hasn't expired yet)
+    - expired keys (used and access has expired)
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+
+    try:
+        now = datetime.utcnow()
+        total_devices = db.query(Device).count()
+        total_keys = db.query(AccessKey).count()
+        free_keys = db.query(AccessKey).filter(AccessKey.is_used == False).count()
+
+        used_rows = (
+            db.query(AccessKey, Device)
+            .outerjoin(Device, AccessKey.used_by_device == Device.device_id)
+            .filter(AccessKey.is_used == True)
+            .all()
+        )
+
+        active_keys = 0
+        expired_keys = 0
+
+        for key_obj, device_obj in used_rows:
+            if device_obj and device_obj.trial_expires_at:
+                if device_obj.trial_expires_at > now:
+                    active_keys += 1
+                else:
+                    expired_keys += 1
+            elif key_obj.used_at:
+                exp = key_obj.used_at + timedelta(days=key_obj.duration_days or 30)
+                if exp > now:
+                    active_keys += 1
+                else:
+                    expired_keys += 1
+            else:
+                active_keys += 1
+
+        return {
+            "total_devices": total_devices,
+            "total_keys": total_keys,
+            "free_keys": free_keys,
+            "active_keys": active_keys,
+            "expired_keys": expired_keys,
+        }
+    finally:
+        if should_close:
+            db.close()
+
+
+def list_access_keys(
+    filter_status: Optional[str] = None,
+    db: Optional[Session] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Returns a structured list of access keys with calculated status (free | active | expired),
+    bound device_id, activation date, and expiration date.
+    Optional filter_status can be 'active', 'free', or 'expired'.
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+
+    try:
+        now = datetime.utcnow()
+        rows = (
+            db.query(AccessKey, Device)
+            .outerjoin(Device, AccessKey.used_by_device == Device.device_id)
+            .order_by(AccessKey.created_at.desc())
+            .all()
+        )
+
+        results: List[Dict[str, Any]] = []
+        normalized_filter = (filter_status or "all").strip().lower()
+
+        for key_obj, device_obj in rows:
+            if not key_obj.is_used:
+                status_code = "free"
+                status_label = "Свободен"
+                device_str = "-"
+                used_str = "-"
+                expires_str = "-"
+            else:
+                if device_obj and device_obj.trial_expires_at:
+                    expiry_dt = device_obj.trial_expires_at
+                elif key_obj.used_at:
+                    expiry_dt = key_obj.used_at + timedelta(days=key_obj.duration_days or 30)
+                else:
+                    expiry_dt = None
+
+                is_active = (expiry_dt > now) if expiry_dt else True
+                status_code = "active" if is_active else "expired"
+                status_label = "Активен" if is_active else "Истёк"
+                device_str = key_obj.used_by_device or (device_obj.device_id if device_obj else "-")
+                used_str = key_obj.used_at.strftime("%Y-%m-%d %H:%M") if key_obj.used_at else "-"
+                expires_str = expiry_dt.strftime("%Y-%m-%d %H:%M") if expiry_dt else "-"
+
+            if normalized_filter != "all" and normalized_filter != status_code:
+                continue
+
+            results.append({
+                "key_code": key_obj.key_code,
+                "duration_days": key_obj.duration_days,
+                "status": status_code,
+                "status_label": status_label,
+                "device_id": device_str,
+                "used_at": used_str,
+                "expires_at": expires_str,
+            })
+
+        return results
+    finally:
+        if should_close:
+            db.close()
