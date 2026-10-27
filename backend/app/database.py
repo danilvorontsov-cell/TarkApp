@@ -1,5 +1,5 @@
 from pathlib import Path
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, event
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 from app.config import settings
@@ -17,8 +17,22 @@ if settings.DATABASE_URL.startswith("sqlite:///"):
 
 engine = create_engine(
     settings.DATABASE_URL,
-    connect_args={"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {},
+    connect_args=(
+        {"check_same_thread": False, "timeout": 15}
+        if settings.DATABASE_URL.startswith("sqlite")
+        else {}
+    ),
 )
+
+# Enable WAL mode and synchronous=NORMAL for high-concurrency SQLite operations
+if settings.DATABASE_URL.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA busy_timeout=15000;")
+        cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -40,9 +54,15 @@ def init_db():
     from app.models.license import Device, AccessKey  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
-    # Lightweight migration: ensure free_reviews_left column exists in devices table
+    # Lightweight migration & WAL verification
     with engine.connect() as conn:
         try:
+            if settings.DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("PRAGMA journal_mode=WAL;"))
+                conn.execute(text("PRAGMA synchronous=NORMAL;"))
+                conn.execute(text("PRAGMA busy_timeout=15000;"))
+                conn.commit()
+
             result = conn.execute(text("PRAGMA table_info(devices)")).fetchall()
             col_names = [row[1] for row in result]
             if "free_reviews_left" not in col_names and "device_id" in col_names:

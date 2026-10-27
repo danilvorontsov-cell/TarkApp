@@ -8,6 +8,52 @@ import { captureException } from './sentry';
 export const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL || 'http://10.253.79.137:8080';
 
+export const API_TIMEOUT_MS = 30000;
+
+/**
+ * Fetch wrapper that automatically enforces an AbortController timeout.
+ * Prevents requests from hanging indefinitely under poor network conditions or peak evening loads.
+ */
+export async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  timeoutMs: number = API_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  const originalSignal = init?.signal;
+  if (originalSignal) {
+    if (originalSignal.aborted) {
+      clearTimeout(timer);
+      controller.abort();
+    } else {
+      originalSignal.addEventListener('abort', () => {
+        clearTimeout(timer);
+        controller.abort();
+      });
+    }
+  }
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (err: any) {
+    if (err?.name === 'AbortError' || controller.signal.aborted) {
+      throw new Error(
+        `Время ожидания ответа от сервера (${Math.round(timeoutMs / 1000)} сек) истекло. Пожалуйста, проверьте интернет и повторите попытку.`
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -102,7 +148,7 @@ export interface KeyActivateResponse {
 export async function getLicenseStatus(baseUrl: string = API_BASE_URL): Promise<LicenseStatus> {
   const deviceId = await getDeviceId();
   const endpoint = `${baseUrl}/api/v1/license/status`;
-  const response = await fetch(endpoint, {
+  const response = await fetchWithTimeout(endpoint, {
     headers: {
       Accept: 'application/json',
       'X-Device-ID': deviceId,
@@ -122,7 +168,7 @@ export async function activateAccessKey(
 ): Promise<KeyActivateResponse> {
   const deviceId = await getDeviceId();
   const endpoint = `${baseUrl}/api/v1/license/activate`;
-  const response = await fetch(endpoint, {
+  const response = await fetchWithTimeout(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -340,7 +386,7 @@ export async function fetchMoreExamples(
   const endpoint = `${baseUrl}/api/v1/more-examples`;
   try {
     const deviceId = await getDeviceId();
-    const response = await fetch(endpoint, {
+    const response = await fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -396,7 +442,7 @@ export async function analyzePage(
     formData.append('interests', (profile.interests || []).join(', '));
     formData.append('nickname', profile.nickname || 'Друг');
 
-    const response = await fetch(endpoint, {
+    const response = await fetchWithTimeout(endpoint, {
       method: 'POST',
       body: formData,
       headers: {
@@ -453,7 +499,7 @@ export async function analyzePagesJson(
       nickname: profile.nickname,
     };
 
-    const response = await fetch(endpoint, {
+    const response = await fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -496,7 +542,7 @@ export async function checkBackendHealth(
   baseUrl: string = API_BASE_URL
 ): Promise<boolean> {
   try {
-    const res = await fetch(`${baseUrl}/health`, { method: 'GET' });
+    const res = await fetchWithTimeout(`${baseUrl}/health`, { method: 'GET' }, 5000);
     return res.ok;
   } catch {
     return false;
@@ -513,7 +559,7 @@ export async function quickTranslate(
   const endpoint = `${baseUrl}/api/v1/translate/quick`;
   try {
     const deviceId = await getDeviceId();
-    const response = await fetch(endpoint, {
+    const response = await fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -553,7 +599,7 @@ export async function sendFeedback(
   try {
     const deviceId = await getDeviceId();
     const clientReqId = generateClientRequestId();
-    const response = await fetch(endpoint, {
+    const response = await fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

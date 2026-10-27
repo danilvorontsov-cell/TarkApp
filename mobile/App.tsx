@@ -46,6 +46,7 @@ import {
   setOnTrialExpiredListener,
   LicenseStatus,
 } from './src/services/api';
+import { optimizePageImage, optimizePageImages } from './src/services/imageOptimizer';
 import { PhraseBuilder } from './src/components/PhraseBuilder';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { initSentry } from './src/services/sentry';
@@ -407,11 +408,20 @@ function MainApp() {
     setLoading(true);
     setLoadingStep(
       imagesList.length > 1
-        ? `Анализируем ${imagesList.length} стр. материала...`
+        ? `Оптимизируем и анализируем ${imagesList.length} стр. материала...`
         : 'Разбираем материал...'
     );
     try {
-      const payload: ImagePayload[] = imagesList.map((img) => ({
+      // Ensure all images are optimized (max 1600px, quality 0.78, base64 ready)
+      const preparedImages = await Promise.all(
+        imagesList.map(async (img) => {
+          if (img.base64) return img;
+          const opt = await optimizePageImage(img.uri);
+          return { uri: opt.uri, base64: opt.base64, mimeType: 'image/jpeg' };
+        })
+      );
+
+      const payload: ImagePayload[] = preparedImages.map((img) => ({
         base64: img.base64,
         uri: img.uri,
         mimeType: img.mimeType || 'image/jpeg',
@@ -431,7 +441,7 @@ function MainApp() {
 
       setAnalysis(data);
       setShowAlternativeExplanation(false);
-      await recordNewLesson(data, imagesList);
+      await recordNewLesson(data, preparedImages);
     } catch (err: any) {
       if (
         err?.code === 'REVIEWS_LIMIT_REACHED' ||
@@ -472,8 +482,7 @@ function MainApp() {
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
         allowsEditing: true,
-        quality: 0.8,
-        base64: true,
+        quality: 1,
       });
 
       if (result.canceled || !result.assets || result.assets.length === 0) {
@@ -483,10 +492,13 @@ function MainApp() {
       AudioQueueManager.stop();
 
       const asset = result.assets[0];
+      // Compress and scale down to max 1600px with 0.78 quality for evening load efficiency
+      const opt = await optimizePageImage(asset.uri, asset.width, asset.height);
+
       const newItem: CapturedPageItem = {
-        uri: asset.uri,
-        base64: asset.base64 || undefined,
-        mimeType: asset.mimeType || 'image/jpeg',
+        uri: opt.uri,
+        base64: opt.base64,
+        mimeType: 'image/jpeg',
       };
 
       const nextImages = mode === 'append' ? [...capturedImages, newItem] : [newItem];
@@ -520,8 +532,7 @@ function MainApp() {
         mediaTypes: ['images'],
         allowsEditing: false,
         allowsMultipleSelection: true,
-        quality: 0.8,
-        base64: true,
+        quality: 1,
       });
 
       if (result.canceled || !result.assets || result.assets.length === 0) {
@@ -530,10 +541,19 @@ function MainApp() {
 
       AudioQueueManager.stop();
 
-      const newItems: CapturedPageItem[] = result.assets.map((asset) => ({
-        uri: asset.uri,
-        base64: asset.base64 || undefined,
-        mimeType: asset.mimeType || 'image/jpeg',
+      // Batch optimize picked images (max 1600px, quality 0.78)
+      const optList = await optimizePageImages(
+        result.assets.map((asset) => ({
+          uri: asset.uri,
+          width: asset.width,
+          height: asset.height,
+        }))
+      );
+
+      const newItems: CapturedPageItem[] = optList.map((opt) => ({
+        uri: opt.uri,
+        base64: opt.base64,
+        mimeType: 'image/jpeg',
       }));
 
       const nextImages = mode === 'append' ? [...capturedImages, ...newItems] : newItems;

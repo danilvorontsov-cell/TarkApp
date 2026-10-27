@@ -3,10 +3,12 @@ import logging
 import time
 import traceback
 import uuid
+from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.logger import setup_logging, app_logger, error_logger
@@ -109,6 +111,12 @@ app.include_router(translate_router)
 app.include_router(feedback_router)
 app.include_router(license_router)
 app.include_router(telegram_router)
+
+# Mount static files directory (for high-performance static audio serving)
+static_dir = Path("static")
+static_dir.mkdir(parents=True, exist_ok=True)
+(static_dir / "audio").mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.exception_handler(HTTPException)

@@ -1,4 +1,6 @@
+import hashlib
 import logging
+from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import JSONResponse, Response
@@ -11,6 +13,12 @@ from app.services.tts_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+AUDIO_STATIC_DIR = Path("static/audio")
+try:
+    AUDIO_STATIC_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
 
 router = APIRouter(prefix="/api/v1/voice", tags=["Voice TTS"])
 
@@ -64,12 +72,12 @@ async def text_to_speech(
             )
 
     is_bilingual = bilingual or lang.lower() == "bilingual"
+    voice = "bilingual" if is_bilingual else VOICE_MAP.get(lang.lower(), DEFAULT_VOICE)
 
     try:
         if is_bilingual:
             audio_bytes = await get_or_synthesize_audio(clean_text, voice=DEFAULT_VOICE, bilingual=True)
         else:
-            voice = VOICE_MAP.get(lang.lower(), DEFAULT_VOICE)
             audio_bytes = await get_or_synthesize_audio(clean_text, voice=voice, bilingual=False)
 
         if not audio_bytes:
@@ -78,6 +86,14 @@ async def text_to_speech(
                 detail="Не удалось синтезировать аудиопоток.",
             )
 
+        audio_hash = hashlib.sha256(f"{voice}:{clean_text}".encode()).hexdigest()
+        try:
+            file_path = AUDIO_STATIC_DIR / f"{audio_hash}.mp3"
+            if not file_path.exists():
+                file_path.write_bytes(audio_bytes)
+        except Exception as write_err:
+            logger.warning(f"Could not write static audio file: {write_err}")
+
         return Response(
             content=audio_bytes,
             media_type="audio/mpeg",
@@ -85,7 +101,8 @@ async def text_to_speech(
                 "Accept-Ranges": "bytes",
                 "Content-Length": str(len(audio_bytes)),
                 "Content-Disposition": 'inline; filename="tts.mp3"',
-                "Cache-Control": "public, max-age=86400",
+                "Cache-Control": "public, max-age=604800, immutable",
+                "X-Static-Audio-URL": f"/static/audio/{audio_hash}.mp3",
             },
         )
     except HTTPException:
@@ -131,6 +148,14 @@ async def speak_word(
                 detail="Не удалось озвучить слово.",
             )
 
+        audio_hash = hashlib.sha256(f"{voice}:{clean_text}".encode()).hexdigest()
+        try:
+            file_path = AUDIO_STATIC_DIR / f"{audio_hash}.mp3"
+            if not file_path.exists():
+                file_path.write_bytes(audio_bytes)
+        except Exception as write_err:
+            logger.warning(f"Could not write static audio file: {write_err}")
+
         return Response(
             content=audio_bytes,
             media_type="audio/mpeg",
@@ -138,7 +163,8 @@ async def speak_word(
                 "Accept-Ranges": "bytes",
                 "Content-Length": str(len(audio_bytes)),
                 "Content-Disposition": 'inline; filename="speak.mp3"',
-                "Cache-Control": "public, max-age=86400",
+                "Cache-Control": "public, max-age=604800, immutable",
+                "X-Static-Audio-URL": f"/static/audio/{audio_hash}.mp3",
             },
         )
     except HTTPException:

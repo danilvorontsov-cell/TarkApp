@@ -14,6 +14,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { Theme, darkTheme } from '../theme/colors';
 import { quickTranslate, QuickTranslateResponse } from '../services/api';
+import { optimizePageImage } from '../services/imageOptimizer';
 import { StorageService } from '../services/storage';
 import { playTts, stopTts } from '../services/audioPlayer';
 import { VocabularyItem } from '../types';
@@ -125,17 +126,17 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
       const photo = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
         allowsEditing: false,
-        quality: 0.8,
-        base64: true,
+        quality: 1,
       });
 
       if (photo.canceled || !photo.assets || photo.assets.length === 0) {
         return;
       }
 
-      const b64 = photo.assets[0].base64;
-      if (b64) {
-        await handleTranslate(undefined, b64);
+      const asset = photo.assets[0];
+      const opt = await optimizePageImage(asset.uri, asset.width, asset.height);
+      if (opt.base64) {
+        await handleTranslate(undefined, opt.base64);
       }
     } catch (err: any) {
       Alert.alert('Ошибка камеры', err.message || 'Не удалось сделать фото.');

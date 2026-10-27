@@ -17,6 +17,11 @@ from app.models.page_analysis import (
 )
 from app.services.gemini_service import gemini_tutor_service
 from app.services import license_service
+from app.services.analysis_cache import (
+    compute_analysis_cache_key,
+    get_cached_analysis,
+    store_cached_analysis,
+)
 from app.routers.license import verify_review_access
 
 logger = logging.getLogger(__name__)
@@ -119,13 +124,23 @@ async def analyze_page(
         nickname=nickname or "Друг",
     )
 
+    dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")
+
+    # Check cache for identical image content and pedagogical profile
+    cache_key = compute_analysis_cache_key([b for b, _ in images_data], profile)
+    cached_result = get_cached_analysis(cache_key)
+    if cached_result:
+        if dev_id and isinstance(db, Session):
+            license_service.deduct_review_attempt(dev_id, db)
+        return cached_result
+
     try:
         result = await gemini_tutor_service.analyze_page(
             profile=profile,
             images=images_data,
         )
+        store_cached_analysis(cache_key, result)
         # Deduct 1 review attempt only upon successful generation
-        dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")
         if dev_id and isinstance(db, Session):
             license_service.deduct_review_attempt(dev_id, db)
         return result
@@ -196,13 +211,23 @@ async def analyze_page_json(
         nickname=request.nickname or "Друг",
     )
 
+    dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")
+
+    # Check cache for identical image content and pedagogical profile
+    cache_key = compute_analysis_cache_key([b for b, _ in images_data], profile)
+    cached_result = get_cached_analysis(cache_key)
+    if cached_result:
+        if dev_id and isinstance(db, Session):
+            license_service.deduct_review_attempt(dev_id, db)
+        return cached_result
+
     try:
         result = await gemini_tutor_service.analyze_page(
             profile=profile,
             images=images_data,
         )
+        store_cached_analysis(cache_key, result)
         # Deduct 1 review attempt only upon successful generation
-        dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")
         if dev_id and isinstance(db, Session):
             license_service.deduct_review_attempt(dev_id, db)
         return result
