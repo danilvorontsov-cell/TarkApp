@@ -2848,12 +2848,12 @@ const styles = StyleSheet.create({
   previewLabel: {
     fontSize: 15.5,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#F8FAFC', // Crisp white-slate for high contrast against dark cards
   },
   previewSubLabel: {
-    fontSize: 11,
-    color: Theme.colors.textSecondary,
-    marginTop: 1,
+    fontSize: 11.5,
+    color: '#94A3B8',
+    marginTop: 2,
   },
   retakeAllBtn: {
     backgroundColor: Theme.colors.surfaceAlt,

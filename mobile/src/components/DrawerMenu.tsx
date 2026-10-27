@@ -263,28 +263,8 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
         {/* Thin Divider Line */}
         <View style={styles.divider} />
 
-        {/* Drawer Footer (Feedback + Settings + Login/Logout) */}
+        {/* Drawer Footer (Settings + Feedback + Login/Logout) */}
         <View style={styles.drawerFooter}>
-          {/* Feedback Item */}
-          <TouchableOpacity
-            style={[styles.menuItem, activeTab === 'feedback' && styles.menuItemActive]}
-            onPress={() => {
-              onSelectTab('feedback');
-              onClose();
-            }}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.menuItemIcon}>💬</Text>
-            <Text
-              style={[
-                styles.menuItemText,
-                activeTab === 'feedback' && styles.menuItemTextActive,
-              ]}
-            >
-              Связь с разработчиком
-            </Text>
-          </TouchableOpacity>
-
           {/* Settings & Profile Item */}
           <TouchableOpacity
             style={[styles.menuItem, activeTab === 'settings' && styles.menuItemActive]}
@@ -302,6 +282,26 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
               ]}
             >
               Профиль и настройки
+            </Text>
+          </TouchableOpacity>
+
+          {/* Feedback Item */}
+          <TouchableOpacity
+            style={[styles.menuItem, activeTab === 'feedback' && styles.menuItemActive]}
+            onPress={() => {
+              onSelectTab('feedback');
+              onClose();
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.menuItemIcon}>💬</Text>
+            <Text
+              style={[
+                styles.menuItemText,
+                activeTab === 'feedback' && styles.menuItemTextActive,
+              ]}
+            >
+              Связь с разработчиком
             </Text>
           </TouchableOpacity>
 

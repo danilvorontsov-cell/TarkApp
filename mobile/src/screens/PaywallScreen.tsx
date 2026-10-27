@@ -17,7 +17,7 @@ import * as Clipboard from 'expo-clipboard';
 import { darkTheme, Theme } from '../theme/colors';
 import { getDeviceId, sendFeedback } from '../services/api';
 
-export type SubscriptionPlan = 'year' | 'month';
+export type SubscriptionPlan = 'year' | 'semester' | 'month';
 
 interface PaywallScreenProps {
   visible: boolean;
@@ -68,7 +68,19 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
     setIsSendingInvoice(true);
     try {
       const deviceId = await getDeviceId();
-      const planName = selectedPlan === 'year' ? 'Учебный год (9 мес) — 79.90 €' : '1 месяц — 9.99 €';
+      const planName =
+        selectedPlan === 'year'
+          ? 'Учебный год (9 мес) — 79.90 €'
+          : selectedPlan === 'semester'
+          ? 'Полгода (Семестр, 4.5 мес) — 44.90 €'
+          : '1 месяц — 9.99 €';
+
+      const planLabel =
+        selectedPlan === 'year'
+          ? 'Полный учебный год'
+          : selectedPlan === 'semester'
+          ? 'Полгода (Семестр)'
+          : '1 месяц';
 
       await sendFeedback({
         category: 'feature',
@@ -79,7 +91,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
 
       Alert.alert(
         'Заявка принята!',
-        `Счёт на тариф «${selectedPlan === 'year' ? 'Полный учебный год' : '1 месяц'}» будет отправлен на ${trimmedEmail} в течение 15 минут. Вы также можете оплатить прямо сейчас по реквизитам IBAN.`,
+        `Счёт на тариф «${planLabel}» будет отправлен на ${trimmedEmail} в течение 15 минут. Вы также можете оплатить прямо сейчас по реквизитам IBAN.`,
         [
           {
             text: 'Понятно',
@@ -145,11 +157,11 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
             <Text style={styles.headlineTitle}>Учитесь без стресса и репетиторов</Text>
 
             <Text style={styles.headlineSubtitle}>
-              TarkApp помогает понимать эстонские учебники, переводить сложные термины и выполнять домашку самостоятельно
+              Объясняем задания на понятном русском языке, переводим школьные термины и учим ребёнка справляться с уроками без помощи родителей.
             </Text>
           </View>
 
-          {/* Section B: Pricing Cards Radio Group */}
+          {/* Section B: Pricing Cards Radio Group (3 Tiers) */}
           <View style={styles.plansContainer}>
             {/* Plan 1: Full School Year (9 months) - Recommended */}
             <TouchableOpacity
@@ -180,12 +192,42 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
               <View style={styles.planPriceRow}>
                 <Text style={styles.planPriceBig}>79.90 €</Text>
                 <Text style={styles.planPriceSubtext}>
-                  ~8.88 € / месяц (разовый платёж без автосписаний летом)
+                  ~8.88 € / месяц (разовый платёж на весь учебный год)
                 </Text>
               </View>
             </TouchableOpacity>
 
-            {/* Plan 2: 1 Month Flexible */}
+            {/* Plan 2: Semester / Half-year (4.5 months) */}
+            <TouchableOpacity
+              style={[
+                styles.planCard,
+                selectedPlan === 'semester' && styles.planCardActive,
+              ]}
+              onPress={() => setSelectedPlan('semester')}
+              activeOpacity={0.88}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: selectedPlan === 'semester' }}
+            >
+              <View style={styles.planCardHeaderRow}>
+                <View style={styles.planRadioOuter}>
+                  {selectedPlan === 'semester' && <View style={styles.planRadioInner} />}
+                </View>
+
+                <View style={styles.planTitleBox}>
+                  <Text style={styles.planName}>Полгода (Семестр)</Text>
+                  <Text style={styles.planDescription}>Уверенная учёба на два учебных периода</Text>
+                </View>
+              </View>
+
+              <View style={styles.planPriceRow}>
+                <Text style={styles.planPriceBig}>44.90 €</Text>
+                <Text style={styles.planPriceSubtext}>
+                  ~9.97 € / месяц (разовая оплата)
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Plan 3: 1 Month Flexible */}
             <TouchableOpacity
               style={[
                 styles.planCard,
@@ -257,7 +299,9 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
             >
               <Text style={styles.ctaButtonText}>
                 {selectedPlan === 'year'
-                  ? 'Оформить на учебный год — 79.90 €'
+                  ? 'Оформить учебный год — 79.90 €'
+                  : selectedPlan === 'semester'
+                  ? 'Оформить на полгода — 44.90 €'
                   : 'Попробовать 1 месяц — 9.99 €'}
               </Text>
             </TouchableOpacity>
@@ -300,6 +344,8 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                 <Text style={styles.invoiceModalTitle}>
                   {selectedPlan === 'year'
                     ? 'Оплата: Учебный год (79.90 €)'
+                    : selectedPlan === 'semester'
+                    ? 'Оплата: Полгода (44.90 €)'
                     : 'Оплата: 1 месяц (9.99 €)'}
                 </Text>
                 <TouchableOpacity
@@ -344,14 +390,18 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                   <View style={styles.ibanDetailRow}>
                     <Text style={styles.ibanDetailLabel}>Сумма:</Text>
                     <Text style={styles.ibanDetailPrice}>
-                      {selectedPlan === 'year' ? '79.90 EUR' : '9.99 EUR'}
+                      {selectedPlan === 'year'
+                        ? '79.90 EUR'
+                        : selectedPlan === 'semester'
+                        ? '44.90 EUR'
+                        : '9.99 EUR'}
                     </Text>
                   </View>
 
                   <View style={styles.ibanDetailRow}>
                     <Text style={styles.ibanDetailLabel}>Пояснение (Selgitus):</Text>
                     <Text style={styles.ibanDetailValue}>
-                      TarkApp PRO {selectedPlan === 'year' ? 'Aasta' : 'Kuu'}
+                      TarkApp PRO {selectedPlan === 'year' ? 'Aasta' : selectedPlan === 'semester' ? 'Poolaasta' : 'Kuu'}
                     </Text>
                   </View>
                 </View>
