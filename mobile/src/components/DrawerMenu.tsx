@@ -318,7 +318,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
               activeOpacity={0.7}
             >
               <Text style={styles.menuItemIcon}>🚪</Text>
-              <Text style={[styles.menuItemText, { color: '#DC2626' }]}>Выйти из профиля</Text>
+              <Text style={[styles.menuItemText, { color: '#EF4444' }]}>Выйти из профиля</Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity

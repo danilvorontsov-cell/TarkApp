@@ -1009,114 +1009,117 @@ function MainApp() {
         </View>
       )}
 
-      {/* Action Buttons Section */}
-      <View style={styles.actionsContainer}>
-        {/* Trial Review Limit / Active Subscription Badge */}
-        <View style={styles.reviewLimitBadgeRow}>
+      {/* Action Buttons Section - Shown only when starting a new lesson */}
+      {capturedImages.length === 0 && (
+        <View style={styles.actionsContainer}>
+          {/* Trial Review Limit / Active Subscription Badge */}
           {licenseStatus?.has_key ? (
-            <TouchableOpacity
-              style={styles.subscriptionActiveBadge}
-              onPress={() => setIsPaywallVisible(true)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.subscriptionActiveBadgeText}>✓ Подписка активна (Безлимит)</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={[
-                styles.reviewLimitBadge,
-                (licenseStatus?.free_reviews_left ?? 5) === 0 && styles.reviewLimitBadgeExhausted,
-              ]}
-              onPress={() => setIsPaywallVisible(true)}
-              activeOpacity={0.75}
-              accessibilityLabel={`Осталось ${licenseStatus?.free_reviews_left ?? 5} бесплатных разборов. Нажмите для выбора тарифа.`}
-            >
-              <Text
-                style={[
-                  styles.reviewLimitBadgeText,
-                  (licenseStatus?.free_reviews_left ?? 5) === 0 && styles.reviewLimitBadgeTextExhausted,
-                ]}
+            <View style={styles.reviewLimitBadgeRow}>
+              <TouchableOpacity
+                style={styles.subscriptionActiveBadge}
+                onPress={() => setIsPaywallVisible(true)}
+                activeOpacity={0.8}
               >
-                🎁 Бесплатных разборов: {licenseStatus?.free_reviews_left ?? 5}/5
-              </Text>
-            </TouchableOpacity>
+                <Text style={styles.subscriptionActiveBadgeText}>✓ PRO • Безлимитный доступ</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.reviewLimitBadgeRow}>
+              <TouchableOpacity
+                style={[
+                  styles.reviewLimitBadge,
+                  (licenseStatus?.free_reviews_left ?? 5) === 0 && styles.reviewLimitBadgeExhausted,
+                ]}
+                onPress={() => setIsPaywallVisible(true)}
+                activeOpacity={0.75}
+                accessibilityLabel={`Осталось ${licenseStatus?.free_reviews_left ?? 5} бесплатных разборов. Нажмите для выбора тарифа.`}
+              >
+                <Text
+                  style={[
+                    styles.reviewLimitBadgeText,
+                    (licenseStatus?.free_reviews_left ?? 5) === 0 && styles.reviewLimitBadgeTextExhausted,
+                  ]}
+                >
+                  🎁 Бесплатных разборов: {licenseStatus?.free_reviews_left ?? 5}/5
+                </Text>
+              </TouchableOpacity>
+            </View>
           )}
-        </View>
 
-        {/* Main Primary Button: Device Camera */}
-        <TouchableOpacity
-          style={[
-            styles.actionButton,
-            isJunior ? styles.actionButtonJunior : styles.actionButtonSenior,
-          ]}
-          onPress={() => handleTakePhoto(capturedImages.length > 0 ? 'append' : 'replace')}
-          disabled={loading}
-        >
-          {loading ? (
-            <View style={styles.loadingRow}>
-              <ActivityIndicator color={Theme.colors.onPrimaryText} size="small" />
+          {/* Main Primary Button: Device Camera (Initial shot) */}
+          <TouchableOpacity
+            style={[
+              styles.actionButton,
+              isJunior ? styles.actionButtonJunior : styles.actionButtonSenior,
+            ]}
+            onPress={() => handleTakePhoto('replace')}
+            disabled={loading}
+          >
+            {loading ? (
+              <View style={styles.loadingRow}>
+                <ActivityIndicator color={Theme.colors.onPrimaryText} size="small" />
+                <Text
+                  style={[
+                    styles.actionButtonText,
+                    isJunior && styles.actionButtonTextJunior,
+                    styles.loadingText,
+                  ]}
+                >
+                  {loadingStep || 'Анализируем...'}
+                </Text>
+              </View>
+            ) : (
               <Text
                 style={[
                   styles.actionButtonText,
                   isJunior && styles.actionButtonTextJunior,
-                  styles.loadingText,
                 ]}
               >
-                {loadingStep || 'Анализируем...'}
+                {isJunior
+                  ? '📷 Сфотографировать страничку (Камера)'
+                  : '📷 Сфотографировать страницу (Камера)'}
               </Text>
-            </View>
-          ) : (
-            <Text
-              style={[
-                styles.actionButtonText,
-                isJunior && styles.actionButtonTextJunior,
-              ]}
-            >
-              {isJunior
-                ? '📷 Сфотографировать страничку (Камера)'
-                : '📷 Сфотографировать страницу (Камера)'}
-            </Text>
-          )}
-        </TouchableOpacity>
-
-        {/* Secondary Buttons Row: Gallery & Tier Badge */}
-        <View style={styles.secondaryRow}>
-          <TouchableOpacity
-            style={[
-              styles.secondaryButton,
-              isJunior && styles.secondaryButtonJunior,
-            ]}
-            onPress={() => handlePickImage(capturedImages.length > 0 ? 'append' : 'replace')}
-            disabled={loading}
-          >
-            <Text
-              style={[
-                styles.secondaryButtonText,
-                isJunior && styles.secondaryButtonTextJunior,
-              ]}
-            >
-              🖼️ Из галереи
-            </Text>
+            )}
           </TouchableOpacity>
 
-          {/* Плашка уровня образования перенесена наверх вместо «Тестовое демо» */}
-          <View
-            style={[
-              styles.tierPillInActionRow,
-              isJunior && styles.tierPillInActionRowJunior,
-            ]}
-          >
-            <Text
+          {/* Secondary Buttons Row: Gallery & Tier Badge */}
+          <View style={styles.secondaryRow}>
+            <TouchableOpacity
               style={[
-                styles.tierPillInActionRowText,
-                isJunior && styles.tierPillInActionRowTextJunior,
+                styles.secondaryButton,
+                isJunior && styles.secondaryButtonJunior,
+              ]}
+              onPress={() => handlePickImage('replace')}
+              disabled={loading}
+            >
+              <Text
+                style={[
+                  styles.secondaryButtonText,
+                  isJunior && styles.secondaryButtonTextJunior,
+                ]}
+              >
+                🖼️ Из галереи
+              </Text>
+            </TouchableOpacity>
+
+            <View
+              style={[
+                styles.tierPillInActionRow,
+                isJunior && styles.tierPillInActionRowJunior,
               ]}
             >
-              🎓 {getTierBadgeText(profile.tier)}
-            </Text>
+              <Text
+                style={[
+                  styles.tierPillInActionRowText,
+                  isJunior && styles.tierPillInActionRowTextJunior,
+                ]}
+              >
+                🎓 {getTierBadgeText(profile.tier)}
+              </Text>
+            </View>
           </View>
         </View>
-      </View>
+      )}
 
       {/* Analysis Results View - Nordic Clean Modular Cards */}
       {analysis && (
@@ -2073,7 +2076,7 @@ function MainApp() {
             ]}
             onPress={() => setIsPaywallVisible(true)}
             accessibilityLabel={
-              licenseStatus?.has_key ? 'Подписка PRO активна' : 'Оформить подписку PRO'
+              licenseStatus?.has_key ? 'Подписка PRO активна' : 'Посмотреть тарифы PRO'
             }
             accessibilityRole="button"
             hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
@@ -2085,7 +2088,7 @@ function MainApp() {
                 licenseStatus?.has_key && styles.headerProBadgeTextActive,
               ]}
             >
-              {licenseStatus?.has_key ? '👑 PRO' : '⚡ PRO'}
+              {licenseStatus?.has_key ? '👑 PRO' : '⚡ Тарифы'}
             </Text>
           </TouchableOpacity>
 
@@ -2130,7 +2133,7 @@ function MainApp() {
         contentContainerStyle={[
           styles.container,
           {
-            paddingBottom: Math.max(bottomInset, 20) + 16,
+            paddingBottom: Math.max(bottomInset, 48) + 56,
           },
         ]}
         showsVerticalScrollIndicator={false}
