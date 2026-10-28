@@ -14,6 +14,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
+import { LinearGradient } from 'expo-linear-gradient';
 import { darkTheme, Theme } from '../theme/colors';
 import { getDeviceId, sendFeedback } from '../services/api';
 
@@ -125,8 +126,14 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
         if (canClose) onClose();
       }}
     >
-      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
-        <StatusBar style="light" />
+      <LinearGradient
+        colors={['#1A2026', '#0D1115']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={{ flex: 1 }}
+      >
+        <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
+          <StatusBar style="light" />
 
         {/* Header Action Bar */}
         <View style={styles.topBar}>
@@ -323,23 +330,30 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
             </View>
           </View>
 
-          {/* Section D: CTA Button */}
+          {/* Section D: CTA Button (Vertical Gradient ['#66F6CF', '#42DCA3']) */}
           <View style={styles.ctaContainer}>
             <TouchableOpacity
-              style={styles.ctaButton}
+              style={styles.ctaButtonWrapper}
               onPress={handleCtaPress}
               activeOpacity={0.85}
               accessibilityRole="button"
             >
-              <Text style={styles.ctaButtonText}>
-                {selectedPlan === 'year'
-                  ? 'Оформить учебный год — 71.90 €'
-                  : selectedPlan === 'semester'
-                  ? 'Оформить семестр — 44.90 €'
-                  : selectedPlan === 'month'
-                  ? 'Попробовать 1 месяц — 9.99 €'
-                  : 'Оформить год с каникулами — 89.90 €'}
-              </Text>
+              <LinearGradient
+                colors={['#66F6CF', '#42DCA3']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 0, y: 1 }}
+                style={styles.ctaButton}
+              >
+                <Text style={styles.ctaButtonText}>
+                  {selectedPlan === 'year'
+                    ? 'Оформить учебный год — 71.90 €'
+                    : selectedPlan === 'semester'
+                    ? 'Оформить семестр — 44.90 €'
+                    : selectedPlan === 'month'
+                    ? 'Попробовать 1 месяц — 9.99 €'
+                    : 'Оформить год с каникулами — 89.90 €'}
+                </Text>
+              </LinearGradient>
             </TouchableOpacity>
 
             <Text style={styles.ctaGuaranteeText}>
@@ -495,14 +509,15 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
           </View>
         </Modal>
       </SafeAreaView>
-    </Modal>
+    </LinearGradient>
+  </Modal>
   );
 };
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: darkTheme.background, // #12161A Deep Slate Anthracite
+    backgroundColor: 'transparent',
   },
   topBar: {
     flexDirection: 'row',
@@ -719,19 +734,23 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     alignItems: 'center',
   },
+  ctaButtonWrapper: {
+    width: '100%',
+    borderRadius: 16,
+    overflow: 'hidden',
+    ...Theme.shadow.card,
+  },
   ctaButton: {
-    backgroundColor: darkTheme.accent, // #5FEDC5
     height: 54,
     borderRadius: 16,
     width: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-    ...Theme.shadow.card,
   },
   ctaButtonText: {
-    color: darkTheme.accentText, // #064E3B
+    color: '#064E3B', // Dark contrast pine text
     fontSize: 17,
-    fontWeight: '700',
+    fontWeight: '800',
     letterSpacing: -0.2,
   },
   ctaGuaranteeText: {

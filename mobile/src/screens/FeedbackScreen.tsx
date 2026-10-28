@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import * as Device from 'expo-device';
 import * as Application from 'expo-application';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Theme, darkTheme } from '../theme/colors';
 import { sendFeedback, getLastRequestId } from '../services/api';
 
@@ -189,21 +190,28 @@ export const FeedbackScreen: React.FC<FeedbackScreenProps> = ({
           </Text>
         </View>
 
-        {/* Submit Button */}
+        {/* Submit Button (Vertical Gradient ['#66F6CF', '#42DCA3']) */}
         <TouchableOpacity
           style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
           onPress={handleSubmit}
           disabled={isSubmitting}
           activeOpacity={0.85}
         >
-          {isSubmitting ? (
-            <View style={styles.loadingRow}>
-              <ActivityIndicator size="small" color="#064E3B" />
-              <Text style={styles.submitButtonText}>Отправка разработчику...</Text>
-            </View>
-          ) : (
-            <Text style={styles.submitButtonText}>✓ Отправить разработчику</Text>
-          )}
+          <LinearGradient
+            colors={['#66F6CF', '#42DCA3']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={styles.submitButtonGradient}
+          >
+            {isSubmitting ? (
+              <View style={styles.loadingRow}>
+                <ActivityIndicator size="small" color="#064E3B" />
+                <Text style={styles.submitButtonText}>Отправка разработчику...</Text>
+              </View>
+            ) : (
+              <Text style={styles.submitButtonText}>✓ Отправить разработчику</Text>
+            )}
+          </LinearGradient>
         </TouchableOpacity>
       </View>
     </View>
@@ -214,7 +222,7 @@ const styles = StyleSheet.create({
   container: {
     width: '100%',
     paddingBottom: 24,
-    backgroundColor: darkTheme.background,
+    backgroundColor: 'transparent',
   },
   headerCard: {
     backgroundColor: darkTheme.cardBackground,
@@ -362,12 +370,15 @@ const styles = StyleSheet.create({
     color: darkTheme.textSecondary,
   },
   submitButton: {
-    backgroundColor: darkTheme.accent,
-    paddingVertical: 15,
     borderRadius: 14,
+    overflow: 'hidden',
+    ...Theme.shadow.button,
+  },
+  submitButtonGradient: {
+    paddingVertical: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    ...Theme.shadow.button,
+    borderRadius: 14,
   },
   submitButtonDisabled: {
     opacity: 0.7,

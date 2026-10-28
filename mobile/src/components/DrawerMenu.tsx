@@ -11,6 +11,7 @@ import {
   Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Theme, darkTheme } from '../theme/colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -154,9 +155,8 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
         ]}
         {...panResponder.panHandlers}
       >
-        {/* Drawer Header (Solid Onsen #5FEDC5 with rounded bottom-right) */}
+        {/* Drawer Header (Vertical Gradient ['#66F6CF', '#42DCA3'] with rounded bottom corners) */}
         <TouchableOpacity
-          style={[styles.drawerHeader, { paddingTop: topPadding + 14 }]}
           onPress={() => {
             onSelectTab('settings');
             onClose();
@@ -164,35 +164,42 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
           activeOpacity={0.85}
           accessibilityLabel="Профиль ученика"
         >
-          {/* Avatar (Interactive: Tap to take photo or choose from gallery) */}
-          <TouchableOpacity
-            style={styles.avatarButton}
-            onPress={onChangeAvatar}
-            activeOpacity={0.8}
-            accessibilityLabel="Изменить аватарку"
-            accessibilityRole="button"
+          <LinearGradient
+            colors={['#66F6CF', '#42DCA3']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={[styles.drawerHeader, { paddingTop: topPadding + 14 }]}
           >
-            <View style={styles.avatarCircle}>
-              {avatarUri ? (
-                <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
-              ) : (
-                <Text style={styles.avatarEmoji}>{hasUser ? '🧑‍🎓' : '👤'}</Text>
-              )}
-            </View>
-            <View style={styles.avatarEditBadge}>
-              <Text style={styles.avatarEditBadgeIcon}>📷</Text>
-            </View>
-          </TouchableOpacity>
+            {/* Avatar (Interactive: Tap to take photo or choose from gallery) */}
+            <TouchableOpacity
+              style={styles.avatarButton}
+              onPress={onChangeAvatar}
+              activeOpacity={0.8}
+              accessibilityLabel="Изменить аватарку"
+              accessibilityRole="button"
+            >
+              <View style={styles.avatarCircle}>
+                {avatarUri ? (
+                  <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+                ) : (
+                  <Text style={styles.avatarEmoji}>{hasUser ? '🧑‍🎓' : '👤'}</Text>
+                )}
+              </View>
+              <View style={styles.avatarEditBadge}>
+                <Text style={styles.avatarEditBadgeIcon}>📷</Text>
+              </View>
+            </TouchableOpacity>
 
-          {/* User Nickname & Grade */}
-          <Text style={styles.headerSubtitle}>
-            {hasUser ? `${displayName} • ${userGrade} кл.` : 'Гость • Вход не выполнен'}
-          </Text>
+            {/* User Nickname & Grade */}
+            <Text style={styles.headerSubtitle}>
+              {hasUser ? `${displayName} • ${userGrade} кл.` : 'Гость • Вход не выполнен'}
+            </Text>
 
-          {/* Greeting Title */}
-          <Text style={styles.headerGreeting}>
-            {hasUser ? `Привет, ${displayName}!` : 'Нажмите, чтобы войти'}
-          </Text>
+            {/* Greeting Title */}
+            <Text style={styles.headerGreeting}>
+              {hasUser ? `Привет, ${displayName}!` : 'Нажмите, чтобы войти'}
+            </Text>
+          </LinearGradient>
         </TouchableOpacity>
 
         {/* Navigation Sections */}
@@ -253,11 +260,20 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
               {hasPro ? 'Безлимитный доступ' : 'От 8.88 € / месяц'}
             </Text>
           </View>
-          <View style={[styles.proDrawerBadge, hasPro && styles.proDrawerBadgeActive]}>
-            <Text style={[styles.proDrawerBadgeText, hasPro && styles.proDrawerBadgeTextActive]}>
-              {hasPro ? 'PRO' : 'Выбрать'}
-            </Text>
-          </View>
+          {hasPro ? (
+            <View style={[styles.proDrawerBadge, styles.proDrawerBadgeActive]}>
+              <Text style={[styles.proDrawerBadgeText, styles.proDrawerBadgeTextActive]}>PRO</Text>
+            </View>
+          ) : (
+            <LinearGradient
+              colors={['#66F6CF', '#42DCA3']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 0, y: 1 }}
+              style={styles.proDrawerBadge}
+            >
+              <Text style={styles.proDrawerBadgeText}>Выбрать</Text>
+            </LinearGradient>
+          )}
         </TouchableOpacity>
 
         {/* Thin Divider Line */}
@@ -364,10 +380,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   drawerHeader: {
-    backgroundColor: '#5FEDC5',
     paddingHorizontal: 22,
     paddingBottom: 24,
-    borderBottomRightRadius: 36,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    overflow: 'hidden',
   },
   avatarButton: {
     alignSelf: 'flex-start',

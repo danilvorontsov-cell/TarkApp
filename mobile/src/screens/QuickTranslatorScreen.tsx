@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Theme, darkTheme } from '../theme/colors';
 import { quickTranslate, QuickTranslateResponse } from '../services/api';
 import { optimizePageImage } from '../services/imageOptimizer';
@@ -292,7 +293,7 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
           </TouchableOpacity>
         </View>
 
-        {/* Action button: Translate (100% ширины от левого края до правого) */}
+        {/* Action button: Translate (100% ширины от левого края до правого с вертикальным градиентом) */}
         <TouchableOpacity
           style={[
             styles.translateBtnFull,
@@ -302,14 +303,21 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
           disabled={isLoading}
           activeOpacity={0.85}
         >
-          {isLoading ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-              <ActivityIndicator size="small" color="#064E3B" />
-              <Text style={styles.translateBtnFullText}>Переводим...</Text>
-            </View>
-          ) : (
-            <Text style={styles.translateBtnFullText}>⚡ Перевести</Text>
-          )}
+          <LinearGradient
+            colors={['#66F6CF', '#42DCA3']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={styles.translateGradient}
+          >
+            {isLoading ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <ActivityIndicator size="small" color="#064E3B" />
+                <Text style={styles.translateBtnFullText}>Переводим...</Text>
+              </View>
+            ) : (
+              <Text style={styles.translateBtnFullText}>⚡ Перевести</Text>
+            )}
+          </LinearGradient>
         </TouchableOpacity>
       </View>
 
@@ -419,7 +427,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 24,
-    backgroundColor: darkTheme.background,
+    backgroundColor: 'transparent',
   },
   topBanner: {
     flexDirection: 'row',
@@ -579,12 +587,17 @@ const styles = StyleSheet.create({
   translateBtnFull: {
     width: '100%',
     height: 48,
-    backgroundColor: darkTheme.accent,
     borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
+    overflow: 'hidden',
     marginTop: 10,
     ...Theme.shadow.chip,
+  },
+  translateGradient: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
   },
   translateBtnFullText: {
     fontSize: 16,

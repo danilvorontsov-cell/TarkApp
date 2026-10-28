@@ -19,6 +19,7 @@ import {
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import {
   SchoolTier,
@@ -1069,32 +1070,40 @@ function MainApp() {
             ]}
             onPress={() => handleTakePhoto('replace')}
             disabled={loading}
+            activeOpacity={0.85}
           >
-            {loading ? (
-              <View style={styles.loadingRow}>
-                <ActivityIndicator color={Theme.colors.onPrimaryText} size="small" />
+            <LinearGradient
+              colors={['#66F6CF', '#42DCA3']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 0, y: 1 }}
+              style={styles.actionButtonGradient}
+            >
+              {loading ? (
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator color={darkTheme.accentText} size="small" />
+                  <Text
+                    style={[
+                      styles.actionButtonText,
+                      isJunior && styles.actionButtonTextJunior,
+                      styles.loadingText,
+                    ]}
+                  >
+                    {loadingStep || 'Анализируем...'}
+                  </Text>
+                </View>
+              ) : (
                 <Text
                   style={[
                     styles.actionButtonText,
                     isJunior && styles.actionButtonTextJunior,
-                    styles.loadingText,
                   ]}
                 >
-                  {loadingStep || 'Анализируем...'}
+                  {isJunior
+                    ? '📷 Сфотографировать страничку (Камера)'
+                    : '📷 Сфотографировать страницу (Камера)'}
                 </Text>
-              </View>
-            ) : (
-              <Text
-                style={[
-                  styles.actionButtonText,
-                  isJunior && styles.actionButtonTextJunior,
-                ]}
-              >
-                {isJunior
-                  ? '📷 Сфотографировать страничку (Камера)'
-                  : '📷 Сфотографировать страницу (Камера)'}
-              </Text>
-            )}
+              )}
+            </LinearGradient>
           </TouchableOpacity>
 
           {/* Secondary Buttons Row: Gallery & Tier Badge */}
@@ -2038,9 +2047,16 @@ function MainApp() {
         <TouchableOpacity
           style={styles.openPaywallBtn}
           onPress={() => setIsPaywallVisible(true)}
-          activeOpacity={0.8}
+          activeOpacity={0.85}
         >
-          <Text style={styles.openPaywallBtnText}>💎 Выбрать тариф / Оформить PRO</Text>
+          <LinearGradient
+            colors={['#66F6CF', '#42DCA3']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={styles.openPaywallBtnGradient}
+          >
+            <Text style={styles.openPaywallBtnText}>💎 Выбрать тариф / Оформить PRO</Text>
+          </LinearGradient>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -2083,7 +2099,10 @@ function MainApp() {
   );
 
   return (
-    <View
+    <LinearGradient
+      colors={['#1A2026', '#0D1115']}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 0, y: 1 }}
       style={[
         styles.safeArea,
         {
@@ -2320,7 +2339,7 @@ function MainApp() {
         isBlocking={true}
         reason={modalBlockReason}
       />
-    </View>
+    </LinearGradient>
   );
 }
 
@@ -2337,13 +2356,13 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Theme.colors.background,
+    backgroundColor: 'transparent',
   },
   safeAreaJunior: {
-    backgroundColor: Theme.colors.background,
+    backgroundColor: 'transparent',
   },
   safeAreaSenior: {
-    backgroundColor: Theme.colors.background,
+    backgroundColor: 'transparent',
   },
   headerBar: {
     backgroundColor: '#5FEDC5',
@@ -2803,19 +2822,21 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   actionButton: {
-    backgroundColor: darkTheme.accent,
     borderRadius: 14,
-    paddingVertical: 14,
-    alignItems: 'center',
+    overflow: 'hidden',
     marginBottom: 10,
     ...Theme.shadow.chip,
   },
   actionButtonJunior: {
-    backgroundColor: darkTheme.accent,
     borderRadius: 14,
   },
   actionButtonSenior: {
-    backgroundColor: darkTheme.accent,
+    borderRadius: 14,
+  },
+  actionButtonGradient: {
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: 14,
   },
   actionButtonText: {
@@ -4124,19 +4145,22 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   openPaywallBtn: {
-    backgroundColor: darkTheme.accent,
     borderRadius: 14,
-    paddingVertical: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
+    overflow: 'hidden',
     marginTop: 8,
     marginBottom: 8,
     ...Theme.shadow.button,
   },
+  openPaywallBtnGradient: {
+    paddingVertical: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+  },
   openPaywallBtnText: {
     fontSize: 14.5,
     fontWeight: '800',
-    color: darkTheme.accentText,
+    color: '#064E3B',
   },
   activateKeyBtn: {
     backgroundColor: darkTheme.cardBackground,
