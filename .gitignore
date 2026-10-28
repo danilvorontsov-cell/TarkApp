@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!mobile/.env.development
 backend/.env
 mobile/.env
 
