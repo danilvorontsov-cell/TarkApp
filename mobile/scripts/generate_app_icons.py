@@ -23,8 +23,6 @@ POSSIBLE_SOURCES = [
     REPO_ROOT / 'tarkapp_icon_source.png',
     ASSETS_DIR / 'tarkapp_icon_source.png',
     MOBILE_DIR / 'tarkapp_icon_source.png',
-    Path('C:/Users/danil/Downloads/tarkapp_icon_source.png'),
-    Path('C:/Users/danil/Desktop/tarkapp_icon_source.png'),
 ]
 
 
@@ -38,211 +36,85 @@ def find_source_image() -> Path | None:
     return None
 
 
-def auto_crop_graphite_logo(img: Image.Image) -> Image.Image:
+def extract_graphite_squircle(img: Image.Image) -> tuple[Image.Image, Image.Image]:
     """
-    Detects the outer light background and crops the central graphite square.
+    Finds the central graphite rounded square in the image,
+    removes the light background, and returns:
+    1. solid_square_1024: Full-bleed 1024x1024 solid graphite icon for standard platforms/iOS.
+    2. emblem_rgba_1024: 1024x1024 RGBA with transparent background and squircle in Android safe-zone (680x680).
     """
     rgb_img = img.convert('RGB')
     w, h = rgb_img.size
+    mid_x, mid_y = w // 2, h // 2
 
-    # Sample corners to determine background color
-    corners = [
-        rgb_img.getpixel((2, 2)),
-        rgb_img.getpixel((w - 3, 2)),
-        rgb_img.getpixel((2, h - 3)),
-        rgb_img.getpixel((w - 3, h - 3)),
-    ]
-    bg_r = sum(c[0] for c in corners) / 4.0
-    bg_g = sum(c[1] for c in corners) / 4.0
-    bg_b = sum(c[2] for c in corners) / 4.0
+    # Scan horizontally & vertically for dark graphite boundaries
+    # Background is light (sum > 550), graphite is dark (sum < 250)
+    dark_xs = [x for x in range(w) if sum(rgb_img.getpixel((x, mid_y))) < 250]
+    dark_ys = [y for y in range(h) if sum(rgb_img.getpixel((mid_x, y))) < 250]
 
-    print(f"Detected background color: RGB({bg_r:.1f}, {bg_g:.1f}, {bg_b:.1f})")
+    if not dark_xs or not dark_ys:
+        print("Warning: unable to locate dark bounds along center axes, falling back to full image.")
+        crop = rgb_img
+    else:
+        left, right = min(dark_xs), max(dark_xs)
+        top, bottom = min(dark_ys), max(dark_ys)
+        print(f"Detected graphite badge bounds: X=[{left}..{right}] (w={right-left+1}), Y=[{top}..{bottom}] (h={bottom-top+1})")
 
-    # Scan for bounding box of dark/graphite region (pixels significantly different from bg or dark)
-    min_x, min_y, max_x, max_y = w, h, 0, 0
-    found_any = False
+        # Make crop strictly square
+        bw = right - left + 1
+        bh = bottom - top + 1
+        side = max(bw, bh)
+        cx = (left + right) // 2
+        cy = (top + bottom) // 2
+        c_left = max(0, cx - side // 2)
+        c_top = max(0, cy - side // 2)
+        c_right = min(w, c_left + side)
+        c_bottom = min(h, c_top + side)
+        crop = rgb_img.crop((c_left, c_top, c_right, c_bottom))
 
-    pixels = rgb_img.load()
-    for y in range(h):
-        for x in range(w):
-            r, g, b = pixels[x, y]
-            # Color difference from background
-            diff = abs(r - bg_r) + abs(g - bg_g) + abs(b - bg_b)
-            # Or dark pixel check
-            is_dark = (r < 75 and g < 75 and b < 75)
-            if diff > 45 or is_dark:
-                found_any = True
-                if x < min_x: min_x = x
-                if y < min_y: min_y = y
-                if x > max_x: max_x = x
-                if y > max_y: max_y = y
+    cw, ch = crop.size
+    crop_rgba = crop.convert('RGBA')
+    crop_pixels = crop_rgba.load()
 
-    if not found_any or max_x <= min_x or max_y <= min_y:
-        print("Warning: could not detect dark boundary, using full image.")
-        return rgb_img
+    # Create transparency mask: isolate squircle from outer light background
+    mask = Image.new('L', (cw, ch), 255)
+    mask_pixels = mask.load()
 
-    print(f"Crop box detected: ({min_x}, {min_y}, {max_x}, {max_y}), size: {max_x - min_x}x{max_y - min_y}")
+    # Solid fullbleed version: fill light outer corners with the graphite edge color
+    fullbleed = crop.copy()
+    fb_pixels = fullbleed.load()
+    graphite_fill = (45, 53, 56)
 
-    # Make crop box square while preserving center
-    cw = max_x - min_x
-    ch = max_y - min_y
-    side = max(cw, ch)
-    mid_x = (min_x + max_x) // 2
-    mid_y = (min_y + max_y) // 2
+    for y in range(ch):
+        for x in range(cw):
+            r, g, b, _ = crop_pixels[x, y]
+            # Light neutral gray background condition
+            is_bg = (r > 160 and g > 160 and b > 160 and abs(r - g) < 25 and abs(g - b) < 25 and abs(r - b) < 25)
+            if is_bg:
+                mask_pixels[x, y] = 0
+                fb_pixels[x, y] = graphite_fill
+            else:
+                mask_pixels[x, y] = 255
 
-    crop_left = max(0, mid_x - side // 2)
-    crop_top = max(0, mid_y - side // 2)
-    crop_right = min(w, crop_left + side)
-    crop_bottom = min(h, crop_top + side)
+    # 1. Fullbleed 1024x1024 standard icon (solid RGB, no alpha artifacts)
+    # Resize with LANCZOS for maximum clarity
+    solid_1024 = fullbleed.resize((1024, 1024), Image.Resampling.LANCZOS)
 
-    # Adjust if clamped at borders
-    if crop_right - crop_left < side:
-        crop_left = max(0, crop_right - side)
-    if crop_bottom - crop_top < side:
-        crop_top = max(0, crop_bottom - side)
+    # 2. Transparent squircle emblem for Android Adaptive Icon safe-zone
+    # Smooth the mask boundary slightly for anti-aliasing
+    smooth_mask = mask.filter(ImageFilter.GaussianBlur(1.0))
+    crop_rgba.putalpha(smooth_mask)
 
-    cropped = rgb_img.crop((crop_left, crop_top, crop_right, crop_bottom))
-    return cropped
-
-
-def generate_synthesized_icon() -> Image.Image:
-    """
-    Fallback generator if source image is not yet placed by the user.
-    Creates a high-resolution Dark Nordic 1024x1024 icon:
-    Graphite background #12161A, rounded card #1E252B, border #2C363F,
-    and crisp Onsen Mint #5FEDC5 branding.
-    """
-    size = 1024
-    img = Image.new('RGBA', (size, size), (18, 22, 26, 255))
-    draw = ImageDraw.Draw(img)
-
-    # Inner soft graphite rounded square
-    margin = 56
-    draw.rounded_rectangle(
-        [margin, margin, size - margin, size - margin],
-        radius=180,
-        fill=(30, 37, 43, 255),
-        outline=(44, 54, 63, 255),
-        width=12,
-    )
-
-    # Subtle inner gradient / glow
-    glow = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-    glow_draw = ImageDraw.Draw(glow)
-    glow_draw.ellipse(
-        [size // 4, size // 4, 3 * size // 4, 3 * size // 4],
-        fill=(95, 237, 197, 24)
-    )
-    glow = glow.filter(ImageFilter.GaussianBlur(80))
-    img = Image.alpha_composite(img, glow)
-    draw = ImageDraw.Draw(img)
-
-    # Graduation cap / Sparkle icon above text
-    cap_center_x = size // 2
-    cap_top_y = 300
-    # Diamond cap top
-    draw.polygon(
-        [
-            (cap_center_x, cap_top_y - 65),
-            (cap_center_x + 150, cap_top_y),
-            (cap_center_x, cap_top_y + 65),
-            (cap_center_x - 150, cap_top_y),
-        ],
-        fill=(95, 237, 197, 255)
-    )
-    # Skullcap underneath
-    draw.chord(
-        [cap_center_x - 85, cap_top_y, cap_center_x + 85, cap_top_y + 90],
-        start=0,
-        end=180,
-        fill=(66, 220, 163, 255)
-    )
-    # Tassel
-    draw.line([(cap_center_x + 130, cap_top_y + 8), (cap_center_x + 160, cap_top_y + 80)], fill=(255, 255, 255, 220), width=6)
-    draw.ellipse([cap_center_x + 152, cap_top_y + 75, cap_center_x + 168, cap_top_y + 95], fill=(255, 255, 255, 240))
-
-    # Font setup
-    font = None
-    for font_path in ['C:/Windows/Fonts/segoeuib.ttf', 'C:/Windows/Fonts/arialbd.ttf']:
-        if os.path.exists(font_path):
-            try:
-                font = ImageFont.truetype(font_path, 138)
-                break
-            except Exception:
-                pass
-    if not font:
-        font = ImageFont.load_default()
-
-    # "TarkApp" text
-    text = "TarkApp"
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_x = (size - text_w) // 2
-    text_y = 520
-
-    # Draw shadow
-    draw.text((text_x + 2, text_y + 4), text, font=font, fill=(0, 0, 0, 140))
-    # Draw Mint text
-    draw.text((text_x, text_y), text, font=font, fill=(95, 237, 197, 255))
-
-    # Subtitle pill: "ESTONIA"
-    sub_font = None
-    for font_path in ['C:/Windows/Fonts/segoeuib.ttf', 'C:/Windows/Fonts/arialbd.ttf']:
-        if os.path.exists(font_path):
-            try:
-                sub_font = ImageFont.truetype(font_path, 34)
-                break
-            except Exception:
-                pass
-
-    if sub_font:
-        sub_text = "ÕPIME KOOS"
-        sub_bbox = draw.textbbox((0, 0), sub_text, font=sub_font)
-        sub_w = sub_bbox[2] - sub_bbox[0]
-        sub_x = (size - sub_w) // 2
-        sub_y = 690
-        # Pill background
-        pill_pad_x = 28
-        pill_pad_y = 10
-        draw.rounded_rectangle(
-            [sub_x - pill_pad_x, sub_y - pill_pad_y, sub_x + sub_w + pill_pad_x, sub_y + (sub_bbox[3] - sub_bbox[1]) + pill_pad_y + 4],
-            radius=20,
-            fill=(42, 52, 61, 255),
-            outline=(95, 237, 197, 160),
-            width=2,
-        )
-        draw.text((sub_x, sub_y), sub_text, font=sub_font, fill=(148, 163, 184, 255))
-
-    return img.convert('RGB')
-
-
-def create_adaptive_foreground(base_img: Image.Image) -> Image.Image:
-    """
-    Android Adaptive Icon Foreground:
-    Standard canvas is 1024x1024 RGBA.
-    Android launcher masks can clip to circle, squircle, or rounded rect.
-    The safe zone is the central 66% circle (diameter ~676px).
-    We scale the emblem to fit within 680x680 and place it strictly in the center.
-    """
-    canvas_size = 1024
+    # Scale emblem to 680x680 (fits within 66% = 676-720 safe zone)
     safe_size = 680
+    emblem_safe = crop_rgba.resize((safe_size, safe_size), Image.Resampling.LANCZOS)
 
-    foreground = Image.new('RGBA', (canvas_size, canvas_size), (0, 0, 0, 0))
+    # Place in center of 1024x1024 transparent canvas
+    adaptive_canvas = Image.new('RGBA', (1024, 1024), (0, 0, 0, 0))
+    offset = (1024 - safe_size) // 2
+    adaptive_canvas.paste(emblem_safe, (offset, offset), emblem_safe)
 
-    # Resize base image to fit safe zone
-    emblem = base_img.convert('RGBA')
-    emblem = emblem.resize((safe_size, safe_size), Image.Resampling.LANCZOS)
-
-    # Optional: rounded corner mask for emblem so it looks elegant in any launcher
-    mask = Image.new('L', (safe_size, safe_size), 0)
-    mask_draw = ImageDraw.Draw(mask)
-    mask_draw.rounded_rectangle([0, 0, safe_size, safe_size], radius=150, fill=255)
-
-    emblem.putalpha(mask)
-
-    offset = (canvas_size - safe_size) // 2
-    foreground.paste(emblem, (offset, offset), emblem)
-    return foreground
+    return solid_1024, adaptive_canvas
 
 
 def update_app_json():
@@ -264,7 +136,6 @@ def update_app_json():
     adaptive['backgroundColor'] = '#12161A'
     adaptive['foregroundImage'] = './assets/adaptive-icon.png'
 
-    # Remove conflicting background images if present
     if 'backgroundImage' in adaptive:
         del adaptive['backgroundImage']
 
@@ -283,47 +154,44 @@ def main():
     ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
     src_path = find_source_image()
-    if src_path:
-        print(f"Found source icon at: {src_path}")
-        raw_img = Image.open(src_path)
-        base_img = auto_crop_graphite_logo(raw_img)
-    else:
-        print("Source file 'tarkapp_icon_source.png' not found in workspace or user folders.")
-        print("Generating crisp Dark Nordic branded TarkApp icon...")
-        base_img = generate_synthesized_icon()
+    if not src_path:
+        print("Error: 'tarkapp_icon_source.png' not found.")
+        sys.exit(1)
 
-    # 1. Standard App Icon (1024x1024)
-    icon_1024 = base_img.resize((1024, 1024), Image.Resampling.LANCZOS)
+    print(f"Processing source icon from: {src_path}")
+    raw_img = Image.open(src_path)
+    solid_1024, adaptive_1024 = extract_graphite_squircle(raw_img)
+
+    # 1. Standard App Icon (1024x1024, RGB)
     icon_path = ASSETS_DIR / 'icon.png'
-    icon_1024.convert('RGB').save(icon_path, format='PNG', optimize=True)
-    print(f"Generated: {icon_path} (1024x1024)")
+    solid_1024.convert('RGB').save(icon_path, format='PNG', optimize=True)
+    print(f"Generated standard app icon: {icon_path} (1024x1024)")
 
-    # 2. Android Adaptive Foreground Icon (1024x1024 with safe zone)
-    adaptive_foreground = create_adaptive_foreground(base_img)
+    # 2. Android Adaptive Foreground Icon (1024x1024 RGBA with safe-zone)
     adaptive_path = ASSETS_DIR / 'adaptive-icon.png'
-    adaptive_foreground.save(adaptive_path, format='PNG', optimize=True)
-    print(f"Generated: {adaptive_path} (1024x1024 safe zone)")
+    adaptive_1024.save(adaptive_path, format='PNG', optimize=True)
+    print(f"Generated Android adaptive icon: {adaptive_path} (1024x1024 safe-zone)")
 
-    # Also keep android-icon-foreground.png in sync
+    # Also sync android-icon-foreground.png
     android_fg_path = ASSETS_DIR / 'android-icon-foreground.png'
-    adaptive_foreground.save(android_fg_path, format='PNG', optimize=True)
-    print(f"Generated: {android_fg_path} (1024x1024 safe zone)")
+    adaptive_1024.save(android_fg_path, format='PNG', optimize=True)
+    print(f"Generated android-icon-foreground: {android_fg_path} (1024x1024 safe-zone)")
 
     # 3. Splash Icon (512x512)
     splash_path = ASSETS_DIR / 'splash-icon.png'
-    splash_icon = base_img.resize((512, 512), Image.Resampling.LANCZOS)
+    splash_icon = adaptive_1024.resize((512, 512), Image.Resampling.LANCZOS)
     splash_icon.save(splash_path, format='PNG', optimize=True)
-    print(f"Generated: {splash_path} (512x512)")
+    print(f"Generated splash icon: {splash_path} (512x512)")
 
     # 4. Favicon (48x48)
     favicon_path = ASSETS_DIR / 'favicon.png'
-    favicon = base_img.resize((48, 48), Image.Resampling.LANCZOS)
+    favicon = solid_1024.resize((48, 48), Image.Resampling.LANCZOS)
     favicon.save(favicon_path, format='PNG', optimize=True)
-    print(f"Generated: {favicon_path} (48x48)")
+    print(f"Generated favicon: {favicon_path} (48x48)")
 
     # 5. Update app.json
     update_app_json()
-    print("All app icons generated and app.json updated successfully!")
+    print("\nSUCCESS: All icons generated and app.json updated!")
 
 
 if __name__ == '__main__':
