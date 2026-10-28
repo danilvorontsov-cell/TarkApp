@@ -109,3 +109,13 @@ class TestCacheGradeDifferentiation:
         # Now verify both can retrieve their own tailored responses
         assert get_cached_analysis(key_primary).task_title == "Сложение для малышей (Liitmine)"
         assert get_cached_analysis(key_high).task_title == "Алгебраические выражения (Algebralised avaldised)"
+
+    def test_cache_keys_differ_by_student_nickname(self):
+        identical_image = [b"textbook_page_same_grade_different_nickname"]
+        profile_sasha = UserProfile(grade=4, tier=AgeTier.MIDDLE, interests=["Minecraft"], nickname="Саша")
+        profile_masha = UserProfile(grade=4, tier=AgeTier.MIDDLE, interests=["Minecraft"], nickname="Маша")
+
+        key_sasha = compute_analysis_cache_key(identical_image, profile_sasha)
+        key_masha = compute_analysis_cache_key(identical_image, profile_masha)
+
+        assert key_sasha != key_masha, "Cache key must isolate personalized responses by nickname"

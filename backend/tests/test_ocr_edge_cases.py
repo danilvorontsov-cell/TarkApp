@@ -139,3 +139,51 @@ class TestOcrEdgeCases:
         assert result.get("is_acceptable") is False
         assert "бликов" in result["theme_explanation"] or "повторный снимок" in result["theme_explanation"]
         assert "Памятка по фотосъёмке" in result["worked_example"]["title"]
+
+    def test_unreadable_image_does_not_deduct_free_review_attempt_or_poison_cache(self, client, monkeypatch):
+        """Verifies that when is_acceptable=False, the user's free review attempt is NOT deducted and cache is not poisoned."""
+        from app.services.analysis_cache import clear_analysis_cache, compute_analysis_cache_key, get_cached_analysis
+        from app.models.page_analysis import UserProfile, AgeTier
+
+        clear_analysis_cache()
+        device_id = "test-no-deduct-on-unreadable-photo-999"
+
+        # 1. Check initial license status: 5 free reviews
+        status_before = client.get("/api/v1/license/status", headers={"X-Device-ID": device_id}).json()
+        assert status_before["free_reviews_left"] == 5
+
+        async def mock_unacceptable_gemini(*args, **kwargs):
+            profile = kwargs.get("profile")
+            return gemini_tutor_service._generate_emergency_fallback(profile)
+
+        monkeypatch.setattr(gemini_tutor_service, "analyze_page", mock_unacceptable_gemini)
+
+        img_bytes = create_blurry_black_image()
+        b64_img = base64.b64encode(img_bytes).decode("utf-8")
+
+        # 2. Call both multipart and JSON analyze endpoints with unreadable image
+        resp1 = client.post(
+            "/api/v1/analyze-page",
+            files={"files": ("blurry1.jpg", img_bytes, "image/jpeg")},
+            data={"grade": 3, "nickname": "Тест"},
+            headers={"X-Device-ID": device_id},
+        )
+        assert resp1.status_code == 200
+        assert resp1.json().get("is_acceptable") is False
+
+        resp2 = client.post(
+            "/api/v1/analyze-page/json",
+            json={"images_base64": [b64_img], "grade": 3, "nickname": "Тест"},
+            headers={"X-Device-ID": device_id},
+        )
+        assert resp2.status_code == 200
+        assert resp2.json().get("is_acceptable") is False
+
+        # 3. Verify free_reviews_left is STILL 5 (no attempt deducted!)
+        status_after = client.get("/api/v1/license/status", headers={"X-Device-ID": device_id}).json()
+        assert status_after["free_reviews_left"] == 5
+
+        # 4. Verify cache was NOT poisoned with the emergency fallback
+        profile = UserProfile(grade=3, tier=AgeTier.PRIMARY, nickname="Тест")
+        cache_key = compute_analysis_cache_key([img_bytes], profile)
+        assert get_cached_analysis(cache_key) is None

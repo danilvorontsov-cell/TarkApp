@@ -142,7 +142,21 @@ async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """Preserves standard HTTP exceptions (400, 404, 413, etc.) without altering client contracts."""
+    """Preserves standard HTTP exceptions (400, 404, 413, etc.) and alerts on 5xx errors."""
+    if exc.status_code >= 500 and settings.TELEGRAM_BOT_TOKEN and settings.telegram_chat_id:
+        path = request.scope.get("path", str(request.url.path) if hasattr(request, "url") else "")
+        try:
+            asyncio.create_task(
+                send_telegram_alert(
+                    endpoint=path,
+                    exc=exc,
+                    status_code=exc.status_code,
+                    message_thread_id=settings.TELEGRAM_TOPIC_ALERTS,
+                )
+            )
+        except Exception as tel_err:
+            logger.warning(f"Could not schedule Telegram alert for HTTP {exc.status_code}: {tel_err}")
+
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},

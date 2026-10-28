@@ -47,7 +47,7 @@ _IN_FLIGHT_TASKS: Dict[str, asyncio.Task[bytes]] = {}
 
 
 def _get_cache_key(prefix: str, text: str, voice: str = "") -> str:
-    raw = f"{prefix}:{voice}:{text.strip()}"
+    raw = f"{prefix}:{voice}:{text.strip().lower()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -123,7 +123,9 @@ def normalize_text_for_estonian_tts(text: str) -> str:
     t = re.sub(r'(\b\d+)\s*\.(?!\d)', r'\1 ', t)
     t = re.sub(r'(\d+)([,!?;:])', r'\1 \2', t)
     t = re.sub(r'([,!?;:])(\d+)', r'\1 \2', t)
-    t = re.sub(r'(\d+)[-–—]+', r'\1 ', t)
+    # Сохраняем дефис для эстонских падежных окончаний числительных (5-ga, 10-ni, 3-st, 2-le, 4-lt, 1-sse, 5-s, 6-l, 7-ks, 8-na, 9-ta)
+    t = re.sub(r'(\d+)[-–—]+(?=(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)', r'\1-', t, flags=re.IGNORECASE)
+    t = re.sub(r'(\d+)[-–—]+(?!(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)', r'\1 ', t, flags=re.IGNORECASE)
     t = re.sub(r'[-–—]+(\d+)', r' \1', t)
     return re.sub(r'\s+', ' ', t).strip()
 
@@ -560,10 +562,11 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
     text = normalize_text_for_speech(text, is_russian_context=True)
 
     est_char_pattern = re.compile(r'[A-Za-zõäöüšžÕÄÖÜŠŽ]')
+    cyr_char_pattern = re.compile(r'[а-яА-ЯёЁ]')
     token_pattern = re.compile(
         r'([«"“„][^»"”]+[»"”])|'  # фраза в кавычках
         r'(\([^)]+\))|'            # фраза в скобках
-        r'([A-Za-zõäöüšžÕÄÖÜŠŽ][A-Za-zõäöüšžÕÄÖÜŠŽ0-9\-\']*(?:\s+[A-Za-zõäöüšžÕÄÖÜŠŽ][A-Za-zõäöüšžÕÄÖÜŠŽ0-9\-\']*)*)'  # латинские/эстонские слова
+        r'((?:[A-Za-zõäöüšžÕÄÖÜŠŽ][A-Za-zõäöüšžÕÄÖÜŠŽ0-9\-\']*|\b\d+-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)(?:\s+(?:[A-Za-zõäöüšžÕÄÖÜŠŽ][A-Za-zõäöüšžÕÄÖÜŠŽ0-9\-\']*|\b\d+-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b))*)'  # латинские/эстонские слова и падежи числительных
     )
 
     raw_segments: List[Tuple[str, str]] = []
@@ -577,15 +580,23 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
 
         matched_str = match.group(0)
         inner = matched_str
+        is_wrapped = False
         if (matched_str.startswith(('«', '"', '“', '„')) and matched_str.endswith(('»', '"', '”', '“'))):
             inner = matched_str[1:-1]
+            is_wrapped = True
         elif matched_str.startswith('(') and matched_str.endswith(')'):
             inner = matched_str[1:-1]
+            is_wrapped = True
 
         if est_char_pattern.search(inner):
-            clean_est = normalize_text_for_estonian_tts(inner)
-            if clean_est:
-                raw_segments.append((clean_est, ESTONIAN_VOICE))
+            if is_wrapped and cyr_char_pattern.search(inner) and len(inner) < len(text):
+                # Смешанный русско-эстонский фрагмент внутри кавычек/скобок (напр. "(по-эстонски: liidetav)")
+                # Рекурсивно разделяем, чтобы русские слова читались русским голосом, а эстонские — эстонским
+                raw_segments.extend(parse_bilingual_segments(inner))
+            else:
+                clean_est = normalize_text_for_estonian_tts(inner)
+                if clean_est:
+                    raw_segments.append((clean_est, ESTONIAN_VOICE))
         else:
             raw_segments.append((matched_str, DEFAULT_VOICE))
 
@@ -703,13 +714,14 @@ async def _synthesize_mono_audio_bytes(clean_text: str, voice: str) -> bytes:
     raise RuntimeError(f"All TTS candidates failed for text: {clean_text[:50]}...")
 
 
-async def _synthesize_bilingual_audio_bytes(clean_text: str) -> bytes:
-    """Синтезирует и склеивает двуязычные фрагменты с кэшированием."""
+async def _synthesize_bilingual_audio_bytes(clean_text: str) -> Tuple[bytes, bool]:
+    """Синтезирует и склеивает двуязычные фрагменты. Возвращает (audio_bytes, is_complete)."""
     segments = parse_bilingual_segments(clean_text)
     has_estonian = any(v == ESTONIAN_VOICE for _, v in segments)
 
     if not has_estonian:
-        return await _synthesize_mono_audio_bytes(clean_text, DEFAULT_VOICE)
+        audio = await _synthesize_mono_audio_bytes(clean_text, DEFAULT_VOICE)
+        return audio, bool(audio)
 
     logger.info(
         f"Bilingual TTS: {len(segments)} segments parsed for text ({len(clean_text)} chars). Fetching concurrently..."
@@ -722,12 +734,14 @@ async def _synthesize_bilingual_audio_bytes(clean_text: str) -> bytes:
     ]
     audio_parts: List[bytes] = await asyncio.gather(*tasks)
 
+    all_succeeded = all(bool(part) for part in audio_parts)
     stitched_audio = b"".join(part for part in audio_parts if part)
     if not stitched_audio:
         logger.warning("Bilingual segments returned empty audio. Falling back to mono.")
-        return await _synthesize_mono_audio_bytes(clean_text, DEFAULT_VOICE)
+        mono_audio = await _synthesize_mono_audio_bytes(clean_text, DEFAULT_VOICE)
+        return mono_audio, False
 
-    return stitched_audio
+    return stitched_audio, all_succeeded
 
 
 async def get_or_synthesize_audio(
@@ -762,10 +776,12 @@ async def get_or_synthesize_audio(
     # 3. Создаем новую in-flight задачу
     async def _worker() -> bytes:
         if bilingual:
-            audio = await _synthesize_bilingual_audio_bytes(clean_text)
+            audio, is_complete = await _synthesize_bilingual_audio_bytes(clean_text)
         else:
             audio = await _synthesize_mono_audio_bytes(clean_text, voice)
-        _store_in_cache(_TTS_STREAM_CACHE, cache_key, audio)
+            is_complete = bool(audio)
+        if audio and is_complete:
+            _store_in_cache(_TTS_STREAM_CACHE, cache_key, audio)
         return audio
 
     task = asyncio.create_task(_worker())

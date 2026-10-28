@@ -72,11 +72,21 @@ async def verify_review_access(
     summary="Проверка статуса лицензии и триал-периода по Device ID",
     description="Возвращает активность доступа, количество оставшихся дней и дату окончания триала.",
 )
+@safe_limit("30/minute")
 def get_license_status(
+    request: Request,
     x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
     db: Session = Depends(get_db),
 ) -> LicenseStatusResponse:
-    device_id = (x_device_id or "").strip() or "dev-test-device"
+    device_id = (x_device_id or "").strip()
+    if not device_id:
+        if settings.APP_ENV in ("development", "test"):
+            device_id = "dev-test-device"
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "DEVICE_ID_REQUIRED", "message": "Заголовок X-Device-ID обязателен"},
+            )
     status_data = license_service.check_device_access(device_id, db)
     return LicenseStatusResponse(
         is_active=status_data["allowed"],
@@ -104,7 +114,15 @@ def activate_access_key(
     x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
     db: Session = Depends(get_db),
 ) -> KeyActivateResponse:
-    device_id = (x_device_id or "").strip() or "dev-test-device"
+    device_id = (x_device_id or "").strip()
+    if not device_id:
+        if settings.APP_ENV in ("development", "test"):
+            device_id = "dev-test-device"
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "DEVICE_ID_REQUIRED", "message": "Заголовок X-Device-ID обязателен"},
+            )
     try:
         res = license_service.activate_key(device_id, payload.key_code, db)
         return KeyActivateResponse(

@@ -38,6 +38,10 @@ export const StorageService = {
           parsed.interests = parsed.theme_interest
             ? [parsed.theme_interest]
             : ['Minecraft', 'LEGO', 'Roblox'];
+        } else {
+          parsed.interests = parsed.interests.map((item: string) =>
+            typeof item === 'string' ? item.replace(/спотр/gi, 'спорт') : item
+          );
         }
         return parsed as UserProfile;
       }

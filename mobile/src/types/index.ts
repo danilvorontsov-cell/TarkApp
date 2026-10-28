@@ -38,6 +38,7 @@ export interface PageAnalysisResponse {
   how_to_answer: string;
   answer_template: string;
   voice_prompt_script: string;
+  is_acceptable?: boolean;
 }
 
 export interface SavedLessonCard {
@@ -61,6 +62,7 @@ export const AGE_SUGGESTIONS: Record<SchoolTier, string[]> = {
     'Roblox',
     'LEGO',
     'Brawl Stars',
+    'Спорт и игры',
     'Котики и собачки',
     'Динозавры',
     'Космос и ракеты',

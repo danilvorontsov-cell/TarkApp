@@ -290,7 +290,7 @@ class GeminiTutorService:
                     "3. Запиши результат после знака равенства — это и будет summa.\n"
                     "4. Ответь учителю по эстонскому шаблону ниже."
                 ),
-                answer_template="Esimene liidetav on ___, teine liidetav on ___, summa on ___.",
+                answer_template="Esimene liidetav on [liidetav], teine liidetav on [liidetav], summa on [summa].",
                 voice_prompt_script=(
                     f"Привет, {nickname}! Не бойся задания. Мы разберем числа через {chosen_interest}. "
                     "Сложи числа и скажи: summa on, и назови свой ответ!"
@@ -354,7 +354,7 @@ class GeminiTutorService:
                     "3. Определи, какой источник энергии запускает реакцию (päikesevalgus).\n"
                     "4. Сформулируй вывод о продуктах фотосинтеза, используя грамматический каркас."
                 ),
-                answer_template="Fotosünteesi toimumiseks on vaja ___ ja ___, selle tulemusena tekivad ___ ja eraldub ___.",
+                answer_template="Fotosünteesi toimumiseks on vaja [valgusenergiat] ja [süsihappegaasi], selle tulemusena tekivad [glükoos] ja eraldub [hapnik].",
                 voice_prompt_script=(
                     f"Привет, {nickname}! Это параграф о фотосинтезе — частая тема на контрольной (kontrolltöö). "
                     "Главное запомни три вещи на входе: свет, вода и газ, и две на выходе: сахар и кислород. "
@@ -414,7 +414,7 @@ class GeminiTutorService:
                     "3. Приведите минимум 2 аргумента с опорой на термины параграфа.\n"
                     "4. Запишите итоговый вывод по гимназическому шаблону."
                 ),
-                answer_template="Tuginedes esitatud andmetele, saab järeldada, et ___, kuna ___. Seetõttu on oluline ___.",
+                answer_template="Tuginedes esitatud andmetele, saab järeldada, et [hüpotees], kuna [põhjendus]. Seetõttu on oluline [järeldus].",
                 voice_prompt_script=(
                     f"Здравствуйте, {nickname}! Для подготовки к государственному экзамену обратите внимание на логическую связку: "
                     "тезис, обоснование и вывод. Используйте формулировки из шаблона для аргументации."

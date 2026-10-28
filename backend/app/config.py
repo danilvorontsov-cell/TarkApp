@@ -38,6 +38,7 @@ class Settings(BaseSettings):
 
     # Telegram Bot Admin (Optional - for /gen and /stats commands)
     ADMIN_TELEGRAM_ID: Optional[str] = None
+    TELEGRAM_WEBHOOK_SECRET: Optional[str] = None
 
     @field_validator(
         "TELEGRAM_TOPIC_BUGS",

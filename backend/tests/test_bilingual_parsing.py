@@ -31,3 +31,26 @@ def test_parse_standalone_latin_word():
 def test_russian_in_parentheses_stays_russian():
     segments = parse_bilingual_segments('Сложи два числа (первое и второе).')
     assert all(s[1] == DEFAULT_VOICE for s in segments)
+
+
+def test_mixed_russian_estonian_in_parentheses_and_quotes():
+    # Russian words inside parentheses/quotes with Estonian terms must NOT be sent to ESTONIAN_VOICE
+    segments = parse_bilingual_segments('Запомни термин (по-эстонски: liidetav) и правило.')
+    est_segments = [s[0] for s in segments if s[1] == ESTONIAN_VOICE]
+    ru_segments = [s[0] for s in segments if s[1] == DEFAULT_VOICE]
+
+    assert est_segments == ['liidetav']
+    assert any('по-эстонски' in r for r in ru_segments)
+    assert all('по-эстонски' not in e for e in est_segments)
+
+    segments_quotes = parse_bilingual_segments('В учебнике написано «Слагаемое — liidetav».')
+    est_q = [s[0] for s in segments_quotes if s[1] == ESTONIAN_VOICE]
+    ru_q = [s[0] for s in segments_quotes if s[1] == DEFAULT_VOICE]
+    assert est_q == ['liidetav']
+    assert any('Слагаемое' in r for r in ru_q)
+
+
+def test_bilingual_estonian_numeral_case_with_hyphen():
+    segments = parse_bilingual_segments('Прочитай задание: «Korruta 5-ga ja loenda 10-ni».')
+    est_segments = [s[0] for s in segments if s[1] == ESTONIAN_VOICE]
+    assert est_segments == ['Korruta 5-ga ja loenda 10-ni']

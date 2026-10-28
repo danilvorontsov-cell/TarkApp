@@ -40,6 +40,7 @@ export type QueueListener = (state: {
 class AudioQueueManagerClass {
   private queue: Map<string, AudioQueueItem> = new Map();
   private isProcessing: boolean = false;
+  private queueGeneration: number = 0;
   private currentDownloadingId: string | null = null;
   private pendingUserPlayId: string | null = null;
   private currentlyPlayingId: string | null = null;
@@ -89,7 +90,7 @@ class AudioQueueManagerClass {
 
   private getHash(str: string): string {
     let hash = 0;
-    const clean = this.normalizeText(str);
+    const clean = this.normalizeText(str).toLowerCase();
     for (let i = 0; i < clean.length; i++) {
       hash = (hash << 5) - hash + clean.charCodeAt(i);
       hash |= 0;
@@ -436,9 +437,10 @@ class AudioQueueManagerClass {
   private async processQueue(baseUrl: string = API_BASE_URL) {
     if (this.isProcessing) return;
     this.isProcessing = true;
+    const activeGen = this.queueGeneration;
 
     try {
-      while (true) {
+      while (activeGen === this.queueGeneration) {
         // Find next eligible queued item by priority (0 first, then 1, 2, 3, 4)
         let bestItem: AudioQueueItem | null = null;
         for (const item of this.queue.values()) {
@@ -455,6 +457,9 @@ class AudioQueueManagerClass {
         }
 
         await this.downloadItem(bestItem, baseUrl);
+        if (activeGen !== this.queueGeneration) {
+          break;
+        }
 
         // Responsive sequential delay between background items
         // Priority 0 (urgent): 50ms
@@ -464,9 +469,11 @@ class AudioQueueManagerClass {
         await new Promise((r) => setTimeout(r, delayMs));
       }
     } finally {
-      this.isProcessing = false;
-      this.currentDownloadingId = null;
-      this.notify();
+      if (activeGen === this.queueGeneration) {
+        this.isProcessing = false;
+        this.currentDownloadingId = null;
+        this.notify();
+      }
     }
   }
 
@@ -720,10 +727,8 @@ class AudioQueueManagerClass {
       }
     });
 
-    // If item is not currently downloading, start download immediately
-    if (this.currentDownloadingId !== id && item.status !== 'LOADING') {
-      this.downloadItem(item, baseUrl);
-    } else {
+    // Ensure background queue processor picks up priority 0 item Next without launching parallel downloads
+    if (!this.isProcessing) {
       this.processQueue(baseUrl);
     }
   }
@@ -732,6 +737,7 @@ class AudioQueueManagerClass {
    * Resets the queue and stops any playing audio when switching lessons
    */
   public clearQueue() {
+    this.queueGeneration++;
     this.stop();
     this.queue.clear();
     this.pendingUserPlayId = null;

@@ -35,6 +35,20 @@ def test_normalize_punctuation_in_contact():
     assert normalize_text_for_estonian_tts("12?") == "12 ?"
     assert normalize_text_for_estonian_tts("12-ne") == "12 ne"
 
+
+def test_estonian_numeral_case_suffixes_preserve_hyphen():
+    # Preserves hyphens for Estonian numeral case endings so Edge-TTS inflects the numeral (e.g. 5-ga -> viiega)
+    assert normalize_text_for_estonian_tts("Korruta 5-ga") == "Korruta 5-ga"
+    assert normalize_text_for_estonian_tts("Loenda 10-ni") == "Loenda 10-ni"
+    assert normalize_text_for_estonian_tts("Lahuta 3-st") == "Lahuta 3-st"
+    assert normalize_text_for_estonian_tts("Liida 2-le") == "Liida 2-le"
+    assert normalize_text_for_estonian_tts("4-lt ja 1-sse") == "4-lt ja 1-sse"
+    assert normalize_text_for_estonian_tts("5-s, 6-l, 7-ks, 8-na, 9-ta") == "5-s, 6-l, 7-ks, 8-na, 9-ta"
+    # En-dash before case suffix is normalized to standard hyphen
+    assert normalize_text_for_estonian_tts("Korruta 5–ga") == "Korruta 5-ga"
+    # Numeric range still separates dashes
+    assert normalize_text_for_estonian_tts("10-12") == "10 12"
+
 def test_empty_string():
     assert normalize_text_for_estonian_tts("") == ""
     assert normalize_text_for_estonian_tts("   ") == ""

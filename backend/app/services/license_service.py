@@ -6,6 +6,7 @@ from typing import Dict, Any, List, Optional
 from fastapi import HTTPException, status as http_status
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import SessionLocal
 from app.models.license import Device, AccessKey
 
@@ -29,7 +30,10 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
 
     now = datetime.utcnow()
     device = db.query(Device).filter(Device.device_id == clean_id).first()
-    is_dev = clean_id in ("dev-test-device", "default-dev-device")
+    is_dev = (
+        settings.APP_ENV in ("development", "test")
+        and clean_id in ("dev-test-device", "default-dev-device")
+    )
 
     if not device:
         # First seen: create new device with 14-day trial and 5 free reviews

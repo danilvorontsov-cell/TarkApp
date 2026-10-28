@@ -108,15 +108,15 @@ class UserProfile(BaseModel):
         if v is None:
             return []
         if isinstance(v, str):
-            # Разделяем по запятым, точке с запятой или переносам строк
-            items = [item.strip() for item in v.replace(";", ",").replace("\n", ",").split(",") if item.strip()]
-            return items
+            # Разделяем по запятым, точке с запятой или переносам строк и ограничиваем длину
+            items = [item.strip()[:60] for item in v.replace(";", ",").replace("\n", ",").split(",") if item.strip()]
+            return items[:15]
         if isinstance(v, list):
             cleaned = []
             for item in v:
                 if isinstance(item, str) and item.strip():
-                    cleaned.append(item.strip())
-            return cleaned
+                    cleaned.append(item.strip()[:60])
+            return cleaned[:15]
         return []
 
     @model_validator(mode="before")
@@ -189,7 +189,7 @@ class PageAnalysisResponse(BaseModel):
     )
     answer_template: str = Field(
         ...,
-        description="Грамматический каркас эстонского предложения с пропусками (напр. 'Summa on ___')"
+        description="Грамматический каркас эстонского предложения с пропусками в квадратных скобках [слово] (напр. 'Summa on [16]')"
     )
     voice_prompt_script: str = Field(
         ...,

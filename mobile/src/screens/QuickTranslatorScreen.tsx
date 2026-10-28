@@ -160,10 +160,14 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
 
     try {
       setIsPlayingAudio(true);
-      await playTts(textToSpeak, voiceLang);
+      const player = await playTts(textToSpeak, voiceLang, 'quick_translator', {
+        onFinish: () => setIsPlayingAudio(false),
+        onError: () => setIsPlayingAudio(false),
+      });
+      if (!player) {
+        setIsPlayingAudio(false);
+      }
     } catch {
-      // Ошибка воспроизведения
-    } finally {
       setIsPlayingAudio(false);
     }
   };
@@ -214,20 +218,11 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
       <View style={styles.topBanner}>
         <View style={styles.titleRow}>
           <Text style={styles.bannerEmoji}>🌐</Text>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.bannerTitle}>Быстрый школьный переводчик</Text>
             <Text style={styles.bannerSubtitle}>Kiirtõlge • адаптация терминов Эстонии</Text>
           </View>
         </View>
-        {onBackToStudy && (
-          <TouchableOpacity
-            style={styles.backBtn}
-            onPress={onBackToStudy}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.backBtnText}>✕</Text>
-          </TouchableOpacity>
-        )}
       </View>
 
       {/* Language Switcher Bar */}
@@ -254,6 +249,14 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
 
       {/* Text Input Card (Nordic Clean borderRadius: 20) */}
       <View style={styles.inputCard}>
+        {inputText.length > 0 && (
+          <View style={styles.inputHeaderRow}>
+            <TouchableOpacity onPress={handleClear} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.clearInputText}>✕ Очистить поле</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         <TextInput
           style={styles.input}
           placeholder={
@@ -270,53 +273,44 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
           onSubmitEditing={() => handleTranslate()}
         />
 
-        {/* Input Tools Row */}
-        <View style={styles.inputToolsRow}>
-          <View style={styles.toolsLeft}>
-            {inputText.length > 0 && (
-              <TouchableOpacity
-                style={styles.toolChip}
-                onPress={handleClear}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.toolChipText}>✕ Очистить</Text>
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity
-              style={styles.toolChip}
-              onPress={handlePasteClipboard}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.toolChipText}>📋 Вставить</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.toolChipCamera}
-              onPress={handleCaptureCamera}
-              activeOpacity={0.75}
-            >
-              <Text style={styles.toolChipCameraText}>📷 Снять текст</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Action button: Translate */}
+        {/* Input Tools Row: Вставить и Снять текст (flex: 1 каждая, зазор строго по центру) */}
+        <View style={styles.toolsRowHalf}>
           <TouchableOpacity
-            style={[
-              styles.translateBtn,
-              isLoading && styles.translateBtnDisabled,
-            ]}
-            onPress={() => handleTranslate()}
-            disabled={isLoading}
-            activeOpacity={0.85}
+            style={styles.toolChipHalf}
+            onPress={handlePasteClipboard}
+            activeOpacity={0.75}
           >
-            {isLoading ? (
-              <ActivityIndicator size="small" color="#064E3B" />
-            ) : (
-              <Text style={styles.translateBtnText}>⚡ Перевести</Text>
-            )}
+            <Text style={styles.toolChipHalfText}>📋 Вставить</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.toolChipHalfCamera}
+            onPress={handleCaptureCamera}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.toolChipHalfCameraText}>📷 Снять текст</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Action button: Translate (100% ширины от левого края до правого) */}
+        <TouchableOpacity
+          style={[
+            styles.translateBtnFull,
+            isLoading && styles.translateBtnDisabled,
+          ]}
+          onPress={() => handleTranslate()}
+          disabled={isLoading}
+          activeOpacity={0.85}
+        >
+          {isLoading ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <ActivityIndicator size="small" color="#064E3B" />
+              <Text style={styles.translateBtnFullText}>Переводим...</Text>
+            </View>
+          ) : (
+            <Text style={styles.translateBtnFullText}>⚡ Перевести</Text>
+          )}
+        </TouchableOpacity>
       </View>
 
       {/* Result Card (Card with Onsen accents) */}
@@ -405,6 +399,17 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
           </View>
         </View>
       ) : null}
+
+      {/* Bottom Full-Width Close Button */}
+      {onBackToStudy && (
+        <TouchableOpacity
+          style={styles.bottomCloseButton}
+          onPress={onBackToStudy}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.bottomCloseButtonText}>Закрыть</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 };
@@ -522,63 +527,90 @@ const styles = StyleSheet.create({
     minHeight: 88,
     textAlignVertical: 'top',
   },
-  inputToolsRow: {
+  inputHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginBottom: 6,
+  },
+  clearInputText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: darkTheme.textMuted,
+  },
+  toolsRowHalf: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 10,
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: darkTheme.cardBorder,
-    flexWrap: 'wrap',
-    gap: 8,
   },
-  toolsLeft: {
-    flexDirection: 'row',
+  toolChipHalf: {
+    flex: 1,
+    height: 44,
+    backgroundColor: '#1E252B',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     alignItems: 'center',
-    gap: 6,
-    flexWrap: 'wrap',
+    justifyContent: 'center',
   },
-  toolChip: {
-    backgroundColor: darkTheme.badgeFreeBg,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+  toolChipHalfText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#CBD5E1',
   },
-  toolChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: darkTheme.textSecondary,
-  },
-  toolChipCamera: {
-    backgroundColor: '#1E293B',
+  toolChipHalfCamera: {
+    flex: 1,
+    height: 44,
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#3B82F6',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  toolChipCameraText: {
-    fontSize: 12,
+  toolChipHalfCameraText: {
+    fontSize: 13,
     fontWeight: '700',
     color: '#60A5FA',
   },
-  translateBtn: {
+  translateBtnFull: {
+    width: '100%',
+    height: 48,
     backgroundColor: darkTheme.accent,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 10,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 110,
+    marginTop: 10,
+    ...Theme.shadow.chip,
+  },
+  translateBtnFullText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#064E3B',
   },
   translateBtnDisabled: {
     opacity: 0.6,
   },
-  translateBtnText: {
-    fontSize: 13.5,
-    fontWeight: '800',
-    color: darkTheme.accentText,
+  bottomCloseButton: {
+    width: '100%',
+    backgroundColor: darkTheme.cardBackground,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 16,
+    marginBottom: 8,
+    ...Theme.shadow.card,
+  },
+  bottomCloseButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#CBD5E1',
   },
   resultCard: {
     backgroundColor: darkTheme.cardBackground,

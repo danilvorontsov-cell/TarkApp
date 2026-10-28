@@ -75,8 +75,9 @@ export const normalizeTextForTTS = (text: string): string => {
   normalized = normalized.replace(/(\d+)([,!?;:])/g, '$1 $2');
   normalized = normalized.replace(/([,!?;:])(\d+)/g, '$1 $2');
 
-  // 6. Separate hyphens/dashes attached to numbers
-  normalized = normalized.replace(/(\d+)[-–—]+/g, '$1 ');
+  // 6. Separate hyphens/dashes attached to numbers, preserving Estonian numeral case endings (5-ga, 10-ni, 3-st, etc.)
+  normalized = normalized.replace(/(\d+)[-–—]+(?=(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)/gi, '$1-');
+  normalized = normalized.replace(/(\d+)[-–—]+(?!(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)/gi, '$1 ');
   normalized = normalized.replace(/[-–—]+(\d+)/g, ' $1');
 
   // 7. Collapse excess spaces

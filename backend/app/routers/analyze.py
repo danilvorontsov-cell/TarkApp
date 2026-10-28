@@ -23,14 +23,13 @@ from app.services.analysis_cache import (
     get_cached_analysis,
     store_cached_analysis,
 )
-from app.routers.license import verify_review_access
+from app.routers.license import verify_device_access, verify_review_access
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/v1",
     tags=["Analysis"],
-    dependencies=[Depends(verify_review_access)],
 )
 
 ALLOWED_MIME_TYPES = {
@@ -52,6 +51,7 @@ def _extract_device_id(raw_val: object) -> str:
     "/analyze-page",
     response_model=PageAnalysisResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(verify_review_access)],
     summary="Анализ страницы эстонского учебника и адаптация под ученика",
     description=(
         "Принимает одну или несколько фотографий страниц учебника/тетради (Opiq, Koolibri, Avita) "
@@ -132,7 +132,7 @@ async def analyze_page(
     # Check cache for identical image content and pedagogical profile
     cache_key = compute_analysis_cache_key([b for b, _ in images_data], profile)
     cached_result = get_cached_analysis(cache_key)
-    if cached_result:
+    if cached_result and cached_result.is_acceptable is not False:
         if dev_id and isinstance(db, Session):
             license_service.deduct_review_attempt(dev_id, db)
         return cached_result
@@ -142,10 +142,11 @@ async def analyze_page(
             profile=profile,
             images=images_data,
         )
-        store_cached_analysis(cache_key, result)
-        # Deduct 1 review attempt only upon successful generation
-        if dev_id and isinstance(db, Session):
-            license_service.deduct_review_attempt(dev_id, db)
+        # Store in cache and deduct 1 review attempt ONLY if the image was acceptable (not an emergency fallback)
+        if result.is_acceptable is not False:
+            store_cached_analysis(cache_key, result)
+            if dev_id and isinstance(db, Session):
+                license_service.deduct_review_attempt(dev_id, db)
         return result
     except Exception as e:
         logger.error(f"Error analyzing page: {e}", exc_info=True)
@@ -159,6 +160,7 @@ async def analyze_page(
     "/analyze-page/json",
     response_model=PageAnalysisResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(verify_review_access)],
     summary="Анализ страницы через Base64 JSON payload",
     description="Альтернативный эндпоинт для клиентов, передающих base64 строку вместо multipart/form-data. Поддерживает одиночные и множественные страницы.",
 )
@@ -169,37 +171,54 @@ async def analyze_page_json(
     x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
     db: Session = Depends(get_db),
 ) -> PageAnalysisResponse:
+    max_size_bytes = settings.MAX_IMAGE_SIZE_MB * 1024 * 1024
     images_data: List[Tuple[bytes, str]] = []
 
     # 1. Проверяем список изображений
     if payload.images_base64 and len(payload.images_base64) > 0:
         for idx, b64_str in enumerate(payload.images_base64):
             try:
-                ib = base64.b64decode(b64_str)
-                if ib:
-                    mtype = "image/jpeg"
-                    if payload.mime_types and idx < len(payload.mime_types):
-                        mtype = payload.mime_types[idx]
-                    elif payload.mime_type:
-                        mtype = payload.mime_type
-                    images_data.append((ib, mtype))
+                clean_b64 = b64_str.split(",", 1)[1] if "," in b64_str else b64_str
+                ib = base64.b64decode(clean_b64, validate=True)
             except Exception as e:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Некорректная Base64 строка в изображении #{idx + 1}: {e}",
                 )
+            if ib:
+                if len(ib) > max_size_bytes:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"Размер изображения #{idx + 1} превышает лимит {settings.MAX_IMAGE_SIZE_MB} МБ.",
+                    )
+                mtype = "image/jpeg"
+                if payload.mime_types and idx < len(payload.mime_types):
+                    mtype = payload.mime_types[idx]
+                elif payload.mime_type:
+                    mtype = payload.mime_type
+                images_data.append((ib, mtype))
 
     # 2. Фолбэк на одиночное изображение (для обратной совместимости)
     elif payload.image_base64:
         try:
-            image_bytes = base64.b64decode(payload.image_base64)
-            if image_bytes:
-                images_data.append((image_bytes, payload.mime_type or "image/jpeg"))
+            clean_b64 = (
+                payload.image_base64.split(",", 1)[1]
+                if "," in payload.image_base64
+                else payload.image_base64
+            )
+            image_bytes = base64.b64decode(clean_b64, validate=True)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Некорректная Base64 строка: {e}",
             )
+        if image_bytes:
+            if len(image_bytes) > max_size_bytes:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"Размер изображения превышает лимит {settings.MAX_IMAGE_SIZE_MB} МБ.",
+                )
+            images_data.append((image_bytes, payload.mime_type or "image/jpeg"))
 
     if not images_data:
         raise HTTPException(
@@ -221,7 +240,7 @@ async def analyze_page_json(
     # Check cache for identical image content and pedagogical profile
     cache_key = compute_analysis_cache_key([b for b, _ in images_data], profile)
     cached_result = get_cached_analysis(cache_key)
-    if cached_result:
+    if cached_result and cached_result.is_acceptable is not False:
         if dev_id and isinstance(db, Session):
             license_service.deduct_review_attempt(dev_id, db)
         return cached_result
@@ -231,10 +250,11 @@ async def analyze_page_json(
             profile=profile,
             images=images_data,
         )
-        store_cached_analysis(cache_key, result)
-        # Deduct 1 review attempt only upon successful generation
-        if dev_id and isinstance(db, Session):
-            license_service.deduct_review_attempt(dev_id, db)
+        # Store in cache and deduct 1 review attempt ONLY if the image was acceptable
+        if result.is_acceptable is not False:
+            store_cached_analysis(cache_key, result)
+            if dev_id and isinstance(db, Session):
+                license_service.deduct_review_attempt(dev_id, db)
         return result
     except Exception as e:
         logger.error(f"Error analyzing page via JSON: {e}", exc_info=True)
@@ -248,18 +268,23 @@ async def analyze_page_json(
     "/more-examples",
     response_model=MoreExamplesResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(verify_device_access)],
     summary="Генерация дополнительных эстонских речевых примеров для тренировки",
     description="Создает новые эстонские примеры предложений с пропусками для интерактивного конструктора ответа.",
 )
-async def get_more_examples(request: MoreExamplesRequest) -> MoreExamplesResponse:
+@safe_limit("15/minute", key_func=get_device_or_ip)
+async def get_more_examples(
+    payload: MoreExamplesRequest,
+    request: Request = None,
+) -> MoreExamplesResponse:
     try:
         templates = await gemini_tutor_service.generate_more_examples(
-            task_title=request.task_title,
-            theme_explanation=request.theme_explanation or "",
-            vocabulary=request.vocabulary,
-            current_template=request.current_template,
-            grade=request.grade,
-            tier=request.tier,
+            task_title=payload.task_title,
+            theme_explanation=payload.theme_explanation or "",
+            vocabulary=payload.vocabulary,
+            current_template=payload.current_template,
+            grade=payload.grade,
+            tier=payload.tier,
         )
         return MoreExamplesResponse(templates=templates)
     except Exception as e:

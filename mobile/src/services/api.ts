@@ -533,7 +533,6 @@ export async function analyzePagesJson(
     const mimeTypes = images.map((img) => img.mimeType || 'image/jpeg');
 
     const bodyPayload = {
-      image_base64: validBase64Images[0] || '',
       images_base64: validBase64Images,
       mime_type: mimeTypes[0] || 'image/jpeg',
       mime_types: mimeTypes,

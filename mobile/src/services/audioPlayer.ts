@@ -53,6 +53,10 @@ export function getCurrentPlayingId(): string | null {
   return currentPlayingId;
 }
 
+export function getCurrentPlayToken(): number {
+  return currentPlayToken;
+}
+
 /**
  * Configure audio mode for speech playback.
  */
@@ -110,9 +114,12 @@ export const resume = resumeTts;
 
 /**
  * Stops playback completely, seeks to position 0, and releases the audio player instance.
+ * @param incrementToken Whether to increment currentPlayToken to invalidate in-flight playTts calls.
  */
-export async function stopTts(): Promise<void> {
-  currentPlayToken++; // Invalidate any pending in-flight playback invocations
+export async function stopTts(incrementToken: boolean = true): Promise<void> {
+  if (incrementToken) {
+    currentPlayToken++; // Invalidate any pending in-flight playback invocations
+  }
   const prevCallbacks = currentCallbacks;
   currentCallbacks = null;
   currentPlayingId = null;
@@ -194,10 +201,10 @@ export async function playTts(
   // Assign fresh play token to prevent race conditions on rapid multi-clicks
   const thisToken = ++currentPlayToken;
 
-  // Stop any previous audio
-  await stopTts();
+  // Stop any previous audio without self-invalidating thisToken
+  await stopTts(false);
 
-  // If another playTts was called while waiting for stopTts, cancel immediately
+  // If another playTts or external stopTts was called while waiting, cancel immediately
   if (thisToken !== currentPlayToken) {
     return null;
   }

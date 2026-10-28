@@ -86,3 +86,92 @@ def test_rate_limiter_license_activate_blocks_excessive_attempts(client):
     data = blocked_resp.json()
     assert data.get("error") == "RATE_LIMIT_EXCEEDED"
     assert "Слишком много запросов" in data.get("message", "")
+
+
+def test_dev_test_device_bypass_blocked_in_production(client):
+    """Verifies that 'dev-test-device' does not receive automatic PRO bypass when APP_ENV=production."""
+    from app.database import SessionLocal
+    from app.models.license import Device
+    from app.services.license_service import check_device_access
+
+    with patch("app.config.settings.APP_ENV", "production"):
+        # Missing X-Device-ID header must be rejected in production
+        resp_missing = client.get("/api/v1/license/status")
+        assert resp_missing.status_code == 400
+
+        # Passing 'default-dev-device' in production must NOT grant DEV-KEY-TEST
+        db = SessionLocal()
+        try:
+            db.query(Device).filter(Device.device_id == "default-dev-device").delete()
+            db.commit()
+            status_prod = check_device_access("default-dev-device", db)
+            assert status_prod["has_key"] is False
+            assert status_prod["activated_key"] is None
+            assert status_prod["days_left"] <= 14
+        finally:
+            db.query(Device).filter(Device.device_id == "default-dev-device").delete()
+            db.commit()
+            db.close()
+
+
+def test_telegram_webhook_secret_and_no_key_leakage(client):
+    """Verifies that /api/v1/telegram/webhook checks secret header and never leaks generated keys in HTTP body."""
+    update_payload = {
+        "message": {
+            "from": {"id": 777888999},
+            "chat": {"id": 777888999},
+            "text": "/gen 2 30",
+        }
+    }
+
+    with patch("app.config.settings.ADMIN_TELEGRAM_ID", "777888999"), \
+         patch("app.config.settings.TELEGRAM_WEBHOOK_SECRET", "super_secret_token_123"), \
+         patch("app.services.telegram_alert.send_telegram_message", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = True
+
+        # 1. Without secret token -> 403 Forbidden
+        forbidden_resp = client.post("/api/v1/telegram/webhook", json=update_payload)
+        assert forbidden_resp.status_code == 403
+
+        # 2. With valid secret token -> 200 OK, but 'keys' and 'reply' are stripped from HTTP response
+        ok_resp = client.post(
+            "/api/v1/telegram/webhook",
+            json=update_payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "super_secret_token_123"},
+        )
+        assert ok_resp.status_code == 200
+        body = ok_resp.json()
+        assert body["ok"] is True
+        assert body["result"]["command"] == "gen"
+        assert "keys" not in body["result"]
+        assert "reply" not in body["result"]
+
+
+def test_more_examples_allowed_when_zero_free_reviews_left(client):
+    """Verifies that a trial user who spent their 5th free review can still click 'More examples' on that lesson."""
+    from app.database import SessionLocal
+    from app.models.license import Device
+
+    device_id = "test-zero-reviews-more-examples-dev"
+    db = SessionLocal()
+    try:
+        client.get("/api/v1/license/status", headers={"X-Device-ID": device_id})
+        dev = db.query(Device).filter(Device.device_id == device_id).first()
+        dev.free_reviews_left = 0
+        db.commit()
+
+        resp = client.post(
+            "/api/v1/more-examples",
+            json={
+                "task_title": "Liitmine",
+                "theme_explanation": "Сложение чисел",
+                "vocabulary": [{"est": "summa", "ru": "сумма", "example": "Summa on 10"}],
+                "current_template": "Summa on [10].",
+                "grade": 3,
+            },
+            headers={"X-Device-ID": device_id},
+        )
+        assert resp.status_code == 200
+        assert "templates" in resp.json()
+    finally:
+        db.close()

@@ -1,69 +1,44 @@
-# Environment and secrets
+# Environment & Secrets
 .env
 .env.*
 !.env.example
 backend/.env
-backend/.env.*
-!backend/.env.example
 mobile/.env
-mobile/.env.*
-!mobile/.env.example
-backend/generated_keys.txt
-*generated_keys.txt
 
-# Dependencies
+# Local Databases (SQLite + WAL)
+*.db
+*.db-shm
+*.db-wal
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+
+# Logs & Runtime Artifacts
+logs/
+backend/logs/
+*.log
+backend/static/audio/*.mp3
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Node / Expo / React Native
 node_modules/
 mobile/node_modules/
-.pnp
-.pnp.js
-
-# Testing & Caches
-coverage/
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Logs
-*.log
-logs/
-backend/logs/*.log
-!backend/logs/.gitkeep
-
-# Expo
 .expo/
 mobile/.expo/
 dist/
 web-build/
+*.tsbuildinfo
 
-# Native builds
-*.orig.*
-android/
-ios/
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-*.db-wal
-*.db-shm
-*.db-journal
-
-# Audio & Cache files
-backend/static/audio/*.mp3
-!backend/static/audio/.gitkeep
-
-# Python
-backend/.venv/
-.venv/
-env/
-venv/
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-
-# IDE & OS
-.vscode/
-.idea/
+# OS & IDE
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/

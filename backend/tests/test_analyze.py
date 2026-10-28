@@ -278,7 +278,7 @@ def test_analyze_page_primary_minecraft(client, sample_image_bytes):
     assert len(data["vocabulary"]) >= 2
     assert any("liidetav" in v["est"].lower() for v in data["vocabulary"])
     assert "Minecraft" in data["theme_explanation"] or "minecraft" in data["theme_explanation"].lower()
-    assert "___" in data["answer_template"]
+    assert "[" in data["answer_template"] and "]" in data["answer_template"]
 
 
 def test_analyze_page_middle_tier(client, sample_image_bytes):
@@ -310,7 +310,7 @@ def test_analyze_page_gymnasium_tier(client, sample_image_bytes):
     assert response.status_code == 200
     data = response.json()
     assert len(data["vocabulary"]) >= 2
-    assert "___" in data["answer_template"]
+    assert "[" in data["answer_template"] and "]" in data["answer_template"]
 
 
 def test_analyze_page_invalid_mime_type(client):

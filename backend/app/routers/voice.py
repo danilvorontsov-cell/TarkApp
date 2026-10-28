@@ -2,9 +2,10 @@ import hashlib
 import logging
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, Response
 
+from app.limiter import safe_limit, get_device_or_ip
 from app.models.page_analysis import AgeTier, is_full_audio_enabled
 from app.services.tts_service import (
     DEFAULT_VOICE,
@@ -41,7 +42,9 @@ router = APIRouter(prefix="/api/v1/voice", tags=["Voice TTS"])
         }
     },
 )
+@safe_limit("60/minute", key_func=get_device_or_ip)
 async def text_to_speech(
+    request: Request,
     text: str = Query(..., min_length=1, max_length=2000, description="Текст для озвучивания"),
     lang: str = Query(default="ru", description="Язык: 'ru' (русский), 'et' (эстонский) или 'bilingual'"),
     bilingual: bool = Query(default=False, description="Включить двуязычную склейку для фраз в кавычках"),
@@ -73,6 +76,8 @@ async def text_to_speech(
 
     is_bilingual = bilingual or lang.lower() == "bilingual"
     voice = "bilingual" if is_bilingual else VOICE_MAP.get(lang.lower(), DEFAULT_VOICE)
+    audio_hash = hashlib.sha256(f"{voice}:{clean_text.lower()}".encode("utf-8")).hexdigest()
+    file_path = AUDIO_STATIC_DIR / f"{audio_hash}.mp3"
 
     try:
         if is_bilingual:
@@ -86,10 +91,8 @@ async def text_to_speech(
                 detail="Не удалось синтезировать аудиопоток.",
             )
 
-        audio_hash = hashlib.sha256(f"{voice}:{clean_text}".encode()).hexdigest()
         try:
-            file_path = AUDIO_STATIC_DIR / f"{audio_hash}.mp3"
-            if not file_path.exists():
+            if not file_path.exists() or file_path.stat().st_size != len(audio_bytes):
                 file_path.write_bytes(audio_bytes)
         except Exception as write_err:
             logger.warning(f"Could not write static audio file: {write_err}")
@@ -127,7 +130,9 @@ async def text_to_speech(
         }
     },
 )
+@safe_limit("60/minute", key_func=get_device_or_ip)
 async def speak_word(
+    request: Request,
     text: str = Query(..., min_length=1, max_length=300, description="Слово или короткая фраза"),
     lang: str = Query(default="et", description="Язык произношения ('et' или 'ru')"),
 ):
@@ -140,6 +145,9 @@ async def speak_word(
 
     try:
         voice = VOICE_MAP.get(lang.lower(), VOICE_MAP["et"])
+        audio_hash = hashlib.sha256(f"{voice}:{clean_text.lower()}".encode("utf-8")).hexdigest()
+        file_path = AUDIO_STATIC_DIR / f"{audio_hash}.mp3"
+
         audio_bytes = await get_or_synthesize_audio(clean_text, voice=voice, bilingual=False)
 
         if not audio_bytes:
@@ -148,10 +156,8 @@ async def speak_word(
                 detail="Не удалось озвучить слово.",
             )
 
-        audio_hash = hashlib.sha256(f"{voice}:{clean_text}".encode()).hexdigest()
         try:
-            file_path = AUDIO_STATIC_DIR / f"{audio_hash}.mp3"
-            if not file_path.exists():
+            if not file_path.exists() or file_path.stat().st_size != len(audio_bytes):
                 file_path.write_bytes(audio_bytes)
         except Exception as write_err:
             logger.warning(f"Could not write static audio file: {write_err}")

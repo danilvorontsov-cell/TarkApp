@@ -11,6 +11,7 @@ import {
   Image,
   Platform,
   PanResponder,
+  AppState,
   StatusBar as RNStatusBar,
 } from 'react-native';
 import {
@@ -143,7 +144,8 @@ function MainApp() {
     StorageService.getProfile().then((saved) => {
       setProfile(saved);
       if (saved.interests && saved.interests.length > 0) {
-        setInterestsText(saved.interests.join(', '));
+        const cleanedInterests = saved.interests.map((i) => i.replace(/спотр/gi, 'спорт'));
+        setInterestsText(cleanedInterests.join(', '));
       }
     });
 
@@ -201,7 +203,14 @@ function MainApp() {
       setLoadingAudioId(state.loadingAudioId);
     });
 
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        AudioQueueManager.pause();
+      }
+    });
+
     return () => {
+      appStateSub.remove();
       unsubAudio();
       stopTts();
       setOnTrialExpiredListener(null);
@@ -314,8 +323,10 @@ function MainApp() {
   };
 
   const handleInterestsChange = (text: string) => {
-    setInterestsText(text);
-    const parsed = text
+    // Automatically correct common typo "спотр" -> "спорт"
+    const normalizedText = text.replace(/спотр/gi, 'спорт');
+    setInterestsText(normalizedText);
+    const parsed = normalizedText
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
@@ -434,8 +445,8 @@ function MainApp() {
 
       const data = await analyzePagesJson(payload, profile, API_BASE_URL);
 
-      // Decrement free reviews counter immediately in local state upon success
-      if (licenseStatus && !licenseStatus.has_key) {
+      // Decrement free reviews counter immediately in local state ONLY when photo was acceptable
+      if (licenseStatus && !licenseStatus.has_key && data.is_acceptable !== false) {
         setLicenseStatus({
           ...licenseStatus,
           free_reviews_left: Math.max(0, (licenseStatus.free_reviews_left ?? 1) - 1),
@@ -1128,6 +1139,28 @@ function MainApp() {
       {/* Analysis Results View - Nordic Clean Modular Cards */}
       {analysis && (
         <View style={styles.analysisModularContainer}>
+          {/* Banner when image was unreadable / blurry (is_acceptable === false) */}
+          {analysis.is_acceptable === false && (
+            <View style={styles.errorRetryCard}>
+              <View style={styles.errorRetryHeader}>
+                <Text style={styles.errorRetryIcon}>📷</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.errorRetryTitle}>Снимок получился нечётким</Text>
+                  <Text style={styles.errorRetryMessage}>
+                    Бесплатная попытка не списана! Сфотографируй страницу ещё раз при хорошем освещении.
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.retryBigButton}
+                onPress={() => handleTakePhoto('replace')}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.retryBigButtonText}>📷 Переснять страницу</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Card 1: Task Context / Title - растянуто на всё окно, с мягкой подсветкой фона */}
           <View style={[styles.modularCard, styles.topicTitleCard, isJunior && styles.topicTitleCardJunior]}>
             <Text style={[styles.resultTitle, isJunior && styles.resultTitleJunior]}>
@@ -1837,7 +1870,11 @@ function MainApp() {
           </TouchableOpacity>
           <View style={styles.settingsAvatarInfo}>
             <Text style={styles.settingsAvatarTitle}>Аватарка ученика</Text>
-            <TouchableOpacity onPress={handleSelectAvatarSource} activeOpacity={0.7}>
+            <TouchableOpacity
+              style={styles.settingsAvatarActionButton}
+              onPress={handleSelectAvatarSource}
+              activeOpacity={0.75}
+            >
               <Text style={styles.settingsAvatarActionText}>
                 {profile.avatarUri ? '📸 Сменить фото' : '➕ Добавить фото'}
               </Text>
@@ -1902,7 +1939,7 @@ function MainApp() {
             multiline
           />
           <Text style={[styles.interestsHint, isJunior && styles.interestsHintJunior]}>
-            💡 Разделяй запятыми. ИИ объяснит абстрактные эстонские правила через аналогии с любимыми играми и хобби.
+            💡 Введи свои увлечения, разделяя запятыми. ИИ объяснит абстрактные эстонские правила через аналогии с любимыми играми и хобби.
           </Text>
 
           <Text style={styles.suggestionsTitle}>Быстрые подсказки по возрасту:</Text>
@@ -2066,7 +2103,11 @@ function MainApp() {
           accessibilityLabel="Открыть меню"
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
-          <Text style={styles.headerMenuIcon}>≡</Text>
+          <View style={styles.burgerIconBox}>
+            <View style={styles.burgerBar} />
+            <View style={styles.burgerBar} />
+            <View style={styles.burgerBar} />
+          </View>
         </TouchableOpacity>
 
         <View style={styles.headerTitleCenter}>
@@ -2310,7 +2351,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingBottom: 12,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
     ...Theme.shadow.header,
   },
   headerMenuBtn: {
@@ -2319,11 +2362,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  headerMenuIcon: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#064E3B',
-    lineHeight: 30,
+  burgerIconBox: {
+    width: 24,
+    height: 20,
+    justifyContent: 'space-between',
+    paddingVertical: 1,
+  },
+  burgerBar: {
+    width: '100%',
+    height: 3.2,
+    backgroundColor: '#064E3B',
+    borderRadius: 2,
   },
   headerTitleCenter: {
     flex: 1,
@@ -2331,9 +2380,9 @@ const styles = StyleSheet.create({
   },
   headerBrandTitle: {
     fontSize: 21,
-    fontWeight: '800',
+    fontWeight: '900',
     color: '#064E3B',
-    letterSpacing: -0.3,
+    letterSpacing: 0.8,
   },
   headerProfileBtn: {
     width: 44,
@@ -2530,13 +2579,23 @@ const styles = StyleSheet.create({
   settingsAvatarTitle: {
     fontSize: 14.5,
     fontWeight: '700',
-    color: '#0F172A',
-    marginBottom: 3,
+    color: '#CBD5E1',
+    marginBottom: 4,
+  },
+  settingsAvatarActionButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(95, 237, 197, 0.12)',
+    borderWidth: 1,
+    borderColor: '#5FEDC5',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    marginTop: 2,
   },
   settingsAvatarActionText: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '700',
-    color: '#065F46',
+    color: '#5FEDC5',
   },
   container: {
     padding: 16,
@@ -3868,19 +3927,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: Theme.radius.badge,
-    backgroundColor: Theme.colors.slotSuccessBg,
+    backgroundColor: 'rgba(95, 237, 197, 0.12)',
     borderWidth: 1,
-    borderColor: Theme.colors.primary,
+    borderColor: '#5FEDC5',
   },
   tierTagJunior: {},
   tierTagSenior: {},
   tierTagText: {
     fontSize: 12,
     fontWeight: '700',
-    color: Theme.colors.onPrimaryText,
+    color: '#5FEDC5',
   },
-  tierTagTextJunior: {},
-  tierTagTextSenior: {},
+  tierTagTextJunior: {
+    color: '#5FEDC5',
+  },
+  tierTagTextSenior: {
+    color: '#5FEDC5',
+  },
   caption: {
     fontSize: 12,
     color: Theme.colors.textSecondary,
@@ -3964,17 +4027,16 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   interestsHint: {
-    fontSize: 12,
-    color: Theme.colors.textSecondary,
-    fontStyle: 'italic',
-    lineHeight: 17,
+    fontSize: 12.5,
+    color: '#CBD5E1',
+    lineHeight: 18,
     marginTop: 6,
     marginBottom: 10,
-    backgroundColor: Theme.colors.surfaceAlt,
-    padding: 8,
-    borderRadius: 8,
+    backgroundColor: '#161C22',
+    padding: 10,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: Theme.colors.border,
+    borderColor: '#2C363F',
   },
   interestsHintJunior: {},
   suggestionsTitle: {

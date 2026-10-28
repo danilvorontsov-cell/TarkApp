@@ -1,7 +1,9 @@
 import base64
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from app.config import settings
+from app.limiter import safe_limit, get_device_or_ip
 from app.models.translate import QuickTranslateRequest, QuickTranslateResponse
 from app.services.gemini_service import gemini_tutor_service
 from app.routers.license import verify_device_access
@@ -26,20 +28,30 @@ router = APIRouter(
         "Для отдельных эстонских слов возвращает 3 основные словарные формы (algvormid)."
     ),
 )
-async def quick_translate(request: QuickTranslateRequest) -> QuickTranslateResponse:
-    clean_text = (request.text or "").strip()
+@safe_limit("20/minute", key_func=get_device_or_ip)
+async def quick_translate(
+    payload: QuickTranslateRequest,
+    request: Request = None,
+) -> QuickTranslateResponse:
+    clean_text = (payload.text or "").strip()
     image_bytes = None
+    max_size_bytes = settings.MAX_IMAGE_SIZE_MB * 1024 * 1024
 
-    if request.image_base64:
+    if payload.image_base64:
         try:
-            b64_clean = request.image_base64
+            b64_clean = payload.image_base64
             if "," in b64_clean:
                 b64_clean = b64_clean.split(",", 1)[1]
-            image_bytes = base64.b64decode(b64_clean)
+            image_bytes = base64.b64decode(b64_clean, validate=True)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Некорректная Base64 строка изображения: {e}",
+            )
+        if image_bytes and len(image_bytes) > max_size_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Размер изображения превышает лимит {settings.MAX_IMAGE_SIZE_MB} МБ.",
             )
 
     if not clean_text and not image_bytes:
@@ -52,9 +64,9 @@ async def quick_translate(request: QuickTranslateRequest) -> QuickTranslateRespo
         result = await gemini_tutor_service.quick_translate(
             text=clean_text or None,
             image_bytes=image_bytes,
-            mime_type=request.mime_type or "image/jpeg",
-            source_lang=request.source_lang or "auto",
-            target_lang=request.target_lang or "ru",
+            mime_type=payload.mime_type or "image/jpeg",
+            source_lang=payload.source_lang or "auto",
+            target_lang=payload.target_lang or "ru",
         )
         return result
     except Exception as e:

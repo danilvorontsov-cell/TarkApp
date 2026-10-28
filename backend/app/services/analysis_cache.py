@@ -37,8 +37,9 @@ def compute_analysis_cache_key(
             val = getattr(it, "value", str(it))
             interests_list.append(str(val))
     interests_str = ",".join(sorted(interests_list))
+    nickname_val = str(getattr(profile, "nickname", "") or "Друг").strip().lower()
 
-    meta_payload = f"grade:{grade_val}|tier:{tier_val}|interests:{interests_str}"
+    meta_payload = f"grade:{grade_val}|tier:{tier_val}|interests:{interests_str}|nickname:{nickname_val}"
     hasher.update(meta_payload.encode("utf-8"))
 
     return hasher.hexdigest()
