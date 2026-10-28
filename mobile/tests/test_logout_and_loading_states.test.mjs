@@ -279,6 +279,22 @@ test('Scenario 10: PaywallScreen invoice endpoint and Graphite & Mint email inpu
     /emailTextInput:\s*\{[^}]*backgroundColor:\s*['"]#1E252B['"][^}]*borderWidth:\s*1[^}]*borderColor:\s*['"]#5FEDC5['"][^}]*color:\s*['"]#FFFFFF['"]/s,
     'emailTextInput must use #1E252B background, 1px #5FEDC5 border, and #FFFFFF text'
   );
+
+  // Verify Free card and ascending order of 5 tiers
+  const idxFree = paywallContent.indexOf('Бесплатный старт (Free)');
+  const idxMonth = paywallContent.indexOf('<Text style={styles.planName}>1 месяц (Гибкий)</Text>');
+  const idxSemester = paywallContent.indexOf('<Text style={styles.planName}>Семестр (5 месяцев)</Text>');
+  const idxYear = paywallContent.indexOf('<Text style={styles.planName}>Учебный год (9 месяцев)</Text>');
+  const idxFullYear = paywallContent.indexOf('<Text style={styles.planName}>Полный год (12 месяцев с каникулами)</Text>');
+
+  assert.ok(idxFree > 0, 'Free card must be present');
+  assert.ok(idxFree < idxMonth, 'Free card must be before 1 Month');
+  assert.ok(idxMonth < idxSemester, '1 Month must be before Semester (5 months)');
+  assert.ok(idxSemester < idxYear, 'Semester (5 months) must be before School Year (9 months)');
+  assert.ok(idxYear < idxFullYear, 'School Year (9 months) must be before Full Year (12 months)');
+
+  // Verify default selectedPlan is year (not Free)
+  assert.match(paywallContent, /useState<SubscriptionPlan>\(['"]year['"]\)/);
 });
 
 

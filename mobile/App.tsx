@@ -2432,6 +2432,9 @@ function MainApp() {
         onClose={() => setIsPaywallVisible(false)}
         onOpenKeyActivation={() => setIsKeyModalVisible(true)}
         canClose={true}
+        remainingFreeScans={licenseStatus?.free_reviews_left ?? 5}
+        totalFreeScans={licenseStatus?.max_free_reviews ?? 5}
+        hasPro={Boolean(licenseStatus?.has_key)}
       />
 
       {/* License Promo Key Activation Modal (Manual Entry) */}

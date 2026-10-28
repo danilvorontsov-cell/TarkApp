@@ -25,6 +25,9 @@ interface PaywallScreenProps {
   onClose: () => void;
   onOpenKeyActivation: () => void;
   canClose?: boolean;
+  remainingFreeScans?: number;
+  totalFreeScans?: number;
+  hasPro?: boolean;
 }
 
 export const PaywallScreen: React.FC<PaywallScreenProps> = ({
@@ -32,6 +35,9 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
   onClose,
   onOpenKeyActivation,
   canClose = true,
+  remainingFreeScans = 5,
+  totalFreeScans = 5,
+  hasPro = false,
 }) => {
   const insets = useSafeAreaInsets();
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlan>('year');
@@ -181,9 +187,98 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
             </Text>
           </View>
 
-          {/* Section B: Pricing Cards Radio Group (4 Tiers) */}
+          {/* Section B: Pricing Cards (1 Free + 4 Paid Tiers ordered by duration & price) */}
           <View style={styles.plansContainer}>
-            {/* Plan 1: Full School Year (9 months) - Recommended */}
+            {/* Tier 1: Free Start (0 €) — Non-selectable informational card */}
+            <View style={styles.freePlanCard}>
+              <View style={styles.freePlanHeaderRow}>
+                <View style={styles.planTitleBox}>
+                  <Text style={styles.planName}>Бесплатный старт (Free)</Text>
+                  <Text style={styles.planDescription}>Базовое знакомство с TarkApp</Text>
+                </View>
+
+                <View style={styles.freeCurrentBadge}>
+                  <Text style={styles.freeCurrentBadgeText}>
+                    {hasPro ? 'БАЗОВЫЙ' : 'ТЕКУЩИЙ ТАРИФ'}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.freeCounterBox}>
+                <Text style={styles.freeCounterText}>
+                  🎁 Осталось разборов:{' '}
+                  <Text style={styles.freeCounterHighlight}>{remainingFreeScans}</Text> из{' '}
+                  <Text style={styles.freeCounterHighlight}>{totalFreeScans}</Text>
+                </Text>
+              </View>
+
+              <View style={styles.freeFooterRow}>
+                <Text style={styles.freePriceLabel}>0 €</Text>
+                <View style={styles.freeDefaultInfoPill}>
+                  <Text style={styles.freeDefaultInfoText}>✓ Включён по умолчанию</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Tier 2: 1 Month Flexible (9.99 €) */}
+            <TouchableOpacity
+              style={[
+                styles.planCard,
+                selectedPlan === 'month' && styles.planCardActive,
+              ]}
+              onPress={() => setSelectedPlan('month')}
+              activeOpacity={0.88}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: selectedPlan === 'month' }}
+            >
+              <View style={styles.planCardHeaderRow}>
+                <View style={styles.planRadioOuter}>
+                  {selectedPlan === 'month' && <View style={styles.planRadioInner} />}
+                </View>
+
+                <View style={styles.planTitleBox}>
+                  <Text style={styles.planName}>1 месяц (Гибкий)</Text>
+                  <Text style={styles.planDescription}>Для разовой помощи или подготовки к четверти</Text>
+                </View>
+              </View>
+
+              <View style={styles.planPriceRow}>
+                <Text style={styles.planPriceMedium}>9.99 € / мес</Text>
+                <Text style={styles.planPriceSubtext}>Продление каждый месяц, отмена в любой момент</Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Tier 3: Semester (5 months — 44.90 €) */}
+            <TouchableOpacity
+              style={[
+                styles.planCard,
+                selectedPlan === 'semester' && styles.planCardActive,
+              ]}
+              onPress={() => setSelectedPlan('semester')}
+              activeOpacity={0.88}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: selectedPlan === 'semester' }}
+            >
+              <View style={styles.planCardHeaderRow}>
+                <View style={styles.planRadioOuter}>
+                  {selectedPlan === 'semester' && <View style={styles.planRadioInner} />}
+                </View>
+
+                <View style={styles.planTitleBox}>
+                  <Text style={styles.planName}>Семестр (5 месяцев)</Text>
+                  <Text style={styles.planDescription}>Уверенная учёба на один семестр</Text>
+                </View>
+              </View>
+
+              <View style={styles.planPriceRow}>
+                <Text style={styles.planPriceBig}>44.90 €</Text>
+                <Text style={styles.planPriceSubtext}>
+                  ~8.99 € / мес (разовая оплата)
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Tier 4: Full School Year (9 months — 71.90 €) - Recommended */}
             <TouchableOpacity
               style={[
                 styles.planCard,
@@ -217,65 +312,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
               </View>
             </TouchableOpacity>
 
-            {/* Plan 2: Semester (5 months) */}
-            <TouchableOpacity
-              style={[
-                styles.planCard,
-                selectedPlan === 'semester' && styles.planCardActive,
-              ]}
-              onPress={() => setSelectedPlan('semester')}
-              activeOpacity={0.88}
-              accessibilityRole="radio"
-              accessibilityState={{ checked: selectedPlan === 'semester' }}
-            >
-              <View style={styles.planCardHeaderRow}>
-                <View style={styles.planRadioOuter}>
-                  {selectedPlan === 'semester' && <View style={styles.planRadioInner} />}
-                </View>
-
-                <View style={styles.planTitleBox}>
-                  <Text style={styles.planName}>Семестр (5 месяцев)</Text>
-                  <Text style={styles.planDescription}>Уверенная учёба на один семестр</Text>
-                </View>
-              </View>
-
-              <View style={styles.planPriceRow}>
-                <Text style={styles.planPriceBig}>44.90 €</Text>
-                <Text style={styles.planPriceSubtext}>
-                  ~8.99 € / мес (разовая оплата)
-                </Text>
-              </View>
-            </TouchableOpacity>
-
-            {/* Plan 3: 1 Month Flexible */}
-            <TouchableOpacity
-              style={[
-                styles.planCard,
-                selectedPlan === 'month' && styles.planCardActive,
-              ]}
-              onPress={() => setSelectedPlan('month')}
-              activeOpacity={0.88}
-              accessibilityRole="radio"
-              accessibilityState={{ checked: selectedPlan === 'month' }}
-            >
-              <View style={styles.planCardHeaderRow}>
-                <View style={styles.planRadioOuter}>
-                  {selectedPlan === 'month' && <View style={styles.planRadioInner} />}
-                </View>
-
-                <View style={styles.planTitleBox}>
-                  <Text style={styles.planName}>1 месяц (Гибкий)</Text>
-                  <Text style={styles.planDescription}>Для разовой помощи или подготовки к четверти</Text>
-                </View>
-              </View>
-
-              <View style={styles.planPriceRow}>
-                <Text style={styles.planPriceMedium}>9.99 € / мес</Text>
-                <Text style={styles.planPriceSubtext}>Продление каждый месяц, отмена в любой момент</Text>
-              </View>
-            </TouchableOpacity>
-
-            {/* Plan 4: Full Year with Vacations (12 months) */}
+            {/* Tier 5: Full Year with Vacations (12 months — 89.90 €) */}
             <TouchableOpacity
               style={[
                 styles.planCard,
@@ -292,7 +329,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                 </View>
 
                 <View style={styles.planTitleBox}>
-                  <Text style={styles.planName}>Полный год с каникулами (12 месяцев)</Text>
+                  <Text style={styles.planName}>Полный год (12 месяцев с каникулами)</Text>
                   <Text style={styles.planDescription}>Учебный год + 3 месяца лета для закрепления языка</Text>
                 </View>
               </View>
@@ -642,6 +679,78 @@ const styles = StyleSheet.create({
   plansContainer: {
     gap: 14,
     marginBottom: 20,
+  },
+  freePlanCard: {
+    backgroundColor: darkTheme.cardBackground, // #1E252B
+    borderWidth: 1,
+    borderColor: '#5FEDC5',
+    borderRadius: 20,
+    padding: 18,
+    position: 'relative',
+    ...Theme.shadow.card,
+  },
+  freePlanHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 12,
+  },
+  freeCurrentBadge: {
+    backgroundColor: 'rgba(95, 237, 197, 0.14)',
+    borderWidth: 1,
+    borderColor: '#5FEDC5',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  freeCurrentBadgeText: {
+    color: '#5FEDC5',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  freeCounterBox: {
+    backgroundColor: 'rgba(95, 237, 197, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(95, 237, 197, 0.35)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+  },
+  freeCounterText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#F8FAFC',
+  },
+  freeCounterHighlight: {
+    color: '#5FEDC5',
+    fontWeight: '900',
+  },
+  freeFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(44, 54, 63, 0.6)',
+  },
+  freePriceLabel: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#F8FAFC',
+  },
+  freeDefaultInfoPill: {
+    backgroundColor: 'rgba(148, 163, 184, 0.12)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  freeDefaultInfoText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#CBD5E1',
   },
   planCard: {
     backgroundColor: darkTheme.cardBackground, // #1E252B
