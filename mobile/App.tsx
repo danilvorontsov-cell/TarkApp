@@ -57,6 +57,7 @@ import { DrawerMenu, DrawerTabType } from './src/components/DrawerMenu';
 import { ComingSoonCard } from './src/components/ComingSoonCard';
 import { AvatarPickerModal } from './src/components/AvatarPickerModal';
 import { LicenseActivationModal } from './src/components/LicenseActivationModal';
+import { LoadingOverlay } from './src/components/LoadingOverlay';
 import { QuickTranslatorScreen } from './src/screens/QuickTranslatorScreen';
 import { FeedbackScreen } from './src/screens/FeedbackScreen';
 import { PaywallScreen } from './src/screens/PaywallScreen';
@@ -136,6 +137,7 @@ function MainApp() {
   ).current;
 
   const scrollViewRef = useRef<React.ElementRef<typeof ScrollView>>(null);
+  const analysisSessionRef = useRef<number>(0);
   const tierPolicy = getTierPolicy(profile.grade || profile.tier);
   const isJunior = profile.tier === 'primary';
   const isFullAudioEnabled = tierPolicy.fullAudioEnabled;
@@ -279,7 +281,14 @@ function MainApp() {
           text: 'Выйти',
           style: 'destructive',
           onPress: async () => {
+            // 1. Invalidate any in-flight analysis requests
+            analysisSessionRef.current++;
+
+            // 2. Stop audio & clear prefetch queue
             AudioQueueManager.stop();
+            AudioQueueManager.clearQueue();
+
+            // 3. Clear profile
             const cleared: UserProfile = {
               ...profile,
               nickname: '',
@@ -287,10 +296,20 @@ function MainApp() {
             };
             setProfile(cleared);
             await StorageService.saveProfile(cleared);
+
+            // 4. Complete reset of active lesson & session state
             setAnalysis(null);
+            setSessionLessons([]);
             setCapturedImages([]);
             setCapturedImageUri(null);
-            switchTab('settings');
+            setIsSaved(false);
+            setShowAlternativeExplanation(false);
+            setAnalysisError(null);
+            setLoading(false);
+            setLoadingStep('');
+
+            // 5. Return user to empty study screen with primary camera button
+            switchTab('study');
           },
         },
       ]
@@ -421,6 +440,7 @@ function MainApp() {
 
   const processImagesAnalysis = async (imagesList: CapturedPageItem[]) => {
     if (!imagesList || imagesList.length === 0) return;
+    const currentSession = ++analysisSessionRef.current;
     setLoading(true);
     setAnalysisError(null);
     setLoadingStep(
@@ -438,6 +458,9 @@ function MainApp() {
         })
       );
 
+      // Discard if user logged out or started another action while optimizing
+      if (analysisSessionRef.current !== currentSession) return;
+
       const payload: ImagePayload[] = preparedImages.map((img) => ({
         base64: img.base64,
         uri: img.uri,
@@ -445,6 +468,9 @@ function MainApp() {
       }));
 
       const data = await analyzePagesJson(payload, profile, API_BASE_URL);
+
+      // Discard if user logged out while backend was analyzing
+      if (analysisSessionRef.current !== currentSession) return;
 
       // Decrement free reviews counter immediately in local state ONLY when photo was acceptable
       if (licenseStatus && !licenseStatus.has_key && data.is_acceptable !== false) {
@@ -461,6 +487,7 @@ function MainApp() {
       setShowAlternativeExplanation(false);
       await recordNewLesson(data, preparedImages);
     } catch (err: any) {
+      if (analysisSessionRef.current !== currentSession) return;
       if (
         err?.code === 'REVIEWS_LIMIT_REACHED' ||
         err?.message?.includes('Бесплатные разборы закончились')
@@ -476,8 +503,10 @@ function MainApp() {
         friendlyMsg
       );
     } finally {
-      setLoading(false);
-      setLoadingStep('');
+      if (analysisSessionRef.current === currentSession) {
+        setLoading(false);
+        setLoadingStep('');
+      }
     }
   };
 
@@ -996,6 +1025,30 @@ function MainApp() {
               <Text style={styles.addPageText}>Добавить{'\n'}страницу</Text>
             </TouchableOpacity>
           </ScrollView>
+        </View>
+      )}
+
+      {/* Inline Loading / Skeleton Card when analysis is active */}
+      {loading && (
+        <View style={styles.loadingSkeletonCard}>
+          <View style={styles.loadingSkeletonHeader}>
+            <ActivityIndicator size="small" color="#66F6CF" />
+            <Text style={styles.loadingSkeletonHeaderTitle}>TarkApp анализирует страницу...</Text>
+          </View>
+          <Text style={styles.loadingSkeletonSubtitle}>
+            Переводим термины и готовим подсказку
+          </Text>
+          {Boolean(loadingStep && loadingStep.trim().length > 0) && (
+            <View style={styles.loadingSkeletonStepBox}>
+              <Text style={styles.loadingSkeletonStepText}>⚡ {loadingStep}</Text>
+            </View>
+          )}
+          <View style={styles.loadingSkeletonBars}>
+            <View style={[styles.loadingSkeletonBar, { width: '88%' }]} />
+            <View style={[styles.loadingSkeletonBar, { width: '68%' }]} />
+            <View style={[styles.loadingSkeletonBar, { width: '94%' }]} />
+            <View style={[styles.loadingSkeletonBar, { width: '50%' }]} />
+          </View>
         </View>
       )}
 
@@ -2339,6 +2392,14 @@ function MainApp() {
         isBlocking={true}
         reason={modalBlockReason}
       />
+
+      {/* Fullscreen Blocking Loading Overlay during Photo Analysis */}
+      <LoadingOverlay
+        visible={loading}
+        title="TarkApp анализирует страницу..."
+        subtitle="Переводим термины и готовим подсказку"
+        stepText={loadingStep}
+      />
     </LinearGradient>
   );
 }
@@ -2817,6 +2878,59 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 
+  // Loading Skeleton Card Styles (Analysis in progress)
+  loadingSkeletonCard: {
+    backgroundColor: darkTheme.cardBackground,
+    borderWidth: 1.5,
+    borderColor: '#36434E',
+    borderRadius: 20,
+    padding: 20,
+    marginTop: 8,
+    marginBottom: 16,
+    ...Theme.shadow.card,
+  },
+  loadingSkeletonHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 6,
+  },
+  loadingSkeletonHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: darkTheme.textPrimary,
+  },
+  loadingSkeletonSubtitle: {
+    fontSize: 13,
+    color: darkTheme.textSecondary,
+    marginBottom: 8,
+    lineHeight: 18,
+  },
+  loadingSkeletonStepBox: {
+    backgroundColor: 'rgba(95, 237, 197, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(95, 237, 197, 0.35)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+  },
+  loadingSkeletonStepText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#5FEDC5',
+  },
+  loadingSkeletonBars: {
+    gap: 10,
+    marginTop: 4,
+  },
+  loadingSkeletonBar: {
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: 'rgba(95, 237, 197, 0.12)',
+  },
+
   // Action Buttons Section
   actionsContainer: {
     marginBottom: 16,
@@ -3213,18 +3327,20 @@ const styles = StyleSheet.create({
     color: Theme.colors.onPrimaryText,
   },
   altExplanationBadge: {
-    backgroundColor: 'rgba(95, 237, 197, 0.22)',
+    backgroundColor: 'rgba(95, 237, 197, 0.12)',
+    borderWidth: 1,
+    borderColor: '#5FEDC5',
     borderRadius: 8,
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 5,
     alignSelf: 'flex-start',
     marginTop: 4,
     marginBottom: 8,
   },
   altExplanationBadgeText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#064E3B',
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#5FEDC5',
   },
   altExplanationActionRow: {
     flexDirection: 'row',
@@ -3234,25 +3350,25 @@ const styles = StyleSheet.create({
   altToggleBtnBottom: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#181E24',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#2C363F',
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
     alignSelf: 'flex-end',
   },
   altToggleBtnBottomActive: {
-    backgroundColor: '#CFFAEE',
+    backgroundColor: 'rgba(95, 237, 197, 0.16)',
     borderColor: '#5FEDC5',
   },
   altToggleBtnTextBottom: {
     fontSize: 12.5,
     fontWeight: '600',
-    color: '#475569',
+    color: '#94A3B8',
   },
   altToggleBtnTextBottomActive: {
-    color: '#064E3B',
+    color: '#5FEDC5',
     fontWeight: '700',
   },
 
