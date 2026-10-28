@@ -17,7 +17,7 @@ import * as Clipboard from 'expo-clipboard';
 import { darkTheme, Theme } from '../theme/colors';
 import { getDeviceId, sendFeedback } from '../services/api';
 
-export type SubscriptionPlan = 'year' | 'semester' | 'month';
+export type SubscriptionPlan = 'year' | 'semester' | 'month' | 'full_year';
 
 interface PaywallScreenProps {
   visible: boolean;
@@ -70,17 +70,21 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
       const deviceId = await getDeviceId();
       const planName =
         selectedPlan === 'year'
-          ? 'Учебный год (9 мес) — 79.90 €'
+          ? 'Учебный год (9 мес) — 71.90 €'
           : selectedPlan === 'semester'
-          ? 'Полгода (Семестр, 4.5 мес) — 44.90 €'
-          : '1 месяц — 9.99 €';
+          ? 'Семестр (5 мес) — 44.90 €'
+          : selectedPlan === 'month'
+          ? '1 месяц (Гибкий) — 9.99 €'
+          : 'Полный год с каникулами (12 мес) — 89.90 €';
 
       const planLabel =
         selectedPlan === 'year'
-          ? 'Полный учебный год'
+          ? 'Учебный год (9 мес)'
           : selectedPlan === 'semester'
-          ? 'Полгода (Семестр)'
-          : '1 месяц';
+          ? 'Семестр (5 мес)'
+          : selectedPlan === 'month'
+          ? '1 месяц (Гибкий)'
+          : 'Полный год с каникулами (12 мес)';
 
       await sendFeedback({
         category: 'feature',
@@ -161,7 +165,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
             </Text>
           </View>
 
-          {/* Section B: Pricing Cards Radio Group (3 Tiers) */}
+          {/* Section B: Pricing Cards Radio Group (4 Tiers) */}
           <View style={styles.plansContainer}>
             {/* Plan 1: Full School Year (9 months) - Recommended */}
             <TouchableOpacity
@@ -175,7 +179,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
               accessibilityState={{ checked: selectedPlan === 'year' }}
             >
               <View style={styles.discountBadge}>
-                <Text style={styles.discountBadgeText}>ВЫГОДНО • 1 МЕСЯЦ В ПОДАРОК</Text>
+                <Text style={styles.discountBadgeText}>ХИТ • РЕКОМЕНДУЕМЫЙ</Text>
               </View>
 
               <View style={styles.planCardHeaderRow}>
@@ -184,20 +188,20 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                 </View>
 
                 <View style={styles.planTitleBox}>
-                  <Text style={styles.planName}>Полный учебный год</Text>
+                  <Text style={styles.planName}>Учебный год (9 месяцев)</Text>
                   <Text style={styles.planDescription}>Сентябрь — Май (все 9 учебных месяцев)</Text>
                 </View>
               </View>
 
               <View style={styles.planPriceRow}>
-                <Text style={styles.planPriceBig}>79.90 €</Text>
+                <Text style={styles.planPriceBig}>71.90 €</Text>
                 <Text style={styles.planPriceSubtext}>
-                  ~8.88 € / месяц (разовый платёж на весь учебный год)
+                  ~7.99 € / мес (разовый платёж на все 9 месяцев учёбы)
                 </Text>
               </View>
             </TouchableOpacity>
 
-            {/* Plan 2: Semester / Half-year (4.5 months) */}
+            {/* Plan 2: Semester (5 months) */}
             <TouchableOpacity
               style={[
                 styles.planCard,
@@ -214,15 +218,15 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                 </View>
 
                 <View style={styles.planTitleBox}>
-                  <Text style={styles.planName}>Полгода (Семестр)</Text>
-                  <Text style={styles.planDescription}>Уверенная учёба на два учебных периода</Text>
+                  <Text style={styles.planName}>Семестр (5 месяцев)</Text>
+                  <Text style={styles.planDescription}>Уверенная учёба на один семестр</Text>
                 </View>
               </View>
 
               <View style={styles.planPriceRow}>
                 <Text style={styles.planPriceBig}>44.90 €</Text>
                 <Text style={styles.planPriceSubtext}>
-                  ~9.97 € / месяц (разовая оплата)
+                  ~8.99 € / мес (разовая оплата)
                 </Text>
               </View>
             </TouchableOpacity>
@@ -244,14 +248,44 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                 </View>
 
                 <View style={styles.planTitleBox}>
-                  <Text style={styles.planName}>1 месяц</Text>
-                  <Text style={styles.planDescription}>Для подготовки к четверти или разовой помощи</Text>
+                  <Text style={styles.planName}>1 месяц (Гибкий)</Text>
+                  <Text style={styles.planDescription}>Для разовой помощи или подготовки к четверти</Text>
                 </View>
               </View>
 
               <View style={styles.planPriceRow}>
                 <Text style={styles.planPriceMedium}>9.99 € / мес</Text>
                 <Text style={styles.planPriceSubtext}>Продление каждый месяц, отмена в любой момент</Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Plan 4: Full Year with Vacations (12 months) */}
+            <TouchableOpacity
+              style={[
+                styles.planCard,
+                selectedPlan === 'full_year' && styles.planCardActive,
+              ]}
+              onPress={() => setSelectedPlan('full_year')}
+              activeOpacity={0.88}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: selectedPlan === 'full_year' }}
+            >
+              <View style={styles.planCardHeaderRow}>
+                <View style={styles.planRadioOuter}>
+                  {selectedPlan === 'full_year' && <View style={styles.planRadioInner} />}
+                </View>
+
+                <View style={styles.planTitleBox}>
+                  <Text style={styles.planName}>Полный год с каникулами (12 месяцев)</Text>
+                  <Text style={styles.planDescription}>Учебный год + 3 месяца лета для закрепления языка</Text>
+                </View>
+              </View>
+
+              <View style={styles.planPriceRow}>
+                <Text style={styles.planPriceBig}>89.90 €</Text>
+                <Text style={styles.planPriceSubtext}>
+                  ~7.49 € / мес (9 мес учёбы + 3 мес лета)
+                </Text>
               </View>
             </TouchableOpacity>
           </View>
@@ -299,10 +333,12 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
             >
               <Text style={styles.ctaButtonText}>
                 {selectedPlan === 'year'
-                  ? 'Оформить учебный год — 79.90 €'
+                  ? 'Оформить учебный год — 71.90 €'
                   : selectedPlan === 'semester'
-                  ? 'Оформить на полгода — 44.90 €'
-                  : 'Попробовать 1 месяц — 9.99 €'}
+                  ? 'Оформить семестр — 44.90 €'
+                  : selectedPlan === 'month'
+                  ? 'Попробовать 1 месяц — 9.99 €'
+                  : 'Оформить год с каникулами — 89.90 €'}
               </Text>
             </TouchableOpacity>
 
@@ -343,10 +379,12 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
               <View style={styles.invoiceModalHeader}>
                 <Text style={styles.invoiceModalTitle}>
                   {selectedPlan === 'year'
-                    ? 'Оплата: Учебный год (79.90 €)'
+                    ? 'Оплата: Учебный год (71.90 €)'
                     : selectedPlan === 'semester'
-                    ? 'Оплата: Полгода (44.90 €)'
-                    : 'Оплата: 1 месяц (9.99 €)'}
+                    ? 'Оплата: Семестр (44.90 €)'
+                    : selectedPlan === 'month'
+                    ? 'Оплата: 1 месяц (9.99 €)'
+                    : 'Оплата: Год с каникулами (89.90 €)'}
                 </Text>
                 <TouchableOpacity
                   onPress={() => setIsInvoiceModalVisible(false)}
@@ -391,17 +429,19 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                     <Text style={styles.ibanDetailLabel}>Сумма:</Text>
                     <Text style={styles.ibanDetailPrice}>
                       {selectedPlan === 'year'
-                        ? '79.90 EUR'
+                        ? '71.90 EUR'
                         : selectedPlan === 'semester'
                         ? '44.90 EUR'
-                        : '9.99 EUR'}
+                        : selectedPlan === 'month'
+                        ? '9.99 EUR'
+                        : '89.90 EUR'}
                     </Text>
                   </View>
 
                   <View style={styles.ibanDetailRow}>
                     <Text style={styles.ibanDetailLabel}>Пояснение (Selgitus):</Text>
                     <Text style={styles.ibanDetailValue}>
-                      TarkApp PRO {selectedPlan === 'year' ? 'Aasta' : selectedPlan === 'semester' ? 'Poolaasta' : 'Kuu'}
+                      TarkApp PRO {selectedPlan === 'year' ? 'Aasta 9k' : selectedPlan === 'semester' ? 'Semester 5k' : selectedPlan === 'month' ? 'Kuu 1k' : 'Aasta 12k'}
                     </Text>
                   </View>
                 </View>
