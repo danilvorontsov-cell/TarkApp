@@ -2205,8 +2205,13 @@ function MainApp() {
     >
       <RNStatusBar barStyle="dark-content" />
 
-      {/* Nordic Clean Persistent Onsen Header Bar */}
-      <View style={[styles.headerBar, { paddingTop: headerTopPadding + 4 }]}>
+      {/* Nordic Clean Persistent Onsen Header Bar with Vertical Mint Gradient */}
+      <LinearGradient
+        colors={['#66F6CF', '#42DCA3']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={[styles.headerBar, { paddingTop: headerTopPadding + 4 }]}
+      >
         <TouchableOpacity
           style={styles.headerMenuBtn}
           onPress={() => setIsDrawerOpen(true)}
@@ -2286,10 +2291,17 @@ function MainApp() {
             </Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </LinearGradient>
 
       {/* Concave Dark Nordic Content Container overlapping header */}
       <View style={styles.bodyConcaveContainer}>
+        <LinearGradient
+          colors={['#1A2026', '#0D1115']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
         <ScrollView
           ref={scrollViewRef}
           contentContainerStyle={[
@@ -2467,23 +2479,25 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   headerBar: {
-    backgroundColor: '#5FEDC5',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingBottom: 22,
+    paddingBottom: 28,
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
-    ...Theme.shadow.header,
+    zIndex: 1,
+    elevation: 0,
   },
   bodyConcaveContainer: {
     flex: 1,
-    marginTop: -16,
+    marginTop: -20,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    backgroundColor: '#12161A',
+    backgroundColor: '#1A2026',
     overflow: 'hidden',
+    zIndex: 2,
+    elevation: 4,
   },
   headerMenuBtn: {
     width: 40,
@@ -2535,24 +2549,24 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headerProBadge: {
-    backgroundColor: darkTheme.cardBackground,
+    backgroundColor: '#161C22',
     paddingHorizontal: 11,
     paddingVertical: 5,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: darkTheme.cardBorder,
+    borderColor: '#064E3B',
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerProBadgeActive: {
-    backgroundColor: 'rgba(95, 237, 197, 0.14)',
-    borderColor: darkTheme.accent,
+    backgroundColor: '#161C22',
+    borderColor: '#064E3B',
     borderWidth: 1.5,
   },
   headerProBadgeText: {
-    color: darkTheme.textSecondary,
+    color: '#F8FAFC',
     fontSize: 12.5,
-    fontWeight: '700',
+    fontWeight: '800',
     letterSpacing: 0.3,
   },
   headerProBadgeTextActive: {
@@ -2562,18 +2576,18 @@ const styles = StyleSheet.create({
   headerProfilePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: darkTheme.cardBackground,
+    backgroundColor: '#161C22',
     borderWidth: 1,
-    borderColor: darkTheme.cardBorder,
+    borderColor: '#064E3B',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 18,
     maxWidth: 130,
   },
   headerProfilePillGuest: {
-    backgroundColor: darkTheme.cardBackground,
+    backgroundColor: '#161C22',
     borderWidth: 1,
-    borderColor: darkTheme.cardBorder,
+    borderColor: '#064E3B',
     paddingHorizontal: 11,
     paddingVertical: 5,
   },
@@ -2590,11 +2604,11 @@ const styles = StyleSheet.create({
   headerProfileText: {
     fontSize: 13,
     fontWeight: '700',
-    color: darkTheme.textPrimary,
+    color: '#F8FAFC',
   },
   headerProfileTextGuest: {
     fontWeight: '700',
-    color: darkTheme.textSecondary,
+    color: '#F8FAFC',
   },
   headerProfileIconText: {
     fontSize: 15,

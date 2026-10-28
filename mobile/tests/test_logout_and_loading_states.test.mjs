@@ -199,3 +199,23 @@ test('Scenario 7: Näidis badge, step numbers, and next task button contrast tok
     'nextTaskButtonText must use mint #5FEDC5'
   );
 });
+
+test('Scenario 8: Drawer footer branding and Header vertical gradient', async () => {
+  const fs = await import('node:fs');
+  const drawerContent = fs.readFileSync('mobile/src/components/DrawerMenu.tsx', 'utf-8');
+  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+
+  // Verify Drawer footer text
+  assert.match(
+    drawerContent,
+    /TarkApp • v1\.0\.0 • Tark Systems/,
+    'DrawerMenu must display TarkApp • v1.0.0 • Tark Systems'
+  );
+
+  // Verify Header vertical gradient ['#66F6CF', '#42DCA3']
+  assert.match(
+    appContent,
+    /<LinearGradient[\s\S]*?colors=\{\['#66F6CF',\s*'#42DCA3'\]\}[\s\S]*?start=\{\{\s*x:\s*0,\s*y:\s*0\s*\}\}[\s\S]*?end=\{\{\s*x:\s*0,\s*y:\s*1\s*\}\}[\s\S]*?style=\{\[styles\.headerBar/,
+    'Header bar must use vertical LinearGradient ["#66F6CF", "#42DCA3"]'
+  );
+});

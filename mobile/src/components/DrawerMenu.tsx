@@ -351,7 +351,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
           )}
 
           <View style={styles.versionContainer}>
-            <Text style={styles.versionText}>TarkApp • Nordic Onsen</Text>
+            <Text style={styles.versionText}>TarkApp • v1.0.0 • Tark Systems</Text>
           </View>
         </View>
       </Animated.View>
@@ -381,10 +381,9 @@ const styles = StyleSheet.create({
   },
   drawerHeader: {
     paddingHorizontal: 22,
-    paddingBottom: 24,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    overflow: 'hidden',
+    paddingBottom: 34,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
   },
   avatarButton: {
     alignSelf: 'flex-start',
@@ -443,7 +442,12 @@ const styles = StyleSheet.create({
   },
   menuList: {
     flex: 1,
-    paddingVertical: 14,
+    marginTop: -18,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: darkTheme.cardBackground,
+    paddingTop: 16,
+    paddingBottom: 14,
     paddingHorizontal: 12,
   },
   menuItem: {
@@ -563,7 +567,7 @@ const styles = StyleSheet.create({
     paddingBottom: 2,
   },
   versionText: {
-    fontSize: 11,
+    fontSize: 12,
     color: darkTheme.textMuted,
     fontWeight: '500',
   },
