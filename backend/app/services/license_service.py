@@ -71,6 +71,39 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
     else:
         days_left = 0
 
+    package_name = None
+    if has_key:
+        if device.activated_key:
+            key_code = device.activated_key.strip().upper()
+            if key_code == "DEV-KEY-TEST":
+                package_name = "PRO"
+            else:
+                key_obj = db.query(AccessKey).filter(AccessKey.key_code == device.activated_key).first()
+                if key_obj:
+                    dur = key_obj.duration_days or 30
+                    if dur >= 360:
+                        package_name = "12 месяцев"
+                    elif dur >= 240:
+                        package_name = "Учебный год"
+                    elif dur >= 120:
+                        package_name = "Семестр"
+                    elif dur >= 25:
+                        package_name = "1 месяц"
+                    else:
+                        package_name = f"{dur} дн."
+                elif "YEAR" in key_code or "9M" in key_code:
+                    package_name = "Учебный год"
+                elif "SEM" in key_code or "5M" in key_code:
+                    package_name = "Семестр"
+                elif "MONTH" in key_code or "1M" in key_code:
+                    package_name = "1 месяц"
+                elif "FULL" in key_code or "12M" in key_code:
+                    package_name = "12 месяцев"
+                else:
+                    package_name = "PRO"
+        else:
+            package_name = "PRO"
+
     return {
         "allowed": is_allowed,
         "is_active": is_allowed,
@@ -81,6 +114,7 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
         "expires_at": device.trial_expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "device_id": device.device_id,
         "activated_key": device.activated_key,
+        "package_name": package_name,
     }
 
 
@@ -221,6 +255,17 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
         f"New expiry: {expires_str}"
     )
 
+    if duration >= 360:
+        package_name = "12 месяцев"
+    elif duration >= 240:
+        package_name = "Учебный год"
+    elif duration >= 120:
+        package_name = "Семестр"
+    elif duration >= 25:
+        package_name = "1 месяц"
+    else:
+        package_name = f"{duration} дн."
+
     return {
         "success": True,
         "message": f"Ключ успешно активирован! Доступ продлен на {duration} дней.",
@@ -230,6 +275,7 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
         "max_free_reviews": DEFAULT_FREE_REVIEWS,
         "days_left": days_left,
         "expires_at": expires_str,
+        "package_name": package_name,
     }
 
 

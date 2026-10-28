@@ -57,6 +57,7 @@ export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
           days_left: res.days_left,
           expires_at: res.expires_at,
           activated_key: trimmed,
+          package_name: res.package_name,
         });
         setKeyCode('');
         setSuccessMessage(null);

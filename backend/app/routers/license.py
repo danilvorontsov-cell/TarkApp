@@ -87,6 +87,7 @@ def get_license_status(
         expires_at=status_data["expires_at"],
         device_id=status_data["device_id"],
         activated_key=status_data["activated_key"],
+        package_name=status_data.get("package_name"),
     )
 
 
@@ -115,6 +116,7 @@ def activate_access_key(
             max_free_reviews=res.get("max_free_reviews", 5),
             days_left=res["days_left"],
             expires_at=res["expires_at"],
+            package_name=res.get("package_name"),
         )
     except ValueError as val_err:
         raise HTTPException(

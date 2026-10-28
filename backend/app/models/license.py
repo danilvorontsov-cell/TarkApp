@@ -45,6 +45,7 @@ class LicenseStatusResponse(BaseModel):
     expires_at: str
     device_id: Optional[str] = None
     activated_key: Optional[str] = None
+    package_name: Optional[str] = None
 
 
 class KeyActivateRequest(BaseModel):
@@ -60,3 +61,4 @@ class KeyActivateResponse(BaseModel):
     max_free_reviews: int = 5
     days_left: int
     expires_at: str
+    package_name: Optional[str] = None

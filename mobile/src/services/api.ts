@@ -174,6 +174,7 @@ export interface LicenseStatus {
   expires_at: string;
   device_id?: string;
   activated_key?: string;
+  package_name?: string;
 }
 
 export interface KeyActivateResponse {
@@ -185,6 +186,7 @@ export interface KeyActivateResponse {
   max_free_reviews?: number;
   days_left: number;
   expires_at: string;
+  package_name?: string;
 }
 
 export async function getLicenseStatus(baseUrl: string = API_BASE_URL): Promise<LicenseStatus> {

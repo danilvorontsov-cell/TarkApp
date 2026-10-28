@@ -99,6 +99,14 @@ def test_activate_key_success(setup_db):
     assert data["success"] is True
     assert data["is_active"] is True
     assert data["days_left"] >= 40  # 14 trial + 30 key
+    assert data["package_name"] == "1 месяц"
+
+    # Verify status endpoint reflects package name
+    status_resp = client.get("/api/v1/license/status", headers={"X-Device-ID": device_id})
+    assert status_resp.status_code == 200
+    status_data = status_resp.json()
+    assert status_data["has_key"] is True
+    assert status_data["package_name"] == "1 месяц"
 
     # Verify key in DB is marked used
     db_key = db.query(AccessKey).filter(AccessKey.key_code == key_code).first()
@@ -174,6 +182,7 @@ def test_status_endpoint_returns_review_counters(setup_db):
     assert response.status_code == 200
     data = response.json()
     assert data["has_key"] is False
+    assert data["package_name"] is None
     assert data["free_reviews_left"] == 5
     assert data["max_free_reviews"] == 5
     assert data["is_active"] is True

@@ -1020,7 +1020,11 @@ function MainApp() {
                 onPress={() => setIsPaywallVisible(true)}
                 activeOpacity={0.8}
               >
-                <Text style={styles.subscriptionActiveBadgeText}>✓ PRO • Безлимитный доступ</Text>
+                <Text style={styles.subscriptionActiveBadgeText}>
+                  {licenseStatus.package_name
+                    ? `✓ ${licenseStatus.package_name} • Безлимитный доступ`
+                    : '✓ PRO • Безлимитный доступ'}
+                </Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -1974,10 +1978,12 @@ function MainApp() {
             ]}
           >
             {licenseStatus
-              ? licenseStatus.is_active
-                ? `Пробный период (осталось ${licenseStatus.days_left} дн.)`
-                : 'Срок действия пробного периода завершен'
-              : 'Пробный период (осталось 14 дн.)'}
+              ? licenseStatus.has_key
+                ? `Активен пакет: ${licenseStatus.package_name || 'PRO'} (осталось ${licenseStatus.days_left} дн.)`
+                : licenseStatus.is_active
+                ? `Бесплатный режим Free (${licenseStatus.free_reviews_left ?? 5}/5 разборов)`
+                : 'Бесплатные попытки исчерпаны'
+              : 'Режим Free'}
           </Text>
           {licenseStatus?.expires_at && (
             <Text style={styles.licenseExpiryText}>
@@ -2067,7 +2073,7 @@ function MainApp() {
           <Text style={styles.headerBrandTitle}>TarkApp</Text>
         </View>
 
-        {/* Right Header Controls: PRO Badge & Profile */}
+        {/* Right Header Controls: PRO/Plan Badge & Profile */}
         <View style={styles.headerRightGroup}>
           <TouchableOpacity
             style={[
@@ -2076,7 +2082,9 @@ function MainApp() {
             ]}
             onPress={() => setIsPaywallVisible(true)}
             accessibilityLabel={
-              licenseStatus?.has_key ? 'Подписка PRO активна' : 'Посмотреть тарифы PRO'
+              licenseStatus?.has_key
+                ? `Подписка активна: ${licenseStatus.package_name || 'PRO'}`
+                : 'Тариф: Free. Нажмите для выбора тарифа'
             }
             accessibilityRole="button"
             hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
@@ -2088,7 +2096,9 @@ function MainApp() {
                 licenseStatus?.has_key && styles.headerProBadgeTextActive,
               ]}
             >
-              {licenseStatus?.has_key ? '👑 PRO' : '⚡ Тарифы'}
+              {licenseStatus?.has_key
+                ? (licenseStatus.package_name ? `👑 ${licenseStatus.package_name}` : '👑 PRO')
+                : 'Free'}
             </Text>
           </TouchableOpacity>
 
@@ -2347,41 +2357,45 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headerProBadge: {
-    backgroundColor: '#064E3B',
-    paddingHorizontal: 9,
+    backgroundColor: darkTheme.cardBackground,
+    paddingHorizontal: 11,
     paddingVertical: 5,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#5FEDC5',
+    borderColor: darkTheme.cardBorder,
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerProBadgeActive: {
-    backgroundColor: 'rgba(6, 78, 59, 0.15)',
-    borderColor: '#064E3B',
+    backgroundColor: 'rgba(95, 237, 197, 0.14)',
+    borderColor: darkTheme.accent,
+    borderWidth: 1.5,
   },
   headerProBadgeText: {
-    color: '#5FEDC5',
-    fontSize: 12,
-    fontWeight: '800',
+    color: darkTheme.textSecondary,
+    fontSize: 12.5,
+    fontWeight: '700',
     letterSpacing: 0.3,
   },
   headerProBadgeTextActive: {
-    color: '#064E3B',
+    color: darkTheme.accent,
+    fontWeight: '800',
   },
   headerProfilePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(6, 78, 59, 0.12)',
+    backgroundColor: darkTheme.cardBackground,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 18,
     maxWidth: 130,
   },
   headerProfilePillGuest: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#064E3B',
+    backgroundColor: darkTheme.cardBackground,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     paddingHorizontal: 11,
     paddingVertical: 5,
   },
@@ -2398,20 +2412,20 @@ const styles = StyleSheet.create({
   headerProfileText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#064E3B',
+    color: darkTheme.textPrimary,
   },
   headerProfileTextGuest: {
-    fontWeight: '800',
-    color: '#064E3B',
+    fontWeight: '700',
+    color: darkTheme.textSecondary,
   },
   headerProfileIconText: {
     fontSize: 15,
   },
   guestNoticeCard: {
     flexDirection: 'row',
-    backgroundColor: '#CFFAEE',
-    borderWidth: 1.5,
-    borderColor: '#5FEDC5',
+    backgroundColor: darkTheme.cardBackground,
+    borderWidth: 1,
+    borderColor: darkTheme.cardBorder,
     borderRadius: 14,
     padding: 12,
     marginBottom: 16,
@@ -2427,12 +2441,12 @@ const styles = StyleSheet.create({
   guestNoticeTitle: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#064E3B',
+    color: darkTheme.textPrimary,
     marginBottom: 2,
   },
   guestNoticeText: {
     fontSize: 13,
-    color: '#065F46',
+    color: darkTheme.textSecondary,
     lineHeight: 18,
   },
   saveProfileBtn: {
