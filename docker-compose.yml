@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tarkapp-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - APP_ENV=production
+      - DATABASE_URL=sqlite:////app/data/tarkapp.db
+    volumes:
+      - tarkapp_db_data:/app/data
+      - tarkapp_audio_data:/app/static/audio
+      - tarkapp_logs_data:/app/logs
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - tarkapp-net
+
+  nginx:
+    image: nginx:alpine
+    container_name: tarkapp-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/landing:/var/www/landing:ro
+      - certbot_www:/var/www/certbot:ro
+      - certbot_conf:/etc/letsencrypt:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - tarkapp-net
+
+volumes:
+  tarkapp_db_data:
+    name: tarkapp_db_data
+  tarkapp_audio_data:
+    name: tarkapp_audio_data
+  tarkapp_logs_data:
+    name: tarkapp_logs_data
+  certbot_www:
+    name: tarkapp_certbot_www
+  certbot_conf:
+    name: tarkapp_certbot_conf
+
+networks:
+  tarkapp-net:
+    name: tarkapp-network
+    driver: bridge

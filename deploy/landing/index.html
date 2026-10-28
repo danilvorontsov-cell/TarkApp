@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="ru" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TarkApp — персональный учебный проводник в эстонскую школьную программу</title>
+  
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            graphite: {
+              950: '#12161A',
+              900: '#161C22',
+              850: '#1A2026',
+              800: '#1E252B',
+              700: '#263038',
+              600: '#33404B',
+              400: '#94A3B8',
+            },
+            mint: {
+              DEFAULT: '#5FEDC5',
+              hover: '#66F6CF',
+              dim: 'rgba(95, 237, 197, 0.15)',
+              border: 'rgba(95, 237, 197, 0.15)',
+              glow: 'rgba(95, 237, 197, 0.25)',
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body {
+      background: linear-gradient(180deg, #12161A 0%, #161C22 45%, #1A2026 100%);
+      background-attachment: fixed;
+      color: #F8FAFC;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+    
+    ::selection {
+      background-color: #5FEDC5;
+      color: #12161A;
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #12161A;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #263038;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #5FEDC5;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-[#F8FAFC] antialiased flex flex-col justify-between selection:bg-[#5FEDC5] selection:text-[#12161A]">
+
+  <!-- ==================== HEADER ==================== -->
+  <header class="sticky top-0 z-50 bg-[#12161A]/90 backdrop-blur-md border-b border-[rgba(95,237,197,0.15)] transition-all">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+      
+      <!-- Logo: TarkApp (мятный, жирный) -->
+      <a href="#" class="flex items-center space-x-3 group">
+        <div class="w-10 h-10 rounded-xl bg-[#1E252B] border border-[rgba(95,237,197,0.25)] flex items-center justify-center shadow-[0_0_15px_rgba(95,237,197,0.15)] group-hover:border-[#5FEDC5] transition-colors">
+          <span class="text-[#5FEDC5] font-black text-xl">T</span>
+        </div>
+        <span class="text-2xl font-extrabold tracking-tight text-[#5FEDC5] group-hover:text-[#66F6CF] transition-colors">
+          TarkApp
+        </span>
+      </a>
+
+      <!-- Desktop Navigation -->
+      <nav class="hidden lg:flex items-center space-x-3 text-sm font-medium text-[#E2E8F0]">
+        <a href="#purpose" class="hover:text-[#5FEDC5] transition-colors py-1">Для чего создано</a>
+        <span class="text-[#5FEDC5]/40 select-none">•</span>
+        <a href="#how-it-works" class="hover:text-[#5FEDC5] transition-colors py-1">Как это работает</a>
+        <span class="text-[#5FEDC5]/40 select-none">•</span>
+        <a href="#stages" class="hover:text-[#5FEDC5] transition-colors py-1">Учебные звенья</a>
+        <span class="text-[#5FEDC5]/40 select-none">•</span>
+        <a href="#nature" class="hover:text-[#5FEDC5] transition-colors py-1">Познание мира</a>
+        <span class="text-[#5FEDC5]/40 select-none">•</span>
+        <a href="#principles" class="hover:text-[#5FEDC5] transition-colors py-1">Принципы</a>
+        <span class="text-[#5FEDC5]/40 select-none">•</span>
+        <a href="#science" class="hover:text-[#5FEDC5] transition-colors py-1">Научная база</a>
+      </nav>
+
+      <!-- Mobile Hamburger Button -->
+      <button id="mobileMenuBtn" type="button" aria-label="Toggle Menu" class="lg:hidden p-2 rounded-lg bg-[#1E252B] text-[#5FEDC5] border border-[rgba(95,237,197,0.2)] hover:border-[#5FEDC5] focus:outline-none">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path id="menuIcon" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Mobile Navigation Dropdown -->
+    <div id="mobileMenu" class="hidden lg:hidden bg-[#161C22] border-b border-[rgba(95,237,197,0.15)] px-4 pt-3 pb-6 space-y-3">
+      <a href="#purpose" class="mobile-nav-link block px-3 py-2 rounded-lg text-base font-medium text-[#E2E8F0] hover:text-[#5FEDC5] hover:bg-[#1E252B]">Для чего создано</a>
+      <a href="#how-it-works" class="mobile-nav-link block px-3 py-2 rounded-lg text-base font-medium text-[#E2E8F0] hover:text-[#5FEDC5] hover:bg-[#1E252B]">Как это работает</a>
+      <a href="#stages" class="mobile-nav-link block px-3 py-2 rounded-lg text-base font-medium text-[#E2E8F0] hover:text-[#5FEDC5] hover:bg-[#1E252B]">Учебные звенья</a>
+      <a href="#nature" class="mobile-nav-link block px-3 py-2 rounded-lg text-base font-medium text-[#E2E8F0] hover:text-[#5FEDC5] hover:bg-[#1E252B]">Познание мира</a>
+      <a href="#principles" class="mobile-nav-link block px-3 py-2 rounded-lg text-base font-medium text-[#E2E8F0] hover:text-[#5FEDC5] hover:bg-[#1E252B]">Принципы</a>
+      <a href="#science" class="mobile-nav-link block px-3 py-2 rounded-lg text-base font-medium text-[#E2E8F0] hover:text-[#5FEDC5] hover:bg-[#1E252B]">Научная база</a>
+    </div>
+  </header>
+
+  <!-- ==================== MAIN CONTENT ==================== -->
+  <main class="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-20 space-y-20 lg:space-y-28">
+
+    <!-- ==================== РЯД 1: ТЕКСТ СЛЕВА (2/3), СКРИНШОТ СПРАВА (1/3) ==================== -->
+    <!-- [БЛОК 1 — Вводная часть] & [БЛОК 2 — Для чего создано] -->
+    <section id="purpose" class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+      <!-- Текст слева (2/3) -->
+      <div class="lg:col-span-8 space-y-6">
+        <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-[#1E252B] border border-[rgba(95,237,197,0.25)] text-xs font-semibold text-[#5FEDC5]">
+          <span class="w-2 h-2 rounded-full bg-[#5FEDC5] animate-pulse"></span>
+          <span>TarkApp</span>
+        </div>
+
+        <!-- [БЛОК 1 — Вводная часть] -->
+        <h1 class="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#5FEDC5] tracking-tight leading-tight">
+          TarkApp — персональный учебный проводник в эстонскую школьную программу
+        </h1>
+
+        <!-- [БЛОК 2 — Для чего создано] -->
+        <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+          <h2 class="text-2xl sm:text-3xl font-bold text-[#5FEDC5] tracking-tight">
+            Для чего создано приложение
+          </h2>
+          <div class="space-y-4 text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+            <p>
+              Переход на 100% обучение на эстонском языке — это серьёзная нагрузка и для детей, и для родителей. Вечерние уроки нередко превращаются в выматывающий стресс, а родители не всегда могут подсказать, так как сами не владеют академической эстонской терминологией.
+            </p>
+            <p>
+              Обычные онлайн-переводчики переводят слова механически и часто путают школьный контекст, а готовые решебники и чат-боты просто выдают готовый ответ, лишая ребёнка возможности понять тему и научиться отвечать самостоятельно.
+            </p>
+            <p class="text-[#F8FAFC] font-medium border-l-2 border-[#5FEDC5] pl-4 py-1">
+              TarkApp — это не переводчик и не шпаргалка. Это умный школьный наставник, задача которого — снять языковой барьер, помочь ребёнку понять суть задания и научить его уверенно формулировать ответ на эстонском языке.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Скриншот справа (1/3) -->
+      <div class="lg:col-span-4 flex justify-center">
+        <div class="w-full max-w-[290px] sm:max-w-[320px]">
+          <!-- Phone Bezel Frame -->
+          <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+            <!-- Dynamic Island / Speaker Notch -->
+            <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5 shadow-inner">
+              <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center">
+                <div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div>
+              </div>
+              <div class="w-8 h-1 rounded-full bg-white/10"></div>
+            </div>
+
+            <!-- Phone Screen -->
+            <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+              <!-- Status Bar -->
+              <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                <span>9:41</span>
+                <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                  <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center">
+                    <div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Screen Display Area with Adaptive Placeholder -->
+              <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                <!-- Adaptive Placeholder (shows if image not found or loading) -->
+                <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                  <div class="space-y-3">
+                    <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">TarkApp Home</div>
+                    <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                    <div class="h-2 w-full bg-white/10 rounded"></div>
+                    <div class="h-2 w-2/3 bg-white/10 rounded"></div>
+                  </div>
+                  <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                    <span class="text-xs text-[#5FEDC5]">assets/screen_1.png</span>
+                  </div>
+                </div>
+                <!-- Image Tag -->
+                <img src="assets/screen_1.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+              </div>
+
+              <!-- Home Indicator Bar -->
+              <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10">
+                <div class="w-20 h-1 bg-white/20 rounded-full"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЕКЦИЯ: КАК ЭТО РАБОТАЕТ ==================== -->
+    <div id="how-it-works" class="pt-6">
+      <div class="border-b border-[rgba(95,237,197,0.15)] pb-6 mb-12">
+        <h2 class="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#5FEDC5] tracking-tight">
+          Как это работает
+        </h2>
+      </div>
+
+      <!-- Карточки в шахматном порядке: 8 пунктов -->
+      <div class="space-y-16 lg:space-y-24">
+
+        <!-- РЯД 2: СКРИНШОТ СЛЕВА (1/3), ТЕКСТ СПРАВА (2/3) -->
+        <!-- Пункт 1: Мультимодальный анализ страницы -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+          <!-- Скриншот слева (1/3) -->
+          <div class="lg:col-span-4 flex justify-center order-2 lg:order-1">
+            <div class="w-full max-w-[290px] sm:max-w-[320px]">
+              <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+                <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+                  <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+                  <div class="w-8 h-1 rounded-full bg-white/10"></div>
+                </div>
+                <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+                  <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                    <span>9:41</span>
+                    <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                      <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                    </div>
+                  </div>
+                  <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                    <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                      <div class="space-y-3">
+                        <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">Сканер страницы</div>
+                        <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                        <div class="h-2 w-full bg-white/10 rounded"></div>
+                      </div>
+                      <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                        <span class="text-xs text-[#5FEDC5]">assets/screen_2.png</span>
+                      </div>
+                    </div>
+                    <img src="assets/screen_2.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+                  </div>
+                  <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Текст справа (2/3) -->
+          <div class="lg:col-span-8 order-1 lg:order-2">
+            <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+              <div class="flex items-center space-x-3">
+                <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-[#161C22] text-[#5FEDC5] border border-[rgba(95,237,197,0.25)] font-bold text-sm">1</span>
+                <h3 class="text-xl sm:text-2xl font-bold text-[#5FEDC5] tracking-tight">
+                  Мультимодальный анализ страницы
+                </h3>
+              </div>
+              <p class="text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+                Ребёнок наводит камеру смартфона на страницу эстонского учебника, рабочей тетради (Opiq, Koolibri, Avita) или лист с заданием. Алгоритм мгновенно оцифровывает визуальный контекст и вычленяет структуру задачи.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- РЯД 3: ТЕКСТ СЛЕВА (2/3), СКРИНШОТ СПРАВА (1/3) -->
+        <!-- Пункт 2: Объяснение через любимые увлечения -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+          <!-- Текст слева (2/3) -->
+          <div class="lg:col-span-8">
+            <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+              <div class="flex items-center space-x-3">
+                <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-[#161C22] text-[#5FEDC5] border border-[rgba(95,237,197,0.25)] font-bold text-sm">2</span>
+                <h3 class="text-xl sm:text-2xl font-bold text-[#5FEDC5] tracking-tight">
+                  Объяснение через любимые увлечения
+                </h3>
+              </div>
+              <p class="text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+                Сложная суть задания раскрывается на родном языке через аналогии из мира интересов ребёнка (LEGO, Minecraft, спорт, технологии, космос). Абстрактное академическое правило связывается с понятным жизненным опытом без зазубривания сухих формулировок.
+              </p>
+            </div>
+          </div>
+          <!-- Скриншот справа (1/3) -->
+          <div class="lg:col-span-4 flex justify-center">
+            <div class="w-full max-w-[290px] sm:max-w-[320px]">
+              <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+                <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+                  <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+                  <div class="w-8 h-1 rounded-full bg-white/10"></div>
+                </div>
+                <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+                  <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                    <span>9:41</span>
+                    <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                      <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                    </div>
+                  </div>
+                  <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                    <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                      <div class="space-y-3">
+                        <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">LEGO & Minecraft</div>
+                        <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                        <div class="h-2 w-full bg-white/10 rounded"></div>
+                      </div>
+                      <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                        <span class="text-xs text-[#5FEDC5]">assets/screen_3.png</span>
+                      </div>
+                    </div>
+                    <img src="assets/screen_3.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+                  </div>
+                  <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- РЯД 4: СКРИНШОТ СЛЕВА (1/3), ТЕКСТ СПРАВА (2/3) -->
+        <!-- Пункт 3: Пошаговый алгоритм решения и речевой каркас -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+          <!-- Скриншот слева (1/3) -->
+          <div class="lg:col-span-4 flex justify-center order-2 lg:order-1">
+            <div class="w-full max-w-[290px] sm:max-w-[320px]">
+              <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+                <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+                  <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+                  <div class="w-8 h-1 rounded-full bg-white/10"></div>
+                </div>
+                <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+                  <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                    <span>9:41</span>
+                    <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                      <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                    </div>
+                  </div>
+                  <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                    <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                      <div class="space-y-3">
+                        <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">Речевой каркас</div>
+                        <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                        <div class="h-2 w-full bg-white/10 rounded"></div>
+                      </div>
+                      <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                        <span class="text-xs text-[#5FEDC5]">assets/screen_4.png</span>
+                      </div>
+                    </div>
+                    <img src="assets/screen_4.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+                  </div>
+                  <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Текст справа (2/3) -->
+          <div class="lg:col-span-8 order-1 lg:order-2">
+            <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+              <div class="flex items-center space-x-3">
+                <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-[#161C22] text-[#5FEDC5] border border-[rgba(95,237,197,0.25)] font-bold text-sm">3</span>
+                <h3 class="text-xl sm:text-2xl font-bold text-[#5FEDC5] tracking-tight">
+                  Пошаговый алгоритм решения и речевой каркас
+                </h3>
+              </div>
+              <p class="text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+                TarkApp выстраивает направляющий план рассуждения («как прийти к ответу») и формирует готовый грамматический шаблон эстонского предложения с пропусками (___). Ребёнок самостоятельно выполняет вычисления, но формулирует и записывает академически грамотный эстонский ответ, готовый к уверенной защите у доски.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- РЯД 5: ТЕКСТ СЛЕВА (2/3), СКРИНШОТ СПРАВА (1/3) -->
+        <!-- Пункт 4: Адаптивное изоморфное моделирование (Разбор аналогичных примеров) -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+          <!-- Текст слева (2/3) -->
+          <div class="lg:col-span-8">
+            <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+              <div class="flex items-center space-x-3">
+                <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-[#161C22] text-[#5FEDC5] border border-[rgba(95,237,197,0.25)] font-bold text-sm">4</span>
+                <h3 class="text-xl sm:text-2xl font-bold text-[#5FEDC5] tracking-tight">
+                  Адаптивное изоморфное моделирование (Разбор аналогичных примеров)
+                </h3>
+              </div>
+              <p class="text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+                Для математических и естественно-научных задач система генерирует задачу-близнец с альтернативными числовыми параметрами. Ученик видит практическую реализацию формулы в действии, сохраняя возможность решить свой исходный номер с чистого листа.
+              </p>
+            </div>
+          </div>
+          <!-- Скриншот справа (1/3) -->
+          <div class="lg:col-span-4 flex justify-center">
+            <div class="w-full max-w-[290px] sm:max-w-[320px]">
+              <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+                <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+                  <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+                  <div class="w-8 h-1 rounded-full bg-white/10"></div>
+                </div>
+                <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+                  <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                    <span>9:41</span>
+                    <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                      <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                    </div>
+                  </div>
+                  <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                    <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                      <div class="space-y-3">
+                        <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">Задача-близнец</div>
+                        <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                        <div class="h-2 w-full bg-white/10 rounded"></div>
+                      </div>
+                      <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                        <span class="text-xs text-[#5FEDC5]">assets/screen_5.png</span>
+                      </div>
+                    </div>
+                    <img src="assets/screen_5.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+                  </div>
+                  <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- РЯД 6: СКРИНШОТ СЛЕВА (1/3), ТЕКСТ СПРАВА (2/3) -->
+        <!-- Пункт 5: Аудиальная поддержка и фонетическое якорение -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+          <!-- Скриншот слева (1/3) -->
+          <div class="lg:col-span-4 flex justify-center order-2 lg:order-1">
+            <div class="w-full max-w-[290px] sm:max-w-[320px]">
+              <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+                <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+                  <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+                  <div class="w-8 h-1 rounded-full bg-white/10"></div>
+                </div>
+                <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+                  <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                    <span>9:41</span>
+                    <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                      <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                    </div>
+                  </div>
+                  <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                    <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                      <div class="space-y-3">
+                        <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">Аудиоподдержка</div>
+                        <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                        <div class="h-2 w-full bg-white/10 rounded"></div>
+                      </div>
+                      <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                        <span class="text-xs text-[#5FEDC5]">assets/screen_6.png</span>
+                      </div>
+                    </div>
+                    <img src="assets/screen_6.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+                  </div>
+                  <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Текст справа (2/3) -->
+          <div class="lg:col-span-8 order-1 lg:order-2">
+            <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+              <div class="flex items-center space-x-3">
+                <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-[#161C22] text-[#5FEDC5] border border-[rgba(95,237,197,0.25)] font-bold text-sm">5</span>
+                <h3 class="text-xl sm:text-2xl font-bold text-[#5FEDC5] tracking-tight">
+                  Аудиальная поддержка и фонетическое якорение
+                </h3>
+              </div>
+              <p class="text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+                Каждое задание сопровождается спокойной аудиоподсказкой живым голосом для снятия психоэмоционального зажима, а также возможностью мгновенно прослушать эталонное нативное произношение любого эстонского термина с выверенной долготой звуков.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- РЯД 7: ТЕКСТ СЛЕВА (2/3), СКРИНШОТ СПРАВА (1/3) -->
+        <!-- Пункт 6: Интеллектуальный словарик урока (Sõnastik) с автосохранением -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+          <!-- Текст слева (2/3) -->
+          <div class="lg:col-span-8">
+            <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+              <div class="flex items-center space-x-3">
+                <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-[#161C22] text-[#5FEDC5] border border-[rgba(95,237,197,0.25)] font-bold text-sm">6</span>
+                <h3 class="text-xl sm:text-2xl font-bold text-[#5FEDC5] tracking-tight">
+                  Интеллектуальный словарик урока (Sõnastik) с автосохранением
+                </h3>
+              </div>
+              <p class="text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+                Все ключевые предметные термины из разобранного задания автоматически извлекаются и компонуются в персональный глоссарий для интервального повторения перед контрольными работами (kontrolltööd).
+              </p>
+            </div>
+          </div>
+          <!-- Скриншот справа (1/3) -->
+          <div class="lg:col-span-4 flex justify-center">
+            <div class="w-full max-w-[290px] sm:max-w-[320px]">
+              <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+                <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+                  <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+                  <div class="w-8 h-1 rounded-full bg-white/10"></div>
+                </div>
+                <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+                  <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                    <span>9:41</span>
+                    <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                      <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                    </div>
+                  </div>
+                  <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                    <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                      <div class="space-y-3">
+                        <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">Sõnastik</div>
+                        <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                        <div class="h-2 w-full bg-white/10 rounded"></div>
+                      </div>
+                      <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                        <span class="text-xs text-[#5FEDC5]">assets/screen_7.png</span>
+                      </div>
+                    </div>
+                    <img src="assets/screen_7.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+                  </div>
+                  <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- РЯД 8: СКРИНШОТ СЛЕВА (1/3), ТЕКСТ СПРАВА (2/3) -->
+        <!-- Пункт 7: Сквозной архив и история разборов -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+          <!-- Скриншот слева (1/3) -->
+          <div class="lg:col-span-4 flex justify-center order-2 lg:order-1">
+            <div class="w-full max-w-[290px] sm:max-w-[320px]">
+              <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+                <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+                  <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+                  <div class="w-8 h-1 rounded-full bg-white/10"></div>
+                </div>
+                <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+                  <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                    <span>9:41</span>
+                    <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                      <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                    </div>
+                  </div>
+                  <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                    <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                      <div class="space-y-3">
+                        <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">История уроков</div>
+                        <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                        <div class="h-2 w-full bg-white/10 rounded"></div>
+                      </div>
+                      <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                        <span class="text-xs text-[#5FEDC5]">assets/screen_8.png</span>
+                      </div>
+                    </div>
+                    <img src="assets/screen_8.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+                  </div>
+                  <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Текст справа (2/3) -->
+          <div class="lg:col-span-8 order-1 lg:order-2">
+            <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+              <div class="flex items-center space-x-3">
+                <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-[#161C22] text-[#5FEDC5] border border-[rgba(95,237,197,0.25)] font-bold text-sm">7</span>
+                <h3 class="text-xl sm:text-2xl font-bold text-[#5FEDC5] tracking-tight">
+                  Сквозной архив и история разборов
+                </h3>
+              </div>
+              <p class="text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+                Полная база всех отсканированных уроков сохраняется в локальной истории устройства. Ребёнок и родители могут в любой момент вернуться к сложной теме перед тестом без повторного сканирования учебника.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- РЯД 9: ТЕКСТ СЛЕВА (2/3), СКРИНШОТ СПРАВА (1/3) -->
+        <!-- Пункт 8: Экспресс-переводчик академического контекста (Kiirtõlge) -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+          <!-- Текст слева (2/3) -->
+          <div class="lg:col-span-8">
+            <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+              <div class="flex items-center space-x-3">
+                <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-[#161C22] text-[#5FEDC5] border border-[rgba(95,237,197,0.25)] font-bold text-sm">8</span>
+                <h3 class="text-xl sm:text-2xl font-bold text-[#5FEDC5] tracking-tight">
+                  Экспресс-переводчик академического контекста (Kiirtõlge)
+                </h3>
+              </div>
+              <p class="text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+                Встроенный инструмент быстрого перевода отдельных терминов и словосочетаний. В отличие от универсальных переводчиков, он отсекает бытовой сленг и выдаёт строго академическое значение слова в рамках действующей школьной программы Эстонии.
+              </p>
+            </div>
+          </div>
+          <!-- Скриншот справа (1/3) -->
+          <div class="lg:col-span-4 flex justify-center">
+            <div class="w-full max-w-[290px] sm:max-w-[320px]">
+              <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+                <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+                  <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+                  <div class="w-8 h-1 rounded-full bg-white/10"></div>
+                </div>
+                <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+                  <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                    <span>9:41</span>
+                    <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                      <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                    </div>
+                  </div>
+                  <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                    <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                      <div class="space-y-3">
+                        <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">Kiirtõlge</div>
+                        <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                        <div class="h-2 w-full bg-white/10 rounded"></div>
+                      </div>
+                      <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                        <span class="text-xs text-[#5FEDC5]">assets/screen_9.png</span>
+                      </div>
+                    </div>
+                    <img src="assets/screen_9.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+                  </div>
+                  <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- ==================== СЕКЦИЯ: АДАПТАЦИЯ ПОД ВОЗРАСТ ==================== -->
+    <div id="stages" class="pt-6">
+      <div class="border-b border-[rgba(95,237,197,0.15)] pb-6 mb-12 space-y-4">
+        <h2 class="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#5FEDC5] tracking-tight">
+          Адаптация под возраст: три учебных звена
+        </h2>
+        <p class="text-base sm:text-lg text-[#E2E8F0] leading-relaxed max-w-4xl">
+          Первоклассник и десятиклассник мыслят, читают и учатся совершенно по-разному. TarkApp автоматически перестраивает глубину терминологии, сложность подачи и логические акценты под выбранное звено:
+        </p>
+      </div>
+
+      <div class="space-y-16 lg:space-y-24">
+
+        <!-- РЯД 10: СКРИНШОТ СЛЕВА (1/3), ТЕКСТ СПРАВА (2/3) -->
+        <!-- Звено 1: Младшая школа (1–4 классы / Algkool) -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+          <!-- Скриншот слева (1/3) -->
+          <div class="lg:col-span-4 flex justify-center order-2 lg:order-1">
+            <div class="w-full max-w-[290px] sm:max-w-[320px]">
+              <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+                <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+                  <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+                  <div class="w-8 h-1 rounded-full bg-white/10"></div>
+                </div>
+                <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+                  <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                    <span>9:41</span>
+                    <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                      <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                    </div>
+                  </div>
+                  <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                    <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                      <div class="space-y-3">
+                        <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">Algkool (1–4 классы)</div>
+                        <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                        <div class="h-2 w-full bg-white/10 rounded"></div>
+                      </div>
+                      <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                        <span class="text-xs text-[#5FEDC5]">assets/screen_10.png</span>
+                      </div>
+                    </div>
+                    <img src="assets/screen_10.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+                  </div>
+                  <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Текст справа (2/3) -->
+          <div class="lg:col-span-8 order-1 lg:order-2">
+            <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+              <h3 class="text-xl sm:text-2xl font-bold text-[#5FEDC5] tracking-tight">
+                1. Младшая школа (1–4 классы / Algkool):
+              </h3>
+              <div class="space-y-3 text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+                <p>
+                  <strong class="text-[#F8FAFC]">В чём сложность:</strong> Дети только учатся читать на эстонском, быстро устают от длинных инструкций и боятся ошибиться.
+                </p>
+                <p>
+                  <strong class="text-[#F8FAFC]">Как помогает TarkApp:</strong> Главный упор сделан на голосовое восприятие — ребёнок может не разбирать длинный текст глазами, а прослушать подсказку на слух. Сами объяснения формулируются через простые игровые образы и наглядные жизненные аналогии.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- РЯД 11: ТЕКСТ СЛЕВА (2/3), СКРИНШОТ СПРАВА (1/3) -->
+        <!-- Звено 2: Основная школа (5–9 классы / Põhikool) -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+          <!-- Текст слева (2/3) -->
+          <div class="lg:col-span-8">
+            <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+              <h3 class="text-xl sm:text-2xl font-bold text-[#5FEDC5] tracking-tight">
+                2. Основная школа (5–9 классы / Põhikool):
+              </h3>
+              <div class="space-y-3 text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+                <p>
+                  <strong class="text-[#F8FAFC]">В чём сложность:</strong> Резкий скачок терминологии (природоведение, физика, химия, история, география) и регулярная подготовка к контрольным работам (kontrolltööd).
+                </p>
+                <p>
+                  <strong class="text-[#F8FAFC]">Как помогает TarkApp:</strong> Фокус смещается на системный словарь (Sõnastik) и структурированные выжимки правил. Примеры связываются с реальным миром подростков, технологиями и практическими задачами, помогая выстроить понятия в понятную причинно-следственную цепочку.
+                </p>
+              </div>
+            </div>
+          </div>
+          <!-- Скриншот справа (1/3) -->
+          <div class="lg:col-span-4 flex justify-center">
+            <div class="w-full max-w-[290px] sm:max-w-[320px]">
+              <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+                <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+                  <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+                  <div class="w-8 h-1 rounded-full bg-white/10"></div>
+                </div>
+                <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+                  <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                    <span>9:41</span>
+                    <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                      <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                    </div>
+                  </div>
+                  <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                    <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                      <div class="space-y-3">
+                        <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">Põhikool (5–9 классы)</div>
+                        <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                        <div class="h-2 w-full bg-white/10 rounded"></div>
+                      </div>
+                      <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                        <span class="text-xs text-[#5FEDC5]">assets/screen_11.png</span>
+                      </div>
+                    </div>
+                    <img src="assets/screen_11.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+                  </div>
+                  <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- РЯД 12: СКРИНШОТ СЛЕВА (1/3), ТЕКСТ СПРАВА (2/3) -->
+        <!-- Звено 3: Старшие классы (10–12 классы / Gümnaasium) -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+          <!-- Скриншот слева (1/3) -->
+          <div class="lg:col-span-4 flex justify-center order-2 lg:order-1">
+            <div class="w-full max-w-[290px] sm:max-w-[320px]">
+              <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+                <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+                  <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+                  <div class="w-8 h-1 rounded-full bg-white/10"></div>
+                </div>
+                <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+                  <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                    <span>9:41</span>
+                    <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                      <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                      <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                    </div>
+                  </div>
+                  <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                    <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                      <div class="space-y-3">
+                        <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">Gümnaasium (10–12)</div>
+                        <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                        <div class="h-2 w-full bg-white/10 rounded"></div>
+                      </div>
+                      <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                        <span class="text-xs text-[#5FEDC5]">assets/screen_12.png</span>
+                      </div>
+                    </div>
+                    <img src="assets/screen_12.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+                  </div>
+                  <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Текст справа (2/3) -->
+          <div class="lg:col-span-8 order-1 lg:order-2">
+            <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+              <h3 class="text-xl sm:text-2xl font-bold text-[#5FEDC5] tracking-tight">
+                3. Старшие классы (10–12 классы / Gümnaasium):
+              </h3>
+              <div class="space-y-3 text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+                <p>
+                  <strong class="text-[#F8FAFC]">В чём сложность:</strong> Большой объём сложной профильной терминологии по точным и естественным наукам на эстонском языке.
+                </p>
+                <p>
+                  <strong class="text-[#F8FAFC]">Как помогает TarkApp:</strong> Быстрая распаковка сложных академических терминов и понятийный разбор параграфов без потери времени на ручной поиск в словарях, сохраняя взрослый и сдержанный тон подсказок.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- ==================== СЕКЦИЯ: ПОЗНАНИЕ МИРА ==================== -->
+    <!-- РЯД 13: ТЕКСТ СЛЕВА (2/3), СКРИНШОТ СПРАВА (1/3) -->
+    <!-- [БЛОК 5 — Познание мира] -->
+    <section id="nature" class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+      <!-- Текст слева (2/3) -->
+      <div class="lg:col-span-8 space-y-4">
+        <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+          <h2 class="text-2xl sm:text-3xl lg:text-4xl font-bold text-[#5FEDC5] tracking-tight">
+            Функция «Познание мира» (Loodusõpetus)
+          </h2>
+          <p class="text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+            Если навести камеру не на учебник, а на окружающий мир — домашнего питомца, дерево за окном, кружку на столе или игрушку — TarkApp превращается в интерактивного исследователя. Приложение распознаёт объект, рассказывает короткий познавательный факт, даёт 3–4 полезных эстонских слова и разговорную фразу для практики речи в реальной жизни.
+          </p>
+        </div>
+      </div>
+      <!-- Скриншот справа (1/3) -->
+      <div class="lg:col-span-4 flex justify-center">
+        <div class="w-full max-w-[290px] sm:max-w-[320px]">
+          <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+            <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+              <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+              <div class="w-8 h-1 rounded-full bg-white/10"></div>
+            </div>
+            <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+              <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                <span>9:41</span>
+                <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                  <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                </div>
+              </div>
+              <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                  <div class="space-y-3">
+                    <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">Loodusõpetus</div>
+                    <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                    <div class="h-2 w-full bg-white/10 rounded"></div>
+                  </div>
+                  <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                    <span class="text-xs text-[#5FEDC5]">assets/screen_13.png</span>
+                  </div>
+                </div>
+                <img src="assets/screen_13.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+              </div>
+              <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЕКЦИЯ: ГЛАВНЫЕ ПРИНЦИПЫ ==================== -->
+    <!-- РЯД 14: СКРИНШОТ СЛЕВА (1/3), ТЕКСТ СПРАВА (2/3) -->
+    <!-- [БЛОК 6 — Главные принципы] -->
+    <section id="principles" class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+      <!-- Скриншот слева (1/3) -->
+      <div class="lg:col-span-4 flex justify-center order-2 lg:order-1">
+        <div class="w-full max-w-[290px] sm:max-w-[320px]">
+          <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+            <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+              <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+              <div class="w-8 h-1 rounded-full bg-white/10"></div>
+            </div>
+            <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+              <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                <span>9:41</span>
+                <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                  <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                </div>
+              </div>
+              <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                  <div class="space-y-3">
+                    <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">Zero-PII & Принципы</div>
+                    <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                    <div class="h-2 w-full bg-white/10 rounded"></div>
+                  </div>
+                  <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                    <span class="text-xs text-[#5FEDC5]">assets/screen_14.png</span>
+                  </div>
+                </div>
+                <img src="assets/screen_14.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+              </div>
+              <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Текст справа (2/3) -->
+      <div class="lg:col-span-8 order-1 lg:order-2 space-y-4">
+        <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-6 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+          <h2 class="text-2xl sm:text-3xl lg:text-4xl font-bold text-[#5FEDC5] tracking-tight">
+            Главные принципы
+          </h2>
+          <div class="space-y-4 text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+            <div class="flex items-start space-x-3">
+              <span class="w-2 h-2 rounded-full bg-[#5FEDC5] mt-2.5 flex-shrink-0"></span>
+              <p>
+                <strong class="text-[#F8FAFC]">Учит думать, а не списывать:</strong> Приложение не решает примеры за ученика, а даёт педагогическую опору для самостоятельного решения.
+              </p>
+            </div>
+            <div class="flex items-start space-x-3">
+              <span class="w-2 h-2 rounded-full bg-[#5FEDC5] mt-2.5 flex-shrink-0"></span>
+              <p>
+                <strong class="text-[#F8FAFC]">Полная анонимность и безопасность (Zero-PII):</strong> Приложение не собирает личные данные детей, фамилии, адреса, номера школ или личные коды (isikukood). Вся работа строится без создания профилей с персональной информацией.
+              </p>
+            </div>
+            <div class="flex items-start space-x-3">
+              <span class="w-2 h-2 rounded-full bg-[#5FEDC5] mt-2.5 flex-shrink-0"></span>
+              <p>
+                <strong class="text-[#F8FAFC]">Спокойствие в семье:</strong> Родителям больше не нужно часами разбирать незнакомые термины со словарем — ребёнок обретает уверенность, а вечер в семье остаётся временем для отдыха, а не споров над тетрадками.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЕКЦИЯ: НАУЧНАЯ И ПСИХОЛОГИЧЕСКАЯ БАЗА ==================== -->
+    <!-- РЯД 15: ТЕКСТ СЛЕВА (2/3), СКРИНШОТ СПРАВА (1/3) -->
+    <!-- [БЛОК 7 — Научная и психологическая база] -->
+    <section id="science" class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+      <!-- Текст слева (2/3) -->
+      <div class="lg:col-span-8 space-y-4">
+        <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-6 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+          <h2 class="text-2xl sm:text-3xl lg:text-4xl font-bold text-[#5FEDC5] tracking-tight">
+            Научная и психологическая база: почему это работает
+          </h2>
+          <p class="text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+            TarkApp построен на доказательной когнитивной психологии и методиках обучения, подтверждённых международными исследованиями (включая мета-анализы профессора Джона Хэтти и работы ведущих мировых лабораторий изучения памяти):
+          </p>
+          <div class="space-y-4 text-base sm:text-lg text-[#E2E8F0] leading-relaxed pt-2">
+            <div class="flex items-start space-x-3">
+              <span class="w-2 h-2 rounded-full bg-[#5FEDC5] mt-2.5 flex-shrink-0"></span>
+              <p>
+                <strong class="text-[#F8FAFC]">Теория двойного кодирования (Dual Coding Theory, проф. Аллан Пайвио):</strong> Мозг обрабатывает зрительную и вербальную информацию по двум независимым параллельным каналам. Совмещение текста на экране, наглядного разбора и живого нативного аудиопроизношения термина задействует оба канала восприятия одновременно, ускоряя формирование долговременных нейронных связей.
+              </p>
+            </div>
+            <div class="flex items-start space-x-3">
+              <span class="w-2 h-2 rounded-full bg-[#5FEDC5] mt-2.5 flex-shrink-0"></span>
+              <p>
+                <strong class="text-[#F8FAFC]">Метод Фейнмана (понимание через простые аналогии):</strong> Нобелевский лауреат по физике Ричард Фейнман доказал: настоящее усвоение материала происходит тогда, когда сложная абстрактная концепция объясняется языком простых образов. TarkApp переводит сухие академические правила на понятный язык детского мира — через кубики конструктора, игровую механику или реальные жизненные ситуации.
+              </p>
+            </div>
+            <div class="flex items-start space-x-3">
+              <span class="w-2 h-2 rounded-full bg-[#5FEDC5] mt-2.5 flex-shrink-0"></span>
+              <p>
+                <strong class="text-[#F8FAFC]">Активное припоминание (Active Recall / Retrieval Practice, исследования Дж. Данлоски и проф. Р. Бьорка):</strong> Когнитивные психологи доказали, что пассивное перечитывание или просмотр готового решения почти бесполезны для долговременной памяти. Мозг учится только тогда, когда с усилием извлекает знание наружу. Наш речевой каркас с пропусками (___) требует от ребёнка самостоятельно применить правило и вписать правильный ответ.
+              </p>
+            </div>
+            <div class="flex items-start space-x-3">
+              <span class="w-2 h-2 rounded-full bg-[#5FEDC5] mt-2.5 flex-shrink-0"></span>
+              <p>
+                <strong class="text-[#F8FAFC]">Принцип «желанных трудностей» (Desirable Difficulties, проф. Роберт Бьорк):</strong> Готовые решебники вредят ученику, так как полностью убирают мыслительное усилие. TarkApp устраняет парализующий языковой стресс, но сохраняет здоровую когнитивную нагрузку, необходимую для глубокого понимания предмета.
+              </p>
+            </div>
+            <div class="flex items-start space-x-3">
+              <span class="w-2 h-2 rounded-full bg-[#5FEDC5] mt-2.5 flex-shrink-0"></span>
+              <p>
+                <strong class="text-[#F8FAFC]">Педагогические леса (Scaffolding / Зона ближайшего развития, Дж. Брунер, Л. С. Выготский):</strong> Обучение продуктивно, когда задача находится чуть выше текущих самостоятельных возможностей ребёнка, но посильна при наличии временной опоры. TarkApp предоставляет ученику надёжную ступеньку (алгоритм рассуждения + речевой шаблон), опираясь на которую он делает итоговый шаг сам.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Скриншот справа (1/3) -->
+      <div class="lg:col-span-4 flex justify-center">
+        <div class="w-full max-w-[290px] sm:max-w-[320px]">
+          <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+            <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+              <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+              <div class="w-8 h-1 rounded-full bg-white/10"></div>
+            </div>
+            <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+              <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                <span>9:41</span>
+                <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                  <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                </div>
+              </div>
+              <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                  <div class="space-y-3">
+                    <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">Когнитивная база</div>
+                    <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                    <div class="h-2 w-full bg-white/10 rounded"></div>
+                  </div>
+                  <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                    <span class="text-xs text-[#5FEDC5]">assets/screen_15.png</span>
+                  </div>
+                </div>
+                <img src="assets/screen_15.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+              </div>
+              <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== СЕКЦИЯ: ЗАКЛЮЧЕНИЕ ==================== -->
+    <!-- РЯД 16: СКРИНШОТ СЛЕВА (1/3), ТЕКСТ СПРАВА (2/3) -->
+    <!-- [БЛОК 8 — Заключение] -->
+    <section class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
+      <!-- Скриншот слева (1/3) -->
+      <div class="lg:col-span-4 flex justify-center order-2 lg:order-1">
+        <div class="w-full max-w-[290px] sm:max-w-[320px]">
+          <div class="relative bg-[#161B20] p-3 sm:p-3.5 rounded-[2.5rem] border border-[rgba(95,237,197,0.2)] shadow-[0_20px_50px_rgba(0,0,0,0.6),0_0_25px_rgba(95,237,197,0.1)] transition-transform duration-300 hover:scale-[1.02]">
+            <div class="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-4 bg-[#0F1317] rounded-full z-20 flex items-center justify-between px-3 border border-white/5">
+              <div class="w-2 h-2 rounded-full bg-[#1A2228] flex items-center justify-center"><div class="w-1 h-1 rounded-full bg-[#5FEDC5]/70"></div></div>
+              <div class="w-8 h-1 rounded-full bg-white/10"></div>
+            </div>
+            <div class="relative bg-[#1E252B] rounded-2xl overflow-hidden border border-[rgba(95,237,197,0.15)] flex flex-col">
+              <div class="h-8 bg-[#181E24]/90 px-4 flex items-center justify-between text-[11px] font-medium text-[#94A3B8] select-none border-b border-white/5 pt-1 z-10">
+                <span>9:41</span>
+                <div class="flex items-center space-x-1.5 text-xs text-[#94A3B8]">
+                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z" opacity="0.3"/><path d="M12 6c-3.31 0-6 2.69-6 6 0 1.48.54 2.83 1.44 3.88L12 19.5l4.56-3.62C17.46 14.83 18 13.48 18 12c0-3.31-2.69-6-6-6z"/></svg>
+                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4z"/></svg>
+                  <div class="w-5 h-2.5 border border-[#94A3B8] rounded-[2px] p-[1px] flex items-center"><div class="w-full h-full bg-[#5FEDC5] rounded-[1px]"></div></div>
+                </div>
+              </div>
+              <div class="relative w-full aspect-[9/16] bg-[#1E252B] flex items-center justify-center overflow-hidden">
+                <div class="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-b from-[#1E252B] via-[#161C22] to-[#12161A] text-left select-none">
+                  <div class="space-y-3">
+                    <div class="inline-flex px-2 py-0.5 rounded bg-[#161C22] border border-[#5FEDC5]/30 text-[10px] text-[#5FEDC5]">Уверенность</div>
+                    <div class="h-3 w-3/4 bg-white/20 rounded"></div>
+                    <div class="h-2 w-full bg-white/10 rounded"></div>
+                  </div>
+                  <div class="p-3 rounded-lg bg-[#263038]/60 border border-[#5FEDC5]/20 text-center">
+                    <span class="text-xs text-[#5FEDC5]">assets/screen_16.png</span>
+                  </div>
+                </div>
+                <img src="assets/screen_16.png" alt="TarkApp Interface" class="w-full h-auto object-cover rounded-xl relative z-10" onerror="this.style.opacity='0';" onload="this.style.opacity='1';" />
+              </div>
+              <div class="h-4 bg-[#181E24]/90 flex items-center justify-center z-10"><div class="w-20 h-1 bg-white/20 rounded-full"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Текст справа (2/3) -->
+      <div class="lg:col-span-8 order-1 lg:order-2 space-y-4">
+        <div class="bg-[#1E252B] border border-[rgba(95,237,197,0.15)] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+          <h2 class="text-2xl sm:text-3xl lg:text-4xl font-bold text-[#5FEDC5] tracking-tight">
+            Мост к уверенности
+          </h2>
+          <p class="text-base sm:text-lg text-[#E2E8F0] leading-relaxed">
+            TarkApp не заменяет школу и учителя — он даёт ребёнку опору именно в тот момент, когда рядом нет подсказки. Мы превращаем эстонский язык из непреодолимой преграды в естественный рабочий инструмент, возвращая ребёнку интерес к учёбе, а семье — спокойные вечера.
+          </p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==================== ФУТЕР ==================== -->
+  <footer class="border-t border-[rgba(95,237,197,0.15)] bg-[#12161A]/95 mt-20 py-8">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-sm font-medium text-[#94A3B8]">
+      TarkApp • v1.0.0 • Tark Systems
+    </div>
+  </footer>
+
+  <!-- Mobile Menu Toggle Script -->
+  <script>
+    const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+    const mobileMenu = document.getElementById('mobileMenu');
+    const mobileLinks = document.querySelectorAll('.mobile-nav-link');
+
+    if (mobileMenuBtn && mobileMenu) {
+      mobileMenuBtn.addEventListener('click', () => {
+        mobileMenu.classList.toggle('hidden');
+      });
+
+      mobileLinks.forEach(link => {
+        link.addEventListener('click', () => {
+          mobileMenu.classList.add('hidden');
+        });
+      });
+    }
+  </script>
+
+</body>
+</html>
