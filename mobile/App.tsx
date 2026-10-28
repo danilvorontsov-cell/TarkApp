@@ -150,39 +150,49 @@ function MainApp() {
         const cleanedInterests = saved.interests.map((i) => i.replace(/спотр/gi, 'спорт'));
         setInterestsText(cleanedInterests.join(', '));
       }
-    });
 
-    StorageService.getHistory().then((h) => {
-      setHistory(h);
-      // Pre-fill today's session lessons from local history
-      const startOfToday = new Date();
-      startOfToday.setHours(0, 0, 0, 0);
-      const todayItems: SessionLesson[] = h
-        .filter((c) => c.timestamp >= startOfToday.getTime())
-        .map((c) => ({
-          id: c.id,
-          title: c.task_title,
-          analysis: c.analysis,
-          imageUri: c.imageUri || null,
-          imageUris: c.imageUris,
-          timestamp: c.timestamp,
-        }));
+      const isRegistered = Boolean(saved.nickname && saved.nickname.trim().length > 0);
 
-      if (todayItems.length > 0) {
-        setSessionLessons(todayItems);
-        // Load the latest one into current view
-        setAnalysis(todayItems[0].analysis);
-        setCapturedImageUri(todayItems[0].imageUri);
-        const restoredImages = (todayItems[0].imageUris && todayItems[0].imageUris.length > 0)
-          ? todayItems[0].imageUris.map((u) => ({ uri: u, mimeType: 'image/jpeg' }))
-          : todayItems[0].imageUri
-          ? [{ uri: todayItems[0].imageUri, mimeType: 'image/jpeg' }]
-          : [];
-        setCapturedImages(restoredImages);
-        setIsSaved(true);
-        // Start background prefetch for latest today lesson
-        AudioQueueManager.prefetchLessonAudio(todayItems[0].analysis, API_BASE_URL, profile.grade);
-      }
+      StorageService.getHistory().then((h) => {
+        setHistory(h);
+        if (isRegistered) {
+          // Pre-fill today's session lessons from local history only for registered users
+          const startOfToday = new Date();
+          startOfToday.setHours(0, 0, 0, 0);
+          const todayItems: SessionLesson[] = h
+            .filter((c) => c.timestamp >= startOfToday.getTime())
+            .map((c) => ({
+              id: c.id,
+              title: c.task_title,
+              analysis: c.analysis,
+              imageUri: c.imageUri || null,
+              imageUris: c.imageUris,
+              timestamp: c.timestamp,
+            }));
+
+          if (todayItems.length > 0) {
+            setSessionLessons(todayItems);
+            // Load the latest one into current view
+            setAnalysis(todayItems[0].analysis);
+            setCapturedImageUri(todayItems[0].imageUri);
+            const restoredImages = (todayItems[0].imageUris && todayItems[0].imageUris.length > 0)
+              ? todayItems[0].imageUris.map((u) => ({ uri: u, mimeType: 'image/jpeg' }))
+              : todayItems[0].imageUri
+              ? [{ uri: todayItems[0].imageUri, mimeType: 'image/jpeg' }]
+              : [];
+            setCapturedImages(restoredImages);
+            setIsSaved(true);
+            // Start background prefetch for latest today lesson
+            AudioQueueManager.prefetchLessonAudio(todayItems[0].analysis, API_BASE_URL, saved.grade);
+          }
+        } else {
+          // Guest mode starts with clean slate
+          setSessionLessons([]);
+          setAnalysis(null);
+          setCapturedImages([]);
+          setCapturedImageUri(null);
+        }
+      });
     });
 
     StorageService.getSavedVocabulary().then((v) => {
@@ -467,6 +477,12 @@ function MainApp() {
         mimeType: img.mimeType || 'image/jpeg',
       }));
 
+      setLoadingStep(
+        imagesList.length > 1
+          ? 'Анализируем страницы и переводим термины...'
+          : 'Переводим термины и готовим подсказку...'
+      );
+
       const data = await analyzePagesJson(payload, profile, API_BASE_URL);
 
       // Discard if user logged out while backend was analyzing
@@ -541,6 +557,13 @@ function MainApp() {
 
       AudioQueueManager.stop();
 
+      // Immediately activate loading state and clear stale analysis if replacing
+      if (mode === 'replace') {
+        setAnalysis(null);
+      }
+      setLoading(true);
+      setLoadingStep('Оптимизируем изображение...');
+
       const asset = result.assets[0];
       // Compress and scale down to max 1600px with 0.78 quality for evening load efficiency
       const opt = await optimizePageImage(asset.uri, asset.width, asset.height);
@@ -556,6 +579,8 @@ function MainApp() {
       setCapturedImageUri(nextImages[0]?.uri || null);
       await processImagesAnalysis(nextImages);
     } catch (err: any) {
+      setLoading(false);
+      setLoadingStep('');
       Alert.alert('Камера', `Не удалось запустить камеру: ${err?.message || 'Неизвестная ошибка'}`);
     }
   };
@@ -592,6 +617,17 @@ function MainApp() {
 
       AudioQueueManager.stop();
 
+      // Immediately activate loading state and clear stale analysis if replacing
+      if (mode === 'replace') {
+        setAnalysis(null);
+      }
+      setLoading(true);
+      setLoadingStep(
+        result.assets.length > 1
+          ? `Оптимизируем ${result.assets.length} изображений...`
+          : 'Оптимизируем изображение...'
+      );
+
       // Batch optimize picked images (max 1600px, quality 0.78)
       const optList = await optimizePageImages(
         result.assets.map((asset) => ({
@@ -612,6 +648,8 @@ function MainApp() {
       setCapturedImageUri(nextImages[0]?.uri || null);
       await processImagesAnalysis(nextImages);
     } catch (err: any) {
+      setLoading(false);
+      setLoadingStep('');
       Alert.alert('Галерея', `Не удалось открыть галерею: ${err?.message || 'Неизвестная ошибка'}`);
     }
   };
@@ -1643,7 +1681,7 @@ function MainApp() {
           >
             {loading ? (
               <View style={styles.loadingRow}>
-                <ActivityIndicator color={Theme.colors.onPrimaryText} size="small" />
+                <ActivityIndicator color="#5FEDC5" size="small" />
                 <Text style={[styles.nextTaskButtonText, styles.loadingText]}>
                   {loadingStep || 'Анализируем...'}
                 </Text>
@@ -2250,97 +2288,100 @@ function MainApp() {
         </View>
       </View>
 
-      {/* Main Scrollable Content Area */}
-      <ScrollView
-        ref={scrollViewRef}
-        contentContainerStyle={[
-          styles.container,
-          {
-            paddingBottom: Math.max(bottomInset, 48) + 56,
-          },
-        ]}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        {currentTab === 'study' && renderStudyTab()}
-        {currentTab === 'dictionary' && renderDictionaryTab()}
-        {currentTab === 'translator' && (
-          <QuickTranslatorScreen
-            onBackToStudy={() => switchTab('study')}
-            onVocabularySaved={async () => {
-              const updated = await StorageService.getSavedVocabulary();
-              setSavedVocab(updated);
-            }}
-          />
-        )}
-        {currentTab === 'tests' && (
-          <ComingSoonCard
-            icon="🎯"
-            title="Подготовка к контрольным"
-            subtitle="Интеллектуальный тренажёр типовых проверочных работ эстонской школы (Koolibri, Avita) с разбором частых ошибок."
-            features={[
-              {
-                icon: '📝',
-                title: 'Интерактивные проверочные',
-                desc: 'Тематические тесты по эстонской школьной программе с мгновенной проверкой',
-              },
-              {
-                icon: '🔍',
-                title: 'Разбор частых ловушек',
-                desc: 'Сложные падежи (Omastav, Osastav) и формы слов без стресса',
-              },
-              {
-                icon: '⏱️',
-                title: 'Тренировка на время',
-                desc: 'Режим симуляции реального урока с подсказками',
-              },
-              {
-                icon: '📊',
-                title: 'Оценка готовности',
-                desc: 'Наглядный прогноз балла перед реальной контрольной работой в школе',
-              },
-            ]}
-            onBackToStudy={() => switchTab('study')}
-          />
-        )}
-        {currentTab === 'reading' && (
-          <ComingSoonCard
-            icon="⚡"
-            title="Помощь в чтении (Скорочтение)"
-            subtitle="Тренажёр осознанного беглого чтения эстонских текстов с синхронной подсветкой и ударениями."
-            features={[
-              {
-                icon: '📖',
-                title: 'Сложные составные слова',
-                desc: 'Разбор длинных liitsõnad на смысловые корни для понимания сути',
-              },
-              {
-                icon: '🔊',
-                title: 'Аудио-сопровождение',
-                desc: 'Эталонное произношение диктора в комфортном темпе',
-              },
-              {
-                icon: '🧠',
-                title: 'Контроль понимания',
-                desc: 'Мини-вопросы после каждого абзаца для проверки смысла',
-              },
-              {
-                icon: '📈',
-                title: 'Отслеживание прогресса',
-                desc: 'Рост скорости чтения (слов/мин) и словарного запаса',
-              },
-            ]}
-            onBackToStudy={() => switchTab('study')}
-          />
-        )}
-        {currentTab === 'settings' && renderSettingsTab()}
-        {currentTab === 'feedback' && (
-          <FeedbackScreen
-            onBack={() => switchTab('study')}
-            currentGrade={profile.grade}
-          />
-        )}
-      </ScrollView>
+      {/* Concave Dark Nordic Content Container overlapping header */}
+      <View style={styles.bodyConcaveContainer}>
+        <ScrollView
+          ref={scrollViewRef}
+          contentContainerStyle={[
+            styles.container,
+            {
+              paddingTop: 16,
+              paddingBottom: Math.max(bottomInset, 48) + 56,
+            },
+          ]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {currentTab === 'study' && renderStudyTab()}
+          {currentTab === 'dictionary' && renderDictionaryTab()}
+          {currentTab === 'translator' && (
+            <QuickTranslatorScreen
+              onBackToStudy={() => switchTab('study')}
+              onVocabularySaved={async () => {
+                const updated = await StorageService.getSavedVocabulary();
+                setSavedVocab(updated);
+              }}
+            />
+          )}
+          {currentTab === 'tests' && (
+            <ComingSoonCard
+              icon="🎯"
+              title="Подготовка к контрольным"
+              subtitle="Интеллектуальный тренажёр типовых проверочных работ эстонской школы (Koolibri, Avita) с разбором частых ошибок."
+              features={[
+                {
+                  icon: '📝',
+                  title: 'Интерактивные проверочные',
+                  desc: 'Тематические тесты по эстонской школьной программе с мгновенной проверкой',
+                },
+                {
+                  icon: '🔍',
+                  title: 'Разбор частых ловушек',
+                  desc: 'Сложные падежи (Omastav, Osastav) и формы слов без стресса',
+                },
+                {
+                  icon: '⏱️',
+                  title: 'Тренировка на время',
+                  desc: 'Режим симуляции реального урока с подсказками',
+                },
+                {
+                  icon: '📊',
+                  title: 'Оценка готовности',
+                  desc: 'Наглядный прогноз балла перед реальной контрольной работой в школе',
+                },
+              ]}
+              onBackToStudy={() => switchTab('study')}
+            />
+          )}
+          {currentTab === 'reading' && (
+            <ComingSoonCard
+              icon="⚡"
+              title="Помощь в чтении (Скорочтение)"
+              subtitle="Тренажёр осознанного беглого чтения эстонских текстов с синхронной подсветкой и ударениями."
+              features={[
+                {
+                  icon: '📖',
+                  title: 'Сложные составные слова',
+                  desc: 'Разбор длинных liitsõnad на смысловые корни для понимания сути',
+                },
+                {
+                  icon: '🔊',
+                  title: 'Аудио-сопровождение',
+                  desc: 'Эталонное произношение диктора в комфортном темпе',
+                },
+                {
+                  icon: '🧠',
+                  title: 'Контроль понимания',
+                  desc: 'Мини-вопросы после каждого абзаца для проверки смысла',
+                },
+                {
+                  icon: '📈',
+                  title: 'Отслеживание прогресса',
+                  desc: 'Рост скорости чтения (слов/мин) и словарного запаса',
+                },
+              ]}
+              onBackToStudy={() => switchTab('study')}
+            />
+          )}
+          {currentTab === 'settings' && renderSettingsTab()}
+          {currentTab === 'feedback' && (
+            <FeedbackScreen
+              onBack={() => switchTab('study')}
+              currentGrade={profile.grade}
+            />
+          )}
+        </ScrollView>
+      </View>
 
       {/* Navigation Drawer Component (No Bottom Tab Bar) */}
       <DrawerMenu
@@ -2431,10 +2472,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingBottom: 12,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
+    paddingBottom: 22,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     ...Theme.shadow.header,
+  },
+  bodyConcaveContainer: {
+    flex: 1,
+    marginTop: -16,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#12161A',
+    overflow: 'hidden',
   },
   headerMenuBtn: {
     width: 40,
@@ -3381,7 +3430,9 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   naidisBadge: {
-    backgroundColor: 'rgba(95, 237, 197, 0.22)',
+    backgroundColor: 'rgba(95, 237, 197, 0.14)',
+    borderWidth: 1,
+    borderColor: '#5FEDC5',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
@@ -3389,7 +3440,7 @@ const styles = StyleSheet.create({
   naidisBadgeText: {
     fontSize: 11.5,
     fontWeight: '800',
-    color: '#064E3B',
+    color: '#5FEDC5',
     letterSpacing: 0.5,
   },
   naidisGivenBox: {
@@ -3434,20 +3485,20 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   naidisStepNumberBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: Theme.colors.primaryTint,
-    borderWidth: 1,
-    borderColor: Theme.colors.primary,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(95, 237, 197, 0.16)',
+    borderWidth: 1.5,
+    borderColor: '#5FEDC5',
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 1,
   },
   naidisStepNumberText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
-    color: Theme.colors.onPrimaryText,
+    color: '#5FEDC5',
   },
   naidisStepText: {
     flex: 1,
@@ -3696,9 +3747,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   nextTaskButton: {
-    backgroundColor: Theme.colors.surface,
+    backgroundColor: '#1E252B',
     borderWidth: 1.5,
-    borderColor: Theme.colors.primary,
+    borderColor: '#5FEDC5',
     borderRadius: Theme.radius.card,
     paddingVertical: 14,
     alignItems: 'center',
@@ -3706,18 +3757,20 @@ const styles = StyleSheet.create({
     ...Theme.shadow.card,
   },
   nextTaskButtonJunior: {
-    backgroundColor: Theme.colors.surface,
+    backgroundColor: '#1E252B',
   },
   nextTaskButtonSenior: {
-    backgroundColor: Theme.colors.surface,
+    backgroundColor: '#1E252B',
   },
   nextTaskButtonText: {
-    color: Theme.colors.onPrimaryText,
-    fontSize: 15,
-    fontWeight: '700',
+    color: '#5FEDC5',
+    fontSize: 15.5,
+    fontWeight: '800',
   },
   nextTaskButtonTextJunior: {
-    fontSize: 15,
+    fontSize: 15.5,
+    color: '#5FEDC5',
+    fontWeight: '800',
   },
 
   // Tab 2: Dictionary & History

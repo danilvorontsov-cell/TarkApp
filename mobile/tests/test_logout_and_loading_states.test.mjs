@@ -135,3 +135,67 @@ test('Scenario 4: Fullscreen LoadingOverlay is imported and rendered on loading 
     'LoadingOverlay must have subtitle Переводим термины и готовим подсказку'
   );
 });
+
+test('Scenario 5: Concave downward arch header geometry', async () => {
+  const fs = await import('node:fs');
+  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+
+  // Verify headerBar has flat bottom
+  assert.match(
+    appContent,
+    /headerBar:\s*\{[^}]*borderBottomLeftRadius:\s*0[^}]*borderBottomRightRadius:\s*0/s,
+    'headerBar must have borderBottomLeftRadius: 0 and borderBottomRightRadius: 0'
+  );
+
+  // Verify bodyConcaveContainer wraps scroll area with negative top margin and rounded top corners
+  assert.match(
+    appContent,
+    /bodyConcaveContainer:\s*\{[^}]*marginTop:\s*-\d+[^}]*borderTopLeftRadius:\s*24[^}]*borderTopRightRadius:\s*24/s,
+    'bodyConcaveContainer must have negative marginTop and borderTopRadius 24'
+  );
+});
+
+test('Scenario 6: Immediate loading state on camera and gallery selection', async () => {
+  const fs = await import('node:fs');
+  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+
+  // handleTakePhoto immediately calls setLoading(true) before image optimization
+  assert.match(
+    appContent,
+    /handleTakePhoto\s*=\s*async[\s\S]*?setLoading\(true\)[\s\S]*?optimizePageImage/,
+    'handleTakePhoto must set loading(true) immediately before optimization'
+  );
+
+  // handlePickImage immediately calls setLoading(true) before image optimization
+  assert.match(
+    appContent,
+    /handlePickImage\s*=\s*async[\s\S]*?setLoading\(true\)[\s\S]*?optimizePageImages/,
+    'handlePickImage must set loading(true) immediately before optimization'
+  );
+});
+
+test('Scenario 7: Näidis badge, step numbers, and next task button contrast tokens', async () => {
+  const fs = await import('node:fs');
+  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+
+  // naidisBadge and naidisBadgeText
+  assert.match(
+    appContent,
+    /naidisBadgeText:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s,
+    'naidisBadgeText must use mint #5FEDC5'
+  );
+
+  // naidisStepNumberText
+  assert.match(
+    appContent,
+    /naidisStepNumberText:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s,
+    'naidisStepNumberText must use mint #5FEDC5'
+  );
+
+  // nextTaskButtonText
+  assert.match(
+    appContent,
+    /nextTaskButtonText:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s,
+    'nextTaskButtonText must use mint #5FEDC5'
+  );
+});
