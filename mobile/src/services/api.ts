@@ -5,9 +5,34 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PageAnalysisResponse, UserProfile, VocabularyItem } from '../types';
 import { captureException } from './sentry';
 
-// Default API base URL for mobile Hotspot connection
-export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL || 'http://10.253.79.137:8080';
+import {
+  API_BASE_URL,
+  DEFAULT_API_BASE_URL,
+  getApiBaseUrl,
+  getSyncApiBaseUrl,
+  setCustomApiBaseUrl,
+  resetCustomApiBaseUrl,
+} from '../config/apiConfig';
+
+export {
+  API_BASE_URL,
+  DEFAULT_API_BASE_URL,
+  getApiBaseUrl,
+  getSyncApiBaseUrl,
+  setCustomApiBaseUrl,
+  resetCustomApiBaseUrl,
+};
+
+/**
+ * Resolves the active base URL, falling back to dynamic in-memory URL from apiConfig
+ * if the default exported constant or undefined was passed.
+ */
+export function resolveBaseUrl(baseUrl?: string): string {
+  if (baseUrl && baseUrl !== API_BASE_URL && baseUrl !== DEFAULT_API_BASE_URL) {
+    return baseUrl;
+  }
+  return getSyncApiBaseUrl();
+}
 
 export const API_TIMEOUT_MS = 30000;
 
@@ -191,7 +216,7 @@ export interface KeyActivateResponse {
 
 export async function getLicenseStatus(baseUrl: string = API_BASE_URL): Promise<LicenseStatus> {
   const deviceId = await getDeviceId();
-  const endpoint = `${baseUrl}/api/v1/license/status`;
+  const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/license/status`;
   const response = await fetchWithTimeout(endpoint, {
     headers: {
       Accept: 'application/json',
@@ -211,7 +236,7 @@ export async function activateAccessKey(
   baseUrl: string = API_BASE_URL
 ): Promise<KeyActivateResponse> {
   const deviceId = await getDeviceId();
-  const endpoint = `${baseUrl}/api/v1/license/activate`;
+  const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/license/activate`;
   const response = await fetchWithTimeout(endpoint, {
     method: 'POST',
     headers: {
@@ -243,7 +268,7 @@ export async function requestInvoiceEmail(
   baseUrl: string = API_BASE_URL
 ): Promise<InvoiceRequestResponse> {
   const deviceId = await getDeviceId();
-  const endpoint = `${baseUrl}/api/v1/license/invoice`;
+  const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/license/invoice`;
   const response = await fetchWithTimeout(endpoint, {
     method: 'POST',
     headers: {
@@ -358,9 +383,12 @@ export function formatFriendlyErrorMessage(error: any): string {
 
   const msg = typeof error === 'string' ? error : error.message || String(error);
 
-  // Network connection / DNS / Offline issues
+  // Network connection / DNS / Offline / Cleartext issues
   if (
     msg.includes('Network request failed') ||
+    msg.includes('CLEARTEXT') ||
+    msg.includes('Cleartext') ||
+    msg.includes('cleartext') ||
     msg.includes('Failed to connect') ||
     msg.includes('ConnectException') ||
     msg.includes('ECONNREFUSED') ||
@@ -368,7 +396,7 @@ export function formatFriendlyErrorMessage(error: any): string {
     msg.includes('EHOSTUNREACH') ||
     msg.includes('NetworkError')
   ) {
-    return 'Не удалось связаться с сервером TarkApp. Проверьте подключение к Wi-Fi / интернету и убедитесь, что сервер запущен.';
+    return 'Не удалось связаться с сервером TarkApp. Проверьте адрес сервера (шторка меню) и убедитесь, что сервер запущен.';
   }
 
   // Timeout issues
@@ -459,7 +487,7 @@ export async function fetchMoreExamples(
   request: MoreExamplesRequest,
   baseUrl: string = API_BASE_URL
 ): Promise<string[]> {
-  const endpoint = `${baseUrl}/api/v1/more-examples`;
+  const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/more-examples`;
   try {
     const deviceId = await getDeviceId();
     const response = await fetchWithTimeout(endpoint, {
@@ -496,7 +524,7 @@ export async function analyzePage(
   profile: UserProfile,
   baseUrl: string = API_BASE_URL
 ): Promise<PageAnalysisResponse> {
-  const endpoint = `${baseUrl}/api/v1/analyze-page`;
+  const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/analyze-page`;
   try {
     const deviceId = await getDeviceId();
     const formData = new FormData();
@@ -555,7 +583,7 @@ export async function analyzePagesJson(
   profile: UserProfile,
   baseUrl: string = API_BASE_URL
 ): Promise<PageAnalysisResponse> {
-  const endpoint = `${baseUrl}/api/v1/analyze-page/json`;
+  const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/analyze-page/json`;
   try {
     const deviceId = await getDeviceId();
     const validBase64Images = images
@@ -617,7 +645,7 @@ export async function checkBackendHealth(
   baseUrl: string = API_BASE_URL
 ): Promise<boolean> {
   try {
-    const res = await fetchWithTimeout(`${baseUrl}/health`, { method: 'GET' }, 5000);
+    const res = await fetchWithTimeout(`${resolveBaseUrl(baseUrl)}/health`, { method: 'GET' }, 5000);
     return res.ok;
   } catch {
     return false;
@@ -631,7 +659,7 @@ export async function quickTranslate(
   request: QuickTranslateRequest,
   baseUrl: string = API_BASE_URL
 ): Promise<QuickTranslateResponse> {
-  const endpoint = `${baseUrl}/api/v1/translate/quick`;
+  const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/translate/quick`;
   try {
     const deviceId = await getDeviceId();
     const response = await fetchWithTimeout(endpoint, {
@@ -670,7 +698,7 @@ export async function sendFeedback(
   payload: FeedbackPayload,
   baseUrl: string = API_BASE_URL
 ): Promise<FeedbackResponse> {
-  const endpoint = `${baseUrl}/api/v1/feedback`;
+  const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/feedback`;
   try {
     const deviceId = await getDeviceId();
     const clientReqId = generateClientRequestId();

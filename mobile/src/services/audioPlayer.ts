@@ -4,7 +4,7 @@ import {
   AudioPlayer,
   AudioStatus,
 } from 'expo-audio';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, resolveBaseUrl } from './api';
 
 export type PlaybackState = 'idle' | 'playing' | 'paused';
 
@@ -224,10 +224,11 @@ export async function playTts(
     text.startsWith('http://') ||
     text.startsWith('https://');
 
+  const activeBaseUrl = resolveBaseUrl(baseUrl);
   const bilingualParam = bilingual ? '&bilingual=true' : '';
   const url = isDirectUri
     ? text
-    : `${baseUrl}/api/v1/voice/tts?text=${encodeURIComponent(text.trim())}&lang=${lang}${bilingualParam}`;
+    : `${activeBaseUrl}/api/v1/voice/tts?text=${encodeURIComponent(text.trim())}&lang=${lang}${bilingualParam}`;
 
   try {
     if (thisToken !== currentPlayToken) {

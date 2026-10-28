@@ -31,7 +31,13 @@
           "photosPermission": "Разрешите TarkApp доступ к фотографиям для разбора учебных материалов.",
           "cameraPermission": "Разрешите TarkApp доступ к камере для съемки страниц учебников."
         }
-      ]
-    ]
+      ],
+      "./plugins/withCleartextTraffic.js"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "1adf92e6-8adb-42c1-8bb6-13e4e63f861e"
+      }
+    }
   }
 }

@@ -1,5 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, resolveBaseUrl } from './api';
 import {
   playTts,
   stopTts,
@@ -381,9 +381,10 @@ class AudioQueueManagerClass {
         await FileSystem.deleteAsync(targetFile, { idempotent: true });
       }
 
+      const activeBaseUrl = resolveBaseUrl(baseUrl);
       const encodedText = encodeURIComponent(item.text);
       const bilingualParam = item.bilingual ? '&bilingual=true' : '';
-      const downloadUrl = `${baseUrl}/api/v1/voice/tts?text=${encodedText}&lang=${item.lang}${bilingualParam}`;
+      const downloadUrl = `${activeBaseUrl}/api/v1/voice/tts?text=${encodedText}&lang=${item.lang}${bilingualParam}`;
 
       const result = await FileSystem.downloadAsync(downloadUrl, targetFile);
       const downloadedInfo = await FileSystem.getInfoAsync(targetFile);
