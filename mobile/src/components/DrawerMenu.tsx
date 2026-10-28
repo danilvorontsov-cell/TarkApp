@@ -449,6 +449,8 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 14,
     paddingHorizontal: 12,
+    zIndex: 2,
+    elevation: 3,
   },
   menuItem: {
     flexDirection: 'row',

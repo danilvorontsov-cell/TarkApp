@@ -2643,6 +2643,8 @@ const styles = StyleSheet.create({
   },
   saveProfileBtn: {
     backgroundColor: '#064E3B',
+    borderWidth: 1.5,
+    borderColor: '#5FEDC5',
     paddingVertical: 14,
     borderRadius: 14,
     alignItems: 'center',
@@ -2657,8 +2659,8 @@ const styles = StyleSheet.create({
   },
   logoutBtn: {
     borderWidth: 1.5,
-    borderColor: '#FCA5A5',
-    backgroundColor: '#FEF2F2',
+    borderColor: '#EF4444',
+    backgroundColor: Theme.colors.dangerBg,
     paddingVertical: 12,
     borderRadius: 14,
     alignItems: 'center',
@@ -2667,7 +2669,7 @@ const styles = StyleSheet.create({
   logoutBtnText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#DC2626',
+    color: '#FCA5A5',
   },
   settingsAvatarRow: {
     flexDirection: 'row',
@@ -3208,8 +3210,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1.5,
     borderStyle: 'dashed',
-    borderColor: Theme.colors.primary,
-    backgroundColor: '#F0FDF9',
+    borderColor: '#5FEDC5',
+    backgroundColor: 'rgba(95, 237, 197, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 2,
@@ -3217,20 +3219,20 @@ const styles = StyleSheet.create({
     shadowOpacity: 0,
   },
   addPageThumbnailBtnJunior: {
-    borderColor: '#F59E0B',
-    backgroundColor: '#FEF9C3',
+    borderColor: '#5FEDC5',
+    backgroundColor: 'rgba(95, 237, 197, 0.12)',
     elevation: 0,
     shadowOpacity: 0,
   },
   addPageIcon: {
     fontSize: 16,
-    color: Theme.colors.onPrimaryText,
+    color: '#5FEDC5',
     marginBottom: 2,
   },
   addPageText: {
     fontSize: 9,
     fontWeight: '700',
-    color: Theme.colors.onPrimaryText,
+    color: '#5FEDC5',
     textAlign: 'center',
     lineHeight: 11,
   },
@@ -3290,17 +3292,17 @@ const styles = StyleSheet.create({
     textAlign: 'left',
   },
   tierBadgeBox: {
-    backgroundColor: Theme.colors.slotSuccessBg,
+    backgroundColor: 'rgba(95, 237, 197, 0.14)',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: Theme.radius.badge,
     borderWidth: 1,
-    borderColor: Theme.colors.primary,
+    borderColor: '#5FEDC5',
   },
   tierBadgeText: {
     fontSize: 11.5,
     fontWeight: '700',
-    color: Theme.colors.onPrimaryText,
+    color: '#5FEDC5',
   },
 
   // Voice Hero (Аудиоподсказка)
@@ -3378,8 +3380,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   altToggleBtnActive: {
-    backgroundColor: Theme.colors.primaryTint,
-    borderColor: Theme.colors.primary,
+    backgroundColor: 'rgba(95, 237, 197, 0.16)',
+    borderColor: '#5FEDC5',
   },
   altToggleBtnText: {
     fontSize: 12,
@@ -3387,7 +3389,7 @@ const styles = StyleSheet.create({
     color: Theme.colors.textSecondary,
   },
   altToggleBtnTextActive: {
-    color: Theme.colors.onPrimaryText,
+    color: '#5FEDC5',
   },
   altExplanationBadge: {
     backgroundColor: 'rgba(95, 237, 197, 0.12)',
@@ -3521,9 +3523,9 @@ const styles = StyleSheet.create({
     color: Theme.colors.textPrimary,
   },
   naidisNoteBox: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: 'rgba(251, 191, 36, 0.12)',
     borderWidth: 1,
-    borderColor: '#FDE68A',
+    borderColor: '#F59E0B',
     borderRadius: 10,
     padding: 10,
     marginTop: 8,
@@ -3531,7 +3533,7 @@ const styles = StyleSheet.create({
   naidisNoteText: {
     fontSize: 13,
     lineHeight: 18,
-    color: '#92400E',
+    color: '#FDE68A',
   },
 
   // Gymnasium Academic Answer Card Styles
@@ -3543,9 +3545,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   academicBadge: {
-    backgroundColor: 'rgba(6, 78, 59, 0.1)',
+    backgroundColor: 'rgba(95, 237, 197, 0.14)',
     borderWidth: 1,
-    borderColor: 'rgba(6, 78, 59, 0.2)',
+    borderColor: '#5FEDC5',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
@@ -3553,7 +3555,7 @@ const styles = StyleSheet.create({
   academicBadgeText: {
     fontSize: 11.5,
     fontWeight: '800',
-    color: '#064E3B',
+    color: '#5FEDC5',
     letterSpacing: 0.5,
   },
   academicAnswerBox: {
@@ -3740,7 +3742,7 @@ const styles = StyleSheet.create({
     backgroundColor: Theme.colors.primary,
   },
   saveCardButtonSaved: {
-    backgroundColor: '#CFFAEE',
+    backgroundColor: 'rgba(95, 237, 197, 0.14)',
     borderWidth: 1.5,
     borderColor: '#5FEDC5',
     elevation: 0,
@@ -3757,7 +3759,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   saveCardButtonTextSaved: {
-    color: Theme.colors.onPrimaryText,
+    color: '#5FEDC5',
     backgroundColor: 'transparent',
   },
   nextTaskButton: {
@@ -3800,7 +3802,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   pupilPill: {
-    backgroundColor: '#CFFAEE',
+    backgroundColor: 'rgba(95, 237, 197, 0.14)',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: Theme.radius.badge,
@@ -3810,19 +3812,19 @@ const styles = StyleSheet.create({
     shadowOpacity: 0,
   },
   pupilPillJunior: {
-    backgroundColor: '#FEF3C7',
-    borderColor: '#FCD34D',
+    backgroundColor: 'rgba(95, 237, 197, 0.14)',
+    borderColor: '#5FEDC5',
     elevation: 0,
     shadowOpacity: 0,
   },
   pupilPillText: {
     fontSize: 12,
-    fontWeight: '600',
-    color: Theme.colors.onPrimaryText,
+    fontWeight: '700',
+    color: '#5FEDC5',
     backgroundColor: 'transparent',
   },
   pupilPillTextJunior: {
-    color: '#78350F',
+    color: '#5FEDC5',
     backgroundColor: 'transparent',
   },
   appTitle: {
@@ -4027,7 +4029,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   historyTypeBadge: {
-    backgroundColor: Theme.colors.slotSuccessBg,
+    backgroundColor: 'rgba(95, 237, 197, 0.14)',
+    borderWidth: 1,
+    borderColor: '#5FEDC5',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
@@ -4035,7 +4039,7 @@ const styles = StyleSheet.create({
   historyTypeBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: Theme.colors.onPrimaryText,
+    color: '#5FEDC5',
   },
   historyItemBadge: {
     backgroundColor: Theme.colors.surfaceAlt,
@@ -4168,7 +4172,7 @@ const styles = StyleSheet.create({
   },
   bold: {
     fontWeight: '800',
-    color: Theme.colors.onPrimaryText,
+    color: '#5FEDC5',
   },
   textInput: {
     borderWidth: 1,
@@ -4263,8 +4267,8 @@ const styles = StyleSheet.create({
     borderColor: Theme.colors.border,
   },
   suggestionChipSelected: {
-    backgroundColor: Theme.colors.slotSuccessBg,
-    borderColor: Theme.colors.primary,
+    backgroundColor: 'rgba(95, 237, 197, 0.16)',
+    borderColor: '#5FEDC5',
   },
   suggestionText: {
     fontSize: 12,
@@ -4272,7 +4276,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   suggestionTextSelected: {
-    color: Theme.colors.onPrimaryText,
+    color: '#5FEDC5',
     fontWeight: '800',
   },
   storageStats: {

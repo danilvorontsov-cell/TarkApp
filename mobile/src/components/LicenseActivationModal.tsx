@@ -294,9 +294,9 @@ const styles = StyleSheet.create({
   errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF2F2',
+    backgroundColor: '#3F1E24',
     borderWidth: 1,
-    borderColor: '#FCA5A5',
+    borderColor: '#EF4444',
     borderRadius: 12,
     padding: 10,
     marginBottom: 14,
@@ -308,15 +308,15 @@ const styles = StyleSheet.create({
   errorText: {
     flex: 1,
     fontSize: 12.5,
-    color: '#B91C1C',
+    color: '#FCA5A5',
     fontWeight: '600',
   },
   successBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ECFDF5',
+    backgroundColor: 'rgba(95, 237, 197, 0.14)',
     borderWidth: 1,
-    borderColor: '#6EE7B7',
+    borderColor: '#5FEDC5',
     borderRadius: 12,
     padding: 10,
     marginBottom: 14,
@@ -324,13 +324,13 @@ const styles = StyleSheet.create({
   },
   successIcon: {
     fontSize: 16,
-    color: '#047857',
+    color: '#5FEDC5',
     fontWeight: 'bold',
   },
   successText: {
     flex: 1,
     fontSize: 13,
-    color: '#047857',
+    color: '#5FEDC5',
     fontWeight: '700',
   },
   actionBtn: {
@@ -364,6 +364,6 @@ const styles = StyleSheet.create({
   cancelLinkText: {
     fontSize: 13.5,
     fontWeight: '600',
-    color: '#64748B',
+    color: '#94A3B8',
   },
 });

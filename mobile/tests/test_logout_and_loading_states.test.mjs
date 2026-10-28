@@ -219,3 +219,31 @@ test('Scenario 8: Drawer footer branding and Header vertical gradient', async ()
     'Header bar must use vertical LinearGradient ["#66F6CF", "#42DCA3"]'
   );
 });
+
+test('Scenario 9: End-to-end Graphite & Mint WCAG contrast audit across all components', async () => {
+  const fs = await import('node:fs');
+  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+  const comingSoonContent = fs.readFileSync('mobile/src/components/ComingSoonCard.tsx', 'utf-8');
+  const avatarModalContent = fs.readFileSync('mobile/src/components/AvatarPickerModal.tsx', 'utf-8');
+  const licenseModalContent = fs.readFileSync('mobile/src/components/LicenseActivationModal.tsx', 'utf-8');
+
+  // Verify App.tsx outline buttons and translucent badges use #5FEDC5
+  assert.match(appContent, /tierBadgeText:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s);
+  assert.match(appContent, /altToggleBtnTextActive:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s);
+  assert.match(appContent, /academicBadgeText:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s);
+  assert.match(appContent, /saveCardButtonTextSaved:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s);
+  assert.match(appContent, /pupilPillText:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s);
+  assert.match(appContent, /historyTypeBadgeText:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s);
+  assert.match(appContent, /suggestionTextSelected:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s);
+
+  // Verify ComingSoonCard badge uses #5FEDC5 on dark translucent mint
+  assert.match(comingSoonContent, /badgeText:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s);
+
+  // Verify AvatarPickerModal secondary button uses #5FEDC5 text matching its border
+  assert.match(avatarModalContent, /btnSecondaryText:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s);
+
+  // Verify LicenseActivationModal banners use high-contrast tokens on dark surface
+  assert.match(licenseModalContent, /errorText:\s*\{[^}]*color:\s*['"]#FCA5A5['"]/s);
+  assert.match(licenseModalContent, /successText:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s);
+});
+

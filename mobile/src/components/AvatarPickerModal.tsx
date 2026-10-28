@@ -211,24 +211,24 @@ const styles = StyleSheet.create({
     color: '#064E3B',
   },
   btnSecondary: {
-    backgroundColor: 'rgba(95, 237, 197, 0.22)',
+    backgroundColor: 'rgba(95, 237, 197, 0.14)',
     borderWidth: 1.5,
     borderColor: '#5FEDC5',
   },
   btnSecondaryText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#065F46',
+    color: '#5FEDC5',
   },
   btnDanger: {
-    backgroundColor: '#FEF2F2',
+    backgroundColor: Theme.colors.dangerBg,
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: '#EF4444',
   },
   btnDangerText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#DC2626',
+    fontWeight: '700',
+    color: '#FCA5A5',
   },
   cancelBtn: {
     paddingVertical: 8,
