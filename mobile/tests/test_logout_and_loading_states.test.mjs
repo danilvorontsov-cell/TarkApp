@@ -262,3 +262,23 @@ test('Scenario 9: End-to-end Graphite & Mint WCAG contrast audit across all comp
   assert.match(licenseModalContent, /successText:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s);
 });
 
+test('Scenario 10: PaywallScreen invoice endpoint and Graphite & Mint email input styling', async () => {
+  const fs = await import('node:fs');
+  const paywallContent = fs.readFileSync('mobile/src/screens/PaywallScreen.tsx', 'utf-8');
+  const apiContent = fs.readFileSync('mobile/src/services/api.ts', 'utf-8');
+
+  // Verify real invoice endpoint in api.ts
+  assert.match(apiContent, /\/api\/v1\/license\/invoice/);
+
+  // Verify PaywallScreen calls requestInvoiceEmail
+  assert.match(paywallContent, /requestInvoiceEmail\(trimmedEmail,\s*selectedPlan\)/);
+
+  // Verify emailTextInput uses #1E252B background, 1px #5FEDC5 border, and #FFFFFF text
+  assert.match(
+    paywallContent,
+    /emailTextInput:\s*\{[^}]*backgroundColor:\s*['"]#1E252B['"][^}]*borderWidth:\s*1[^}]*borderColor:\s*['"]#5FEDC5['"][^}]*color:\s*['"]#FFFFFF['"]/s,
+    'emailTextInput must use #1E252B background, 1px #5FEDC5 border, and #FFFFFF text'
+  );
+});
+
+

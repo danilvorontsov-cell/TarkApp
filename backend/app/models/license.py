@@ -62,3 +62,17 @@ class KeyActivateResponse(BaseModel):
     days_left: int
     expires_at: str
     package_name: Optional[str] = None
+
+
+class InvoiceRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=254, description="Customer email for PDF invoice delivery")
+    plan: str = Field(default="year", description="Selected subscription plan: year, semester, month, full_year")
+
+
+class InvoiceResponse(BaseModel):
+    success: bool
+    email_sent: bool
+    invoice_number: str
+    transport: str = "none"
+    message: str
+

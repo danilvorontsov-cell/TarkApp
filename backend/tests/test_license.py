@@ -274,3 +274,45 @@ def test_activated_key_grants_unlimited_reviews(setup_db):
     left = license_service.deduct_review_attempt(device_id, db)
     assert left == 0  # unchanged
 
+
+def test_invoice_endpoint_validates_email_and_generates_pdf(setup_db, monkeypatch):
+    from app.services.email_service import build_invoice_pdf
+    from app.config import settings
+
+    # 1. Invalid email returns 400
+    bad_resp = client.post(
+        "/api/v1/license/invoice",
+        headers={"X-Device-ID": "test-device-invoice"},
+        json={"email": "invalid-email", "plan": "month"},
+    )
+    assert bad_resp.status_code == 400
+
+    # 2. Valid PDF generation check
+    pdf_bytes = build_invoice_pdf(
+        invoice_number="TARK-20261028-ABCD",
+        customer_email="student@mail.ee",
+        plan_title_en="TarkApp PRO - 1 Month Flexible",
+        amount_eur="9.99",
+        selgitus="TarkApp PRO Kuu 1k",
+        issue_date="28.10.2026",
+        due_date="04.11.2026",
+    )
+    assert pdf_bytes.startswith(b"%PDF-1.4")
+    assert b"EE129900001234567890" in pdf_bytes
+    assert b"9.99 EUR" in pdf_bytes
+
+    # 3. When neither SMTP nor Resend is configured, returns 200 with email_sent=False (never 500)
+    monkeypatch.setattr(settings, "RESEND_API_KEY", None)
+    monkeypatch.setattr(settings, "SMTP_HOST", None)
+    resp = client.post(
+        "/api/v1/license/invoice",
+        headers={"X-Device-ID": "test-device-invoice"},
+        json={"email": "danil.zuravov@gmail.com", "plan": "month"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["email_sent"] is False
+    assert data["invoice_number"].startswith("TARK-")
+    assert "SMTP" in data["message"]
+
+

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -10,8 +11,12 @@ from app.models.license import (
     LicenseStatusResponse,
     KeyActivateRequest,
     KeyActivateResponse,
+    InvoiceRequest,
+    InvoiceResponse,
 )
 from app.services import license_service
+from app.services.email_service import send_invoice_to_customer, PLAN_CATALOG
+from app.services.telegram_alert import send_telegram_feedback
 
 logger = logging.getLogger("tarkapp.license")
 
@@ -141,3 +146,62 @@ def activate_access_key(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": "KEY_ACTIVATION_FAILED", "message": str(val_err)},
         )
+
+
+@router.post(
+    "/invoice",
+    response_model=InvoiceResponse,
+    summary="Генерация и отправка официального PDF e-счёта на email",
+    description="Формирует счёт (PDF + HTML) с реквизитами LHV Pank и отправляет на указанный email через SMTP или Resend API.",
+)
+@safe_limit("5/minute")
+async def request_invoice_email(
+    request: Request,
+    payload: InvoiceRequest,
+    x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
+) -> InvoiceResponse:
+    clean_email = (payload.email or "").strip()
+    if "@" not in clean_email or "." not in clean_email.split("@")[-1]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "INVALID_EMAIL", "message": "Пожалуйста, укажите корректный адрес электронной почты."},
+        )
+
+    device_id = (x_device_id or "").strip() or "unknown-device"
+    plan_id = (payload.plan or "year").strip()
+    plan_info = PLAN_CATALOG.get(plan_id, PLAN_CATALOG["year"])
+
+    # Also notify admin in Telegram asynchronously
+    try:
+        asyncio.create_task(
+            send_telegram_feedback(
+                {
+                    "category": "feature",
+                    "message": (
+                        f"📄 ЗАПРОС СЧЁТА НА ПОДПИСКУ PRO\n"
+                        f"Тариф: {plan_info['title_ru']} — {plan_info['amount']} €\n"
+                        f"Email: {clean_email}\n"
+                        f"Device ID: {device_id}"
+                    ),
+                    "contact": clean_email,
+                },
+                message_thread_id=settings.TELEGRAM_TOPIC_FEATURES,
+            )
+        )
+    except Exception as tel_err:
+        logger.warning(f"Could not schedule Telegram invoice notification: {tel_err}")
+
+    result = await send_invoice_to_customer(
+        email=clean_email,
+        plan_id=plan_id,
+        device_id=device_id,
+    )
+
+    return InvoiceResponse(
+        success=result["success"],
+        email_sent=result["email_sent"],
+        invoice_number=result["invoice_number"],
+        transport=result.get("transport", "none"),
+        message=result["message"],
+    )
+

@@ -16,7 +16,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { darkTheme, Theme } from '../theme/colors';
-import { getDeviceId, sendFeedback } from '../services/api';
+import { requestInvoiceEmail } from '../services/api';
 
 export type SubscriptionPlan = 'year' | 'semester' | 'month' | 'full_year';
 
@@ -38,6 +38,10 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
   const [isInvoiceModalVisible, setIsInvoiceModalVisible] = useState(false);
   const [emailInput, setEmailInput] = useState('');
   const [isSendingInvoice, setIsSendingInvoice] = useState(false);
+  const [invoiceStatus, setInvoiceStatus] = useState<{
+    type: 'success' | 'warning' | 'error';
+    text: string;
+  } | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const ibanAccount = 'EE129900001234567890';
@@ -61,57 +65,62 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
 
   const handleSendInvoiceRequest = async () => {
     const trimmedEmail = emailInput.trim();
-    if (!trimmedEmail || !trimmedEmail.includes('@')) {
-      Alert.alert('Некорректный e-mail', 'Пожалуйста, укажите верный адрес электронной почты для отправки счёта.');
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
+      setInvoiceStatus({
+        type: 'error',
+        text: 'Пожалуйста, укажите корректный e-mail адрес (например, ivan.ivanov@mail.ee).',
+      });
+      Alert.alert(
+        'Некорректный e-mail',
+        'Пожалуйста, укажите верный адрес электронной почты для отправки PDF-счёта.'
+      );
       return;
     }
 
     setIsSendingInvoice(true);
+    setInvoiceStatus(null);
     try {
-      const deviceId = await getDeviceId();
-      const planName =
-        selectedPlan === 'year'
-          ? 'Учебный год (9 мес) — 71.90 €'
-          : selectedPlan === 'semester'
-          ? 'Семестр (5 мес) — 44.90 €'
-          : selectedPlan === 'month'
-          ? '1 месяц (Гибкий) — 9.99 €'
-          : 'Полный год с каникулами (12 мес) — 89.90 €';
+      const res = await requestInvoiceEmail(trimmedEmail, selectedPlan);
 
-      const planLabel =
-        selectedPlan === 'year'
-          ? 'Учебный год (9 мес)'
-          : selectedPlan === 'semester'
-          ? 'Семестр (5 мес)'
-          : selectedPlan === 'month'
-          ? '1 месяц (Гибкий)'
-          : 'Полный год с каникулами (12 мес)';
-
-      await sendFeedback({
-        category: 'feature',
-        message: `📄 ЗАПРОС СЧЁТА НА ПОДПИСКУ PRO\nТариф: ${planName}\nEmail: ${trimmedEmail}\nDevice ID: ${deviceId}\nКлиент ожидает счёт (e-arve / PDF) для оплаты в эстонском банке.`,
-        contact: trimmedEmail,
-        client_time: new Date().toISOString(),
-      });
-
-      Alert.alert(
-        'Заявка принята!',
-        `Счёт на тариф «${planLabel}» будет отправлен на ${trimmedEmail} в течение 15 минут. Вы также можете оплатить прямо сейчас по реквизитам IBAN.`,
-        [
-          {
-            text: 'Понятно',
-            onPress: () => {
-              setEmailInput('');
-              setIsInvoiceModalVisible(false);
+      if (res.email_sent) {
+        setInvoiceStatus({
+          type: 'success',
+          text: res.message,
+        });
+        Alert.alert(
+          'Счёт отправлен! ✅',
+          res.message,
+          [
+            {
+              text: 'Отлично',
+              onPress: () => {
+                setEmailInput('');
+                setInvoiceStatus(null);
+                setIsInvoiceModalVisible(false);
+              },
             },
-          },
-        ]
-      );
+          ]
+        );
+      } else {
+        setInvoiceStatus({
+          type: 'warning',
+          text: res.message,
+        });
+        Alert.alert(
+          'Требуется настройка почты (SMTP / Resend)',
+          res.message
+        );
+      }
     } catch (err: any) {
-      Alert.alert(
-        'Ошибка отправки',
-        'Не удалось отправить заявку автоматически. Пожалуйста, напишите нам на support@tarkapp.ee или используйте реквизиты ниже.'
-      );
+      const errMsg =
+        err?.message ||
+        'Не удалось отправить счёт. Проверьте соединение с сервером или оплатите по реквизитам IBAN выше.';
+      setInvoiceStatus({
+        type: 'error',
+        text: errMsg,
+      });
+      Alert.alert('Ошибка отправки счёта', errMsg);
     } finally {
       setIsSendingInvoice(false);
     }
@@ -468,12 +477,20 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                   <TextInput
                     style={styles.emailTextInput}
                     placeholder="ivan.ivanov@mail.ee"
-                    placeholderTextColor={darkTheme.textMuted}
+                    placeholderTextColor="#94A3B8"
                     value={emailInput}
-                    onChangeText={setEmailInput}
+                    onChangeText={(val) => {
+                      setEmailInput(val);
+                      if (invoiceStatus) setInvoiceStatus(null);
+                    }}
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
+                    autoComplete="off"
+                    importantForAutofill="no"
+                    selectionColor="#5FEDC5"
+                    cursorColor="#5FEDC5"
+                    editable={!isSendingInvoice}
                   />
                   <TouchableOpacity
                     style={[
@@ -482,14 +499,44 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                     ]}
                     onPress={handleSendInvoiceRequest}
                     disabled={isSendingInvoice}
+                    activeOpacity={0.85}
                   >
                     {isSendingInvoice ? (
-                      <ActivityIndicator size="small" color="#064E3B" />
+                      <View style={styles.sendInvoiceLoadingRow}>
+                        <ActivityIndicator size="small" color="#064E3B" />
+                        <Text style={styles.sendInvoiceButtonText}>Отправка...</Text>
+                      </View>
                     ) : (
                       <Text style={styles.sendInvoiceButtonText}>Выслать счёт</Text>
                     )}
                   </TouchableOpacity>
                 </View>
+
+                {invoiceStatus && (
+                  <View
+                    style={[
+                      styles.invoiceStatusBanner,
+                      invoiceStatus.type === 'success'
+                        ? styles.invoiceStatusSuccess
+                        : invoiceStatus.type === 'warning'
+                        ? styles.invoiceStatusWarning
+                        : styles.invoiceStatusError,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.invoiceStatusText,
+                        invoiceStatus.type === 'success'
+                          ? styles.invoiceStatusTextSuccess
+                          : invoiceStatus.type === 'warning'
+                          ? styles.invoiceStatusTextWarning
+                          : styles.invoiceStatusTextError,
+                      ]}
+                    >
+                      {invoiceStatus.text}
+                    </Text>
+                  </View>
+                )}
 
                 {/* Method 3: Key activation */}
                 <TouchableOpacity
@@ -888,30 +935,69 @@ const styles = StyleSheet.create({
   },
   emailTextInput: {
     flex: 1,
-    height: 44,
-    backgroundColor: Theme.colors.surfaceAlt,
+    height: 46,
+    backgroundColor: '#1E252B',
     borderWidth: 1,
-    borderColor: darkTheme.cardBorder,
+    borderColor: '#5FEDC5',
     borderRadius: 12,
-    paddingHorizontal: 12,
-    color: darkTheme.textPrimary,
-    fontSize: 14,
+    paddingHorizontal: 14,
+    color: '#FFFFFF',
+    fontSize: 14.5,
+    fontWeight: '600',
   },
   sendInvoiceButton: {
-    backgroundColor: darkTheme.accent,
+    backgroundColor: '#5FEDC5',
     borderRadius: 12,
     paddingHorizontal: 14,
     justifyContent: 'center',
     alignItems: 'center',
-    height: 44,
+    height: 46,
   },
   sendInvoiceButtonDisabled: {
-    opacity: 0.6,
+    opacity: 0.75,
+  },
+  sendInvoiceLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   sendInvoiceButtonText: {
-    color: darkTheme.accentText,
+    color: '#064E3B',
     fontSize: 13.5,
-    fontWeight: '700',
+    fontWeight: '800',
+  },
+  invoiceStatusBanner: {
+    marginTop: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  invoiceStatusSuccess: {
+    backgroundColor: 'rgba(95, 237, 197, 0.14)',
+    borderColor: '#5FEDC5',
+  },
+  invoiceStatusWarning: {
+    backgroundColor: 'rgba(251, 191, 36, 0.12)',
+    borderColor: '#F59E0B',
+  },
+  invoiceStatusError: {
+    backgroundColor: '#3F1E24',
+    borderColor: '#EF4444',
+  },
+  invoiceStatusText: {
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  invoiceStatusTextSuccess: {
+    color: '#5FEDC5',
+  },
+  invoiceStatusTextWarning: {
+    color: '#FDE68A',
+  },
+  invoiceStatusTextError: {
+    color: '#FCA5A5',
   },
   keyPromptRow: {
     marginTop: 18,

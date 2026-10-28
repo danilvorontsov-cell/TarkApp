@@ -40,6 +40,17 @@ class Settings(BaseSettings):
     ADMIN_TELEGRAM_ID: Optional[str] = None
     TELEGRAM_WEBHOOK_SECRET: Optional[str] = None
 
+    # Email / Invoice Delivery Settings (SMTP or Resend API)
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM: str = "TarkApp Billing <billing@tarkapp.ee>"
+    SMTP_USE_TLS: bool = True
+
+    RESEND_API_KEY: Optional[str] = None
+    RESEND_FROM: str = "TarkApp <onboarding@resend.dev>"
+
     @field_validator(
         "TELEGRAM_TOPIC_BUGS",
         "TELEGRAM_TOPIC_FEATURES",

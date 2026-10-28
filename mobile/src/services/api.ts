@@ -229,6 +229,38 @@ export async function activateAccessKey(
   return (await response.json()) as KeyActivateResponse;
 }
 
+export interface InvoiceRequestResponse {
+  success: boolean;
+  email_sent: boolean;
+  invoice_number: string;
+  transport?: string;
+  message: string;
+}
+
+export async function requestInvoiceEmail(
+  email: string,
+  plan: string,
+  baseUrl: string = API_BASE_URL
+): Promise<InvoiceRequestResponse> {
+  const deviceId = await getDeviceId();
+  const endpoint = `${baseUrl}/api/v1/license/invoice`;
+  const response = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'X-Device-ID': deviceId,
+    },
+    body: JSON.stringify({ email, plan }),
+  });
+
+  if (!response.ok) {
+    throw await parseErrorResponse(response);
+  }
+
+  return (await response.json()) as InvoiceRequestResponse;
+}
+
 export interface MoreExamplesRequest {
   task_title: string;
   theme_explanation?: string;
