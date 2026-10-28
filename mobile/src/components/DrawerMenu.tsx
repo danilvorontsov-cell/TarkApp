@@ -57,15 +57,23 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const animProgress = useRef(new Animated.Value(0)).current;
+  const [isRendered, setIsRendered] = React.useState(isOpen);
   const hasUser = Boolean(userNickname && userNickname.trim().length > 0);
   const displayName = hasUser ? userNickname.trim() : '';
 
   useEffect(() => {
+    if (isOpen) {
+      setIsRendered(true);
+    }
     Animated.timing(animProgress, {
       toValue: isOpen ? 1 : 0,
       duration: 250,
       useNativeDriver: true,
-    }).start();
+    }).start(({ finished }) => {
+      if (finished && !isOpen) {
+        setIsRendered(false);
+      }
+    });
   }, [isOpen]);
 
   const panResponder = useRef(
@@ -123,7 +131,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
     // },
   ];
 
-  if (!isOpen && (animProgress as any)._value === 0) {
+  if (!isOpen && !isRendered) {
     return null;
   }
 
@@ -131,7 +139,10 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
   const bottomPadding = Math.max(insets.bottom, 16);
 
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents={isOpen ? 'auto' : 'none'}>
+    <View
+      style={[StyleSheet.absoluteFill, styles.drawerRootOverlay]}
+      pointerEvents={isOpen ? 'auto' : 'none'}
+    >
       {/* Dimmed Backdrop */}
       <TouchableWithoutFeedback onPress={onClose}>
         <Animated.View
@@ -360,9 +371,14 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
 };
 
 const styles = StyleSheet.create({
+  drawerRootOverlay: {
+    zIndex: 100,
+    elevation: 100,
+  },
   backdrop: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    zIndex: 1,
   },
   drawerContainer: {
     position: 'absolute',
@@ -378,6 +394,8 @@ const styles = StyleSheet.create({
     ...Theme.shadow.drawer,
     flexDirection: 'column',
     overflow: 'hidden',
+    zIndex: 2,
+    elevation: 101,
   },
   drawerHeader: {
     paddingHorizontal: 22,

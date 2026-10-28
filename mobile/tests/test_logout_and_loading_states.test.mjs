@@ -136,22 +136,37 @@ test('Scenario 4: Fullscreen LoadingOverlay is imported and rendered on loading 
   );
 });
 
-test('Scenario 5: Concave downward arch header geometry', async () => {
+test('Scenario 5: Concave downward arch header geometry and burger touch priority', async () => {
   const fs = await import('node:fs');
   const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+  const drawerContent = fs.readFileSync('mobile/src/components/DrawerMenu.tsx', 'utf-8');
 
-  // Verify headerBar has flat bottom
+  // Verify headerBar has flat bottom, position: 'relative', zIndex: 10, elevation: 10
   assert.match(
     appContent,
-    /headerBar:\s*\{[^}]*borderBottomLeftRadius:\s*0[^}]*borderBottomRightRadius:\s*0/s,
-    'headerBar must have borderBottomLeftRadius: 0 and borderBottomRightRadius: 0'
+    /headerBar:\s*\{[^}]*position:\s*['"]relative['"][^}]*borderBottomLeftRadius:\s*0[^}]*borderBottomRightRadius:\s*0[^}]*zIndex:\s*10[^}]*elevation:\s*10/s,
+    'headerBar must have position: relative, borderBottomRadius: 0, zIndex: 10, elevation: 10'
   );
 
-  // Verify bodyConcaveContainer wraps scroll area with negative top margin and rounded top corners
+  // Verify burger button has hitSlop 12 and opens drawer
   assert.match(
     appContent,
-    /bodyConcaveContainer:\s*\{[^}]*marginTop:\s*-\d+[^}]*borderTopLeftRadius:\s*24[^}]*borderTopRightRadius:\s*24/s,
-    'bodyConcaveContainer must have negative marginTop and borderTopRadius 24'
+    /style=\{styles\.headerMenuBtn\}[\s\S]*?onPress=\{\(\)\s*=>\s*setIsDrawerOpen\(true\)\}[\s\S]*?hitSlop=\{\{\s*top:\s*12,\s*bottom:\s*12,\s*left:\s*12,\s*right:\s*12\s*\}\}/,
+    'headerMenuBtn must trigger setIsDrawerOpen(true) and have hitSlop 12'
+  );
+
+  // Verify bodyConcaveContainer wraps scroll area with negative top margin, rounded top corners, and lower zIndex/elevation than headerBar
+  assert.match(
+    appContent,
+    /bodyConcaveContainer:\s*\{[^}]*marginTop:\s*-\d+[^}]*borderTopLeftRadius:\s*24[^}]*borderTopRightRadius:\s*24[^}]*zIndex:\s*1[^}]*elevation:\s*0/s,
+    'bodyConcaveContainer must have negative marginTop, borderTopRadius 24, zIndex: 1, elevation: 0'
+  );
+
+  // Verify DrawerMenu root overlay has zIndex: 100 and elevation: 100 above headerBar
+  assert.match(
+    drawerContent,
+    /drawerRootOverlay:\s*\{[^}]*zIndex:\s*100[^}]*elevation:\s*100/s,
+    'DrawerMenu root overlay must have zIndex: 100 and elevation: 100'
   );
 });
 

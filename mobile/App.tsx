@@ -2215,17 +2215,19 @@ function MainApp() {
         <TouchableOpacity
           style={styles.headerMenuBtn}
           onPress={() => setIsDrawerOpen(true)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
           accessibilityLabel="Открыть меню"
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
-          <View style={styles.burgerIconBox}>
+          <View style={styles.burgerIconBox} pointerEvents="none">
             <View style={styles.burgerBar} />
             <View style={styles.burgerBar} />
             <View style={styles.burgerBar} />
           </View>
         </TouchableOpacity>
 
-        <View style={styles.headerTitleCenter}>
+        <View style={styles.headerTitleCenter} pointerEvents="none">
           <Text style={styles.headerBrandTitle}>TarkApp</Text>
         </View>
 
@@ -2291,6 +2293,9 @@ function MainApp() {
             </Text>
           </TouchableOpacity>
         </View>
+
+        {/* Non-interactive concave arch cap at bottom of header */}
+        <View pointerEvents="none" style={styles.headerConcaveArch} />
       </LinearGradient>
 
       {/* Concave Dark Nordic Content Container overlapping header */}
@@ -2479,15 +2484,27 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   headerBar: {
+    position: 'relative',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingBottom: 28,
+    paddingBottom: 30,
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
-    zIndex: 1,
-    elevation: 0,
+    zIndex: 10,
+    elevation: 10,
+    shadowColor: 'transparent',
+  },
+  headerConcaveArch: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: -1,
+    height: 20,
+    backgroundColor: '#1A2026',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
   },
   bodyConcaveContainer: {
     flex: 1,
@@ -2496,14 +2513,15 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     backgroundColor: '#1A2026',
     overflow: 'hidden',
-    zIndex: 2,
-    elevation: 4,
+    zIndex: 1,
+    elevation: 0,
   },
   headerMenuBtn: {
     width: 40,
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 12,
   },
   burgerIconBox: {
     width: 24,
