@@ -42,3 +42,8 @@ web-build/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local visual audit artifacts
+/assets/
+/index.html
+

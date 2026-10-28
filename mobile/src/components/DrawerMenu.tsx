@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -13,7 +13,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Theme, darkTheme } from '../theme/colors';
-import { ServerConfigModal } from './ServerConfigModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 320);
@@ -59,7 +58,6 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
   const insets = useSafeAreaInsets();
   const animProgress = useRef(new Animated.Value(0)).current;
   const [isRendered, setIsRendered] = React.useState(isOpen);
-  const [isServerModalVisible, setIsServerModalVisible] = useState(false);
   const hasUser = Boolean(userNickname && userNickname.trim().length > 0);
   const displayName = hasUser ? userNickname.trim() : '';
 
@@ -363,34 +361,11 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
             </TouchableOpacity>
           )}
 
-          {/* Server Config & Network Item */}
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={() => setIsServerModalVisible(true)}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.menuItemIcon}>🔌</Text>
-            <Text style={styles.menuItemText}>Сервер API / Сеть</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.versionContainer}
-            onPress={() => setIsServerModalVisible(true)}
-            activeOpacity={0.7}
-          >
+          <View style={styles.versionContainer}>
             <Text style={styles.versionText}>TarkApp • v1.0.0 • Tark Systems</Text>
-          </TouchableOpacity>
+          </View>
         </View>
       </Animated.View>
-
-      {/* Server URL Configuration Modal */}
-      <ServerConfigModal
-        visible={isServerModalVisible}
-        onClose={() => setIsServerModalVisible(false)}
-        onSaved={() => {
-          setIsServerModalVisible(false);
-        }}
-      />
     </View>
   );
 };

@@ -48,7 +48,6 @@ import {
   setOnTrialExpiredListener,
   LicenseStatus,
 } from './src/services/api';
-import { initApiBaseUrl } from './src/config/apiConfig';
 import { optimizePageImage, optimizePageImages } from './src/services/imageOptimizer';
 import { PhraseBuilder } from './src/components/PhraseBuilder';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
@@ -145,7 +144,6 @@ function MainApp() {
   const isSentenceFrameEnabled = tierPolicy.sentenceFrameEnabled;
 
   useEffect(() => {
-    initApiBaseUrl().catch((e) => console.warn('[App] initApiBaseUrl error:', e));
     StorageService.getProfile().then((saved) => {
       setProfile(saved);
       if (saved.interests && saved.interests.length > 0) {

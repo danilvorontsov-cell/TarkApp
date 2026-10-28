@@ -5,33 +5,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PageAnalysisResponse, UserProfile, VocabularyItem } from '../types';
 import { captureException } from './sentry';
 
-import {
-  API_BASE_URL,
-  DEFAULT_API_BASE_URL,
-  getApiBaseUrl,
-  getSyncApiBaseUrl,
-  setCustomApiBaseUrl,
-  resetCustomApiBaseUrl,
-} from '../config/apiConfig';
+import { API_BASE_URL, getApiBaseUrl } from '../config/apiConfig';
 
-export {
-  API_BASE_URL,
-  DEFAULT_API_BASE_URL,
-  getApiBaseUrl,
-  getSyncApiBaseUrl,
-  setCustomApiBaseUrl,
-  resetCustomApiBaseUrl,
-};
+export { API_BASE_URL, getApiBaseUrl };
 
 /**
- * Resolves the active base URL, falling back to dynamic in-memory URL from apiConfig
- * if the default exported constant or undefined was passed.
+ * Resolves the base URL for API requests.
  */
 export function resolveBaseUrl(baseUrl?: string): string {
-  if (baseUrl && baseUrl !== API_BASE_URL && baseUrl !== DEFAULT_API_BASE_URL) {
-    return baseUrl;
-  }
-  return getSyncApiBaseUrl();
+  return baseUrl || API_BASE_URL;
 }
 
 export const API_TIMEOUT_MS = 30000;
@@ -396,7 +378,7 @@ export function formatFriendlyErrorMessage(error: any): string {
     msg.includes('EHOSTUNREACH') ||
     msg.includes('NetworkError')
   ) {
-    return 'Не удалось связаться с сервером TarkApp. Проверьте адрес сервера (шторка меню) и убедитесь, что сервер запущен.';
+    return 'Не удалось связаться с сервером TarkApp. Пожалуйста, проверьте интернет-соединение и попробуйте снова.';
   }
 
   // Timeout issues
