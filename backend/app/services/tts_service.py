@@ -15,12 +15,16 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # Supported voice mappings for Azure Speech Services
-DEFAULT_VOICE = "ru-RU-SvetlanaMultilingualNeural"
+DEFAULT_VOICE = "ru-RU-SvetlanaNeural"
 ESTONIAN_VOICE = "et-EE-AnuNeural"
 
 VOICE_MAP: Dict[str, str] = {
     "ru": DEFAULT_VOICE,
     "et": ESTONIAN_VOICE,
+    "ru-RU-SvetlanaMultilingualNeural": DEFAULT_VOICE,
+    "ru-RU-SvetlanaNeural": DEFAULT_VOICE,
+    "et-EE-AnuNeural": ESTONIAN_VOICE,
+    "et-EE-KertNeural": "et-EE-KertNeural",
 }
 
 # Disk and memory caching
