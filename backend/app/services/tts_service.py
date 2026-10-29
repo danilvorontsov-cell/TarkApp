@@ -8,10 +8,10 @@ import edge_tts
 logger = logging.getLogger(__name__)
 
 # Supported voice mappings
-# ru-RU-SvetlanaMultilingualNeural: чистый русский голос с нативной поддержкой английских слов и терминов
+# ru-RU-SvetlanaNeural: чистый русский голос (Edge-TTS)
 # et-EE-KertNeural: четкий мужской эстонский голос (+20% громкости)
 VOICE_MAP = {
-    "ru": "ru-RU-SvetlanaMultilingualNeural",
+    "ru": "ru-RU-SvetlanaNeural",
     "et": "et-EE-KertNeural",
 }
 
@@ -20,6 +20,7 @@ ESTONIAN_VOICE = "et-EE-KertNeural"
 
 # Карта резервных голосов для отказоустойчивости при сетевых сбоях Edge-TTS
 VOICE_FALLBACK_MAP = {
+    "ru-RU-SvetlanaMultilingualNeural": "ru-RU-SvetlanaNeural",
     "ru-RU-SvetlanaNeural": "ru-RU-DmitryNeural",
     "ru-RU-DmitryNeural": "ru-RU-SvetlanaNeural",
     "et-EE-KertNeural": "et-EE-AnuNeural",

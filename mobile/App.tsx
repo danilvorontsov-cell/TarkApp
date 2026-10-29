@@ -1321,7 +1321,8 @@ function MainApp() {
                   handlePlayAudio(
                     analysis.voice_prompt_script,
                     'ru',
-                    isJunior ? 'voice_prompt' : 'senior_voice'
+                    isJunior ? 'voice_prompt' : 'senior_voice',
+                    true
                   )
                 }
                 activeOpacity={0.85}
