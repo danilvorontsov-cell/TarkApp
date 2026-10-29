@@ -1,12 +1,21 @@
 import asyncio
 import time
 import pytest
+from app.services import tts_service
 from app.services.tts_service import (
     get_or_synthesize_audio,
     _TTS_STREAM_CACHE,
     _IN_FLIGHT_TASKS,
     DEFAULT_VOICE,
 )
+
+@pytest.fixture(autouse=True)
+def mock_azure_synth(monkeypatch):
+    def fake_synthesize(ssml: str) -> bytes:
+        time.sleep(0.05)
+        return b"ID3" + b"\x00" * 2000
+
+    monkeypatch.setattr(tts_service, "_synthesize_azure_ssml", fake_synthesize)
 
 @pytest.mark.anyio
 async def test_tts_cache_and_deduplication():
@@ -41,4 +50,22 @@ async def test_tts_concurrent_deduplication():
     
     assert res1 == res2
     assert len(res1) > 1000
-    print(f"\nTwo concurrent calls finished together in: {elapsed:.2f}s (single Edge-TTS call)")
+    print(f"\nTwo concurrent calls finished together in: {elapsed:.2f}s (single Azure call)")
+
+
+@pytest.mark.anyio
+async def test_tts_disk_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(tts_service, "AUDIO_CACHE_DIR", tmp_path)
+    test_text = "Тест дискового кэша."
+    audio = await get_or_synthesize_audio(test_text)
+    assert len(audio) > 1000
+
+    files = list(tmp_path.glob("*.mp3"))
+    assert len(files) == 1
+    assert files[0].read_bytes() == audio
+
+    # Clear RAM cache to force disk read
+    tts_service._TTS_STREAM_CACHE.clear()
+
+    audio_cached = await get_or_synthesize_audio(test_text)
+    assert audio_cached == audio

@@ -1,5 +1,10 @@
 import pytest
-from app.services.tts_service import parse_bilingual_segments, DEFAULT_VOICE, ESTONIAN_VOICE
+from app.services.tts_service import (
+    parse_bilingual_segments,
+    build_ssml,
+    DEFAULT_VOICE,
+    ESTONIAN_VOICE,
+)
 
 def test_parse_est_tags():
     segments = parse_bilingual_segments('Запомни слово <est>ohutus</est> и повтори <est>tere</est>.')
@@ -36,14 +41,14 @@ def test_parse_standalone_latin_word():
 
 def test_minecraft_and_est_tag_segmentation():
     # "Давай построим в Minecraft <est>maja</est>"
-    # - "Давай построим в Minecraft" -> ru-RU-SvetlanaNeural
-    # - "maja" -> et-EE-KertNeural
+    # - "Давай построим в Minecraft" -> ru-RU-SvetlanaMultilingualNeural
+    # - "maja" -> et-EE-AnuNeural
     text = "Давай построим в Minecraft <est>maja</est>"
     segments = parse_bilingual_segments(text)
     assert len(segments) == 2
     assert segments[0] == ("Давай построим в Minecraft", DEFAULT_VOICE)
     assert segments[1] == ("maja", ESTONIAN_VOICE)
-    assert DEFAULT_VOICE == "ru-RU-SvetlanaNeural"
+    assert DEFAULT_VOICE == "ru-RU-SvetlanaMultilingualNeural"
 
 def test_multiple_english_brands_no_tags_stay_intact():
     # Without <est> tags, text with multiple English terms (Minecraft, Roblox, YouTube, W/A/S/D) is not chopped
@@ -110,3 +115,27 @@ def test_estonian_russian_pair_in_parentheses():
     assert segments[0] == ("Перед нами крутая игровая клавиатура", DEFAULT_VOICE)
     assert segments[1] == ("klaviatuur", ESTONIAN_VOICE)
     assert segments[2] == ("с яркой подсветкой!", DEFAULT_VOICE)
+
+
+def test_build_ssml_with_est_tag():
+    text = "Привет! Запомни слово <est>klaviatuur</est> и повтори."
+    ssml = build_ssml(text)
+    assert '<speak version="1.0"' in ssml
+    assert 'xml:lang="ru-RU"' in ssml
+    assert f'<voice name="{DEFAULT_VOICE}">Привет! Запомни слово</voice>' in ssml
+    assert f'<voice name="{ESTONIAN_VOICE}">klaviatuur</voice>' in ssml
+    assert f'<voice name="{DEFAULT_VOICE}">и повтори</voice>' in ssml
+
+
+def test_build_ssml_pure_estonian():
+    text = "Tere tulemast kooli!"
+    ssml = build_ssml(text, voice=ESTONIAN_VOICE)
+    assert 'xml:lang="et-EE"' in ssml
+    assert f'<voice name="{ESTONIAN_VOICE}">Tere tulemast kooli!</voice>' in ssml
+
+
+def test_build_ssml_escapes_special_characters():
+    text = "Знаки & формулы <est>tere & aed</est>"
+    ssml = build_ssml(text)
+    assert "&amp;" in ssml
+    assert "&lt;" not in ssml.split("<speak>")[0]

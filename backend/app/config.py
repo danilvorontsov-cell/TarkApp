@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # Model defaults to gemini-3.8-flash with environment override support
     GEMINI_MODEL: str = "gemini-3.8-flash"
     
+    # Azure Speech Service settings
+    AZURE_SPEECH_KEY: Optional[str] = None
+    AZURE_SPEECH_REGION: str = "northeurope"
+    
     # CORS
     CORS_ORIGINS: List[str] = ["*"]
     

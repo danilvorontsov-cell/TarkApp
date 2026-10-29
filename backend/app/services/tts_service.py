@@ -1,67 +1,52 @@
 import asyncio
 import hashlib
 import logging
+from pathlib import Path
 import re
 from typing import AsyncGenerator, Dict, List, Optional, Tuple
-import edge_tts
+
+try:
+    import azure.cognitiveservices.speech as speechsdk
+except ImportError:
+    speechsdk = None
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Supported voice mappings
-# ru-RU-SvetlanaNeural: чистый русский голос (Edge-TTS)
-# et-EE-KertNeural: четкий мужской эстонский голос (+20% громкости)
-VOICE_MAP = {
-    "ru": "ru-RU-SvetlanaNeural",
-    "et": "et-EE-KertNeural",
+# Supported voice mappings for Azure Speech Services
+DEFAULT_VOICE = "ru-RU-SvetlanaMultilingualNeural"
+ESTONIAN_VOICE = "et-EE-AnuNeural"
+
+VOICE_MAP: Dict[str, str] = {
+    "ru": DEFAULT_VOICE,
+    "et": ESTONIAN_VOICE,
 }
 
-DEFAULT_VOICE = "ru-RU-SvetlanaNeural"
-ESTONIAN_VOICE = "et-EE-KertNeural"
+# Disk and memory caching
+AUDIO_CACHE_DIR = Path("static/audio/cache")
+try:
+    AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
 
-# Карта резервных голосов для отказоустойчивости при сетевых сбоях Edge-TTS
-VOICE_FALLBACK_MAP = {
-    "ru-RU-SvetlanaMultilingualNeural": "ru-RU-SvetlanaNeural",
-    "ru-RU-SvetlanaNeural": "ru-RU-DmitryNeural",
-    "ru-RU-DmitryNeural": "ru-RU-SvetlanaNeural",
-    "et-EE-KertNeural": "et-EE-AnuNeural",
-    "et-EE-AnuNeural": "et-EE-KertNeural",
-}
-
-# Семафор для параллельных WebSocket-запросов к Microsoft Edge-TTS (до 2 одновременных сокетов)
-# Защищает от троттлинга и сбросов соединений Microsoft Bing Edge-TTS при параллельном синтезе
-_tts_semaphore: Optional[asyncio.Semaphore] = None
-
-
-def _get_tts_semaphore() -> asyncio.Semaphore:
-    global _tts_semaphore
-    if _tts_semaphore is None:
-        _tts_semaphore = asyncio.Semaphore(2)
-    return _tts_semaphore
-
-# Серверные кэши синтезированного аудио в оперативной памяти (LRU-ограничение)
 _TTS_STREAM_CACHE: Dict[str, bytes] = {}
-_TTS_SEGMENT_CACHE: Dict[str, bytes] = {}
 MAX_CACHE_ENTRIES = 500
 
-# Реестр активных in-flight задач для дедупликации одновременных одинаковых запросов
+# Registry of active in-flight tasks for deduplication of simultaneous requests
 _IN_FLIGHT_TASKS: Dict[str, asyncio.Task[bytes]] = {}
 
 
-def _get_cache_key(prefix: str, text: str, voice: str = "") -> str:
-    raw = f"{prefix}:{voice}:{text.strip().lower()}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def _store_in_cache(cache: Dict[str, bytes], key: str, data: bytes):
+def _store_in_memory_cache(cache: Dict[str, bytes], key: str, data: bytes) -> None:
     if len(cache) >= MAX_CACHE_ENTRIES:
-        # Удаляем 20% старейших записей (FIFO очистка для простоты и высокой скорости)
+        # FIFO eviction of oldest 20%
         keys_to_remove = list(cache.keys())[: max(1, MAX_CACHE_ENTRIES // 5)]
         for k in keys_to_remove:
             cache.pop(k, None)
     cache[key] = data
 
 
-# Словарь эстонских порядковых числительных: (nominative, inessive, genitive)
+# Dictionary of Estonian ordinal numbers: (nominative, inessive, genitive)
 EST_ORDINALS: Dict[int, Tuple[str, str, str]] = {
     1: ("esimene", "esimeses", "esimese"),
     2: ("teine", "teises", "teise"),
@@ -81,7 +66,7 @@ EST_ORDINALS: Dict[int, Tuple[str, str, str]] = {
 
 def normalize_text_for_estonian_tts(text: str) -> str:
     """
-    Нормализует эстонский текст для Edge-TTS:
+    Нормализует эстонский текст:
     - Конвертирует порядковые числительные с точкой (1. klass -> esimene klass, 4. klassis -> neljandas klassis,
       2. harjutus -> teine harjutus, 2. ülesandes -> teises ülesandes).
     - Для номеров без привязанных существительных (Harjutus 5.) срезает точку -> Harjutus 5.
@@ -106,7 +91,6 @@ def normalize_text_for_estonian_tts(text: str) -> str:
         if not forms:
             return m.group(0)
 
-        # Inessive: klassis, harjutuses, ülesandes, osas (ends with 'is', 'es', 'des', 'as' but not 'ss')
         if noun_l.endswith(('is', 'es', 'des', 'as')) and not noun_l.endswith('ss'):
             w = forms[1]
         elif noun_l.endswith(('i', 'e')) and noun_l != 'ülesanne':
@@ -117,14 +101,13 @@ def normalize_text_for_estonian_tts(text: str) -> str:
 
     t = est_ord_pattern.sub(repl_est_ord, text)
 
-    # 2. Очистка символов и срез точки у оставшихся одиночных номеров (напр. Harjutus 5. -> Harjutus 5)
+    # 2. Очистка символов и срез точки у оставшихся одиночных номеров
     t = re.sub(r'[\u00d7\u2715\u2716*]', ' ', t)
     t = re.sub(r'[\[\]{}()]', ' ', t)
     t = re.sub(r'[/\\|]', ' ', t)
     t = re.sub(r'(\b\d+)\s*\.(?!\d)', r'\1 ', t)
     t = re.sub(r'(\d+)([,!?;:])', r'\1 \2', t)
     t = re.sub(r'([,!?;:])(\d+)', r'\1 \2', t)
-    # Сохраняем дефис для эстонских падежных окончаний числительных (5-ga, 10-ni, 3-st, 2-le, 4-lt, 1-sse, 5-s, 6-l, 7-ks, 8-na, 9-ta)
     t = re.sub(r'(\d+)[-–—]+(?=(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)', r'\1-', t, flags=re.IGNORECASE)
     t = re.sub(r'(\d+)[-–—]+(?!(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)', r'\1 ', t, flags=re.IGNORECASE)
     t = re.sub(r'[-–—]+(\d+)', r' \1', t)
@@ -189,19 +172,11 @@ MATH_VAR_MAP = {
 
 def normalize_roman_numerals(text: str) -> str:
     """
-    Находит римские цифры в русском контексте (век, тысячелетие, класс, глава, том или дефисные окончания)
-    и конвертирует их в словесный русский эквивалент с учетом грамматического падежа и рода:
-    - XXI век / XXI-й век -> двадцать первый век
-    - XXI века -> двадцать первого века
-    - XXI веке / в XXI в. -> двадцать первом веке
-    - XX век -> двадцатый век
-    - XIX век -> девятнадцатый век
-    - III тысячелетие -> третье тысячелетие
+    Конвертирует римские цифры в русском контексте в словесный русский эквивалент.
     """
     if not text:
         return ""
 
-    # 1. Порядок: существительное перед римской цифрой (напр. "глава IV", "в главе IV", "том II", "класс V")
     p_noun_first = re.compile(
         r'(?i)\b(в|во)?\s*(глав[а-яё]*|класс[а-яё]*|том[а-яё]*)\s+(' + ROMAN_PATTERN + r')\b'
     )
@@ -226,7 +201,6 @@ def normalize_roman_numerals(text: str) -> str:
 
     t = p_noun_first.sub(repl_noun_first, text)
 
-    # 2. Римская цифра перед ключевым словом (напр. "XXI век", "в XXI в.", "в III тысячелетии", "XXI-й век")
     p_num_first = re.compile(
         r'(?i)(?:(\bв|во|на|о|об|обо|к|ко|до|с|со|от|после|около)\s+)?'
         r'\b(' + ROMAN_PATTERN + r')(?:-([а-яё]+))?\s*'
@@ -244,7 +218,6 @@ def normalize_roman_numerals(text: str) -> str:
 
         prep_l = prep.lower()
 
-        # Век / в.
         if noun_l in ("век", "века", "веке", "веку", "веком", "в", "вв"):
             if prep_l in ("в", "во", "на", "о", "об", "обо") or noun_l == "веке" or suffix in ("м", "ом", "ем"):
                 form_idx = 2
@@ -258,8 +231,6 @@ def normalize_roman_numerals(text: str) -> str:
             else:
                 form_idx = 0
                 actual_noun = "век" if noun_l in ("в", "вв") else noun
-
-        # Тысячелетие
         elif "тысячелети" in noun_l:
             if prep_l in ("в", "во", "о", "об") or noun_l.endswith("и") or suffix in ("м", "ом", "ем"):
                 form_idx = 2
@@ -268,8 +239,6 @@ def normalize_roman_numerals(text: str) -> str:
             else:
                 form_idx = 3
             actual_noun = noun
-
-        # Класс
         elif "класс" in noun_l:
             if prep_l in ("в", "во") or noun_l.endswith("е") or suffix in ("м", "ом", "ем"):
                 form_idx = 2
@@ -278,16 +247,12 @@ def normalize_roman_numerals(text: str) -> str:
             else:
                 form_idx = 0
             actual_noun = noun
-
-        # Глава
         elif "глав" in noun_l:
             if noun_l == "глава" and suffix not in ("й", "ой"):
                 form_idx = 4
             else:
                 form_idx = 5
             actual_noun = noun
-
-        # Том
         elif "том" in noun_l:
             if prep_l in ("в", "во") or noun_l.endswith("е"):
                 form_idx = 2
@@ -306,7 +271,6 @@ def normalize_roman_numerals(text: str) -> str:
 
     t = p_num_first.sub(repl_num_first, t)
 
-    # 3. Римская цифра с дефисным окончанием без существительного (напр. "XXI-й", "III-е")
     p_standalone = re.compile(r'\b(' + ROMAN_PATTERN + r')-([а-яё]+)\b', re.IGNORECASE)
     def repl_standalone(m):
         roman = m.group(1).upper()
@@ -332,15 +296,7 @@ def normalize_roman_numerals(text: str) -> str:
 
 def normalize_math_expressions(text: str) -> str:
     """
-    Нормализует математические переменные и знаки в русском контексте:
-    - Одиночные латинские переменные x, y, z -> икс, игрек, зет
-    - a (в мат. контексте), b, c -> а, бэ, цэ
-    - Знаки формул: + -> плюс, - -> минус, = -> равно
-    - Деление: знак : (двоеточие) и ÷ -> разделить на (вместо чтения как 'соотношение')
-    - Умножение: *, ·, × -> умножить на
-    - Словесные описания: 'знак :' -> 'знак «разделить»', 'знак *' -> 'знак «умножить»'
-    - Защищает стандартные форматы времени (напр. 'в 14:30').
-    Не затрагивает чистый эстонский текст (слова без кириллицы и без мат. знаков).
+    Нормализует математические переменные и знаки в русском контексте.
     """
     if not text:
         return ""
@@ -352,7 +308,6 @@ def normalize_math_expressions(text: str) -> str:
 
     t = text
 
-    # Временно защищаем время HH:MM (напр. 14:30, 08:15)
     time_placeholders = []
     def mask_time(m):
         idx = len(time_placeholders)
@@ -361,33 +316,24 @@ def normalize_math_expressions(text: str) -> str:
 
     t = re.sub(r'\b([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*(=|[+\-*\/÷·×]))', mask_time, t)
 
-    # 1. Словесные описания знаков
     t = re.sub(r'(?i)знак\s*[«"“„]?\s*[:÷]\s*[»"”]?|(?<=\()[:÷](?=\))', 'знак «разделить» ', t)
     t = re.sub(r'(?i)знак\s*[«"“„]?\s*[*·×]\s*[»"”]?|(?<=\()[*·×](?=\))', 'знак «умножить» ', t)
     t = re.sub(r'(?i)знак\s*[«"“„]?\s*\+\s*[»"”]?|(?<=\()\+(?=\))', 'знак «плюс» ', t)
     t = re.sub(r'(?i)знак\s*[«"“„]?\s*[-−]\s*[»"”]?|(?<=\()[-−](?=\))', 'знак «минус» ', t)
 
-    # 2. Деление: двоеточие : или символ ÷ между операндами (числа, переменные, скобки)
     t = re.sub(r'(?<=[0-9a-zA-Z\)])\s*[:÷]\s*(?=[0-9a-zA-Z\(])', ' разделить на ', t)
-
-    # 3. Умножение: *, ·, × между операндами
     t = re.sub(r'(?<=[0-9a-zA-Z\)])\s*[*·×]\s*(?=[0-9a-zA-Z\(])', ' умножить на ', t)
-
-    # 4. Знаки действий: +, =, -
     t = re.sub(r'(?<=[0-9a-zA-Zа-яА-ЯёЁ])\s*\+\s*(?=[0-9a-zA-Zа-яА-ЯёЁ])|\s+\+\s+', ' плюс ', t)
     t = re.sub(r'\s*=\s*', ' равно ', t)
     t = re.sub(r'(?<=[0-9a-zA-Z])\s*[-−]\s*(?=[0-9a-zA-Z])|\s+[-−]\s+', ' минус ', t)
 
-    # 5. Одиночные переменные x, y, z, b, c
     for var, rep in MATH_VAR_MAP.items():
         t = re.sub(r'\b' + var + r'\b', rep, t)
 
-    # 6. Переменная 'a' / 'A' в математическом окружении
     t = re.sub(r'\b(плюс|минус|равно|разделить на|умножить на)\s+[aA]\b', r'\1 а', t)
     t = re.sub(r'\b[aA]\s+(плюс|минус|равно|разделить на|умножить на)\b', r'а \1', t)
     t = re.sub(r'\b(переменная|переменную|переменной|буква|букву|буквой)\s+[aA]\b', r'\1 а', t)
 
-    # Восстанавливаем время
     for idx, orig_time in enumerate(time_placeholders):
         t = t.replace(f"___TIME_STAMP_{idx}___", orig_time)
 
@@ -397,24 +343,11 @@ def normalize_math_expressions(text: str) -> str:
 
 def normalize_russian_ordinals_with_dot(text: str) -> str:
     """
-    Нормализует порядковые числительные и пронумерованные примеры в русском контексте:
-    - 4. класс -> четвертый класс
-    - в 4. классе -> в четвертом классе
-    - 2. задание -> второе задание
-    - во 2. задании -> во втором задании
-    - 1. шаг / 1. действие -> первое действие / первый шаг
-    - 2. шаг -> второе действие / второй шаг
-    - 1. пример / в 1. примере -> первый пример / в первом примере
-    - Пример 1 / Пример № 1: -> Первый пример:
-    - Шаг 1: -> Первый шаг:
-    - Задание 1: -> Первое задание:
-    - Отдельно стоящие номера в списках (1. Сложи числа -> Первое: Сложи числа, 1) -> Первое:),
-      гарантируя озвучивание порядковых номеров и устраняя паузы на точках в Edge-TTS.
+    Нормализует порядковые числительные и пронумерованные примеры в русском контексте.
     """
     if not text:
         return ""
 
-    # 1. Число с точкой перед ключевым существительным: (\d+)\.\s*(класс|задание|действие|шаг|пункт|век|глава|часть|пример|упражнение)
     pattern = re.compile(
         r'(?i)(?:(\bв|во|на|о|об|к|ко|до|с|со|от|после|около)\s+)?'
         r'\b(\d+)\.\s*'
@@ -432,28 +365,25 @@ def normalize_russian_ordinals_with_dot(text: str) -> str:
         prep_l = prep.lower()
         noun_l = noun.lower()
 
-        # Средний род: задание, действие, упражнение
         if "задани" in noun_l or "действи" in noun_l or "упражнени" in noun_l:
             if prep_l in ("в", "во", "о", "об") or noun_l.endswith("и"):
-                form_idx = 2  # prep_m_n: втором
+                form_idx = 2
             elif prep_l in ("до", "с", "со", "от", "после") or noun_l.endswith("я"):
-                form_idx = 1  # gen_m_n: второго
+                form_idx = 1
             else:
-                form_idx = 3  # nom_n: второе, первое
-        # Женский род: глава, часть
+                form_idx = 3
         elif "глав" in noun_l or "част" in noun_l:
             if prep_l in ("в", "во", "на", "о", "об") or noun_l.endswith(("е", "и")):
-                form_idx = 5  # f_other: четвертой
+                form_idx = 5
             else:
-                form_idx = 4  # nom_f: четвертая, первая
-        # Мужской род: класс, шаг, пункт, век, пример
+                form_idx = 4
         else:
             if prep_l in ("в", "во", "на", "о", "об") or noun_l.endswith("е"):
-                form_idx = 2  # prep_m: четвертом / первом
+                form_idx = 2
             elif prep_l in ("до", "с", "со", "от", "после") or noun_l.endswith(("а", "у")):
-                form_idx = 1  # gen_m: четвертого / первого
+                form_idx = 1
             else:
-                form_idx = 0  # nom_m: четвертый, первый
+                form_idx = 0
 
         word = forms[form_idx]
         if prep:
@@ -462,7 +392,6 @@ def normalize_russian_ordinals_with_dot(text: str) -> str:
 
     t = pattern.sub(repl, text)
 
-    # 2. Существительное перед числом: Пример 1:, Пример № 1, Шаг 2:, Задание 3:, Упражнение 1
     pattern_noun_num = re.compile(
         r'(?i)\b(пример|шаг|пункт|действие|задание|упражнение)\s*(?:№\s*)?(\d+)\b(\s*[:.)])?'
     )
@@ -486,8 +415,6 @@ def normalize_russian_ordinals_with_dot(text: str) -> str:
 
     t = pattern_noun_num.sub(repl_noun_num, t)
 
-    # 3. Отдельно стоящие номера в списках (напр. '1. ', '1) ', '2. ', '2) ')
-    # в порядковые числительные 'Первое: ', 'Второе: '
     pattern_list_item = re.compile(
         r'(^|[\n\r]|(?<=[.!?:;])\s*)\b(\d+)[\.\)]\s+(?=[А-Яа-яЁёA-Za-z0-9«"“„])'
     )
@@ -507,24 +434,18 @@ def normalize_russian_ordinals_with_dot(text: str) -> str:
         return f"{prefix}{ord_word}: "
 
     t = pattern_list_item.sub(repl_list_item, t)
-
     return t
 
 
 def normalize_text_for_speech(text: str, is_russian_context: bool = True) -> str:
     """
-    Комплексная предварительная нормализация текста перед синтезом речи:
-    - Порядковые числительные с точкой (в 4. классе -> в четвертом классе, 2. задание -> второе задание)
-    - Очистка лишних точек в списках для устранения неестественных пауз
-    - Римские цифры (XXI век -> двадцать первый век, III тысячелетие -> третье тысячелетие)
-    - Математические переменные и знаки (x + y = 15 -> икс плюс игрек равно 15)
+    Комплексная предварительная нормализация текста перед синтезом речи.
     """
     if not text:
         return ""
     if not is_russian_context:
         return text
 
-    # Защищаем явные теги <est>...</est> и фразы в кавычках перед нормализацией
     est_tags: List[str] = []
 
     def mask_est_tag(match):
@@ -572,7 +493,6 @@ def _stitch_and_clean_segments(raw_segments: List[Tuple[str, str]], fallback_tex
         if not s_clean:
             continue
 
-        # Если в сегменте нет букв/цифр (только знаки препинания вроде точки или запятой)
         if not re.search(r'\w', s_clean):
             if segments and segments[-1][1] == DEFAULT_VOICE:
                 prev_text, prev_voice = segments[-1]
@@ -607,17 +527,15 @@ def _is_pure_english_brand_or_key(text: str) -> bool:
 def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
     """
     Разбивает двуязычный текст на последовательные сегменты (текст, голос):
-    - Приоритет 1: Фрагменты внутри тегов <est>...</est> отправляются эстонскому диктору (et-EE-KertNeural / et-EE-AnuNeural).
-    - Приоритет 2: Фразы на эстонском языке в кавычках (например: 'Mis seade see on ja milleks sa seda kasutad?')
-      или термины в скобках (например: (klahv), (klaviatuur)) без кириллицы, не являющиеся английскими терминами (Minecraft, W/A/S/D).
+    - Приоритет 1: Фрагменты внутри тегов <est>...</est> отправляются эстонскому диктору (et-EE-AnuNeural).
+    - Приоритет 2: Фразы на эстонском языке в кавычках или термины в скобках без кириллицы.
     - Весь остальной текст (русский язык + свободная английская латиница Minecraft, Roblox, W/A/S/D)
-      озвучивается русским голосом (ru-RU-SvetlanaNeural).
+      озвучивается русским голосом (ru-RU-SvetlanaMultilingualNeural).
     - Если во всем тексте нет кириллицы (чистый эстонский текст) — отправляется эстонскому диктору.
     """
     if not text or not text.strip():
         return [(text or "", DEFAULT_VOICE)]
 
-    # Предварительная нормализация римских цифр и математических переменных в русском контексте
     text = normalize_text_for_speech(text, is_russian_context=True)
 
     # 1. Если во всём тексте нет кириллицы вообще — озвучиваем целиком эстонским диктором
@@ -625,11 +543,7 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
         clean_est = normalize_text_for_estonian_tts(text.strip())
         return [(clean_est or text.strip(), ESTONIAN_VOICE)]
 
-    # 2. Ищем все эстонские фрагменты в русском тексте:
-    #   а) Явные теги <est>...</est>
-    #   б) Фразы в кавычках без кириллицы (например: 'Mis seade see on ja milleks sa seda kasutad?')
-    #   в) Термины в скобках без кириллицы (например: (klahv), (klaviatuur))
-    # При этом исключаем чисто английские бренды/клавиши (Minecraft, Roblox, W/A/S/D).
+    # 2. Ищем эстонские фрагменты в русском тексте
     pattern = re.compile(
         r'<\s*est(?:\s+[^>]*)?>(.*?)<\s*/\s*est\s*>'
         r'|[\'\"«“]([a-zA-ZäöüõÄÖÜÕšžŠŽ0-9\s\.,\?!-]{2,})[\'\"»”]'
@@ -665,7 +579,6 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
     for start, end, est_content in matches:
         if start > last_idx:
             prefix = text[last_idx:start]
-            # Срезаем одиночные открывающие скобки/кавычки в конце префикса, если они оборачивали эстонский фрагмент
             clean_prefix = prefix.rstrip(' ([«"“„')
             if clean_prefix:
                 raw_segments.append((clean_prefix, DEFAULT_VOICE))
@@ -689,116 +602,99 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
     return _stitch_and_clean_segments(raw_segments, text)
 
 
-async def synthesize_segment(text: str, voice: str, delay: float = 0.0) -> bytes:
-    """
-    Синтезирует один фрагмент в байты MP3 с защитой от сбоев, повторными попытками,
-    встроенным кэшированием и автоматическим fallback на резервный голос.
-    """
-    clean_text = text.strip()
-    if "et-EE" in voice:
-        clean_text = normalize_text_for_estonian_tts(clean_text)
-    if not clean_text:
-        return b""
-
-    # Проверка сегментного кэша
-    seg_key = _get_cache_key("seg", clean_text, voice)
-    if seg_key in _TTS_SEGMENT_CACHE:
-        return _TTS_SEGMENT_CACHE[seg_key]
-
-    if delay > 0:
-        await asyncio.sleep(delay)
-
-    # Список кандидатов: [основной голос, резервный голос]
-    fallback_voice = VOICE_FALLBACK_MAP.get(voice)
-    candidates = [voice]
-    if fallback_voice and fallback_voice != voice:
-        candidates.append(fallback_voice)
-
-    for cand_voice in candidates:
-        volume = "+20%" if "et-EE" in cand_voice else "+0%"
-        for vol in ([volume, "+0%"] if volume != "+0%" else ["+0%"]):
-            try:
-                chunks: List[bytes] = []
-                async with _get_tts_semaphore():
-                    communicate = edge_tts.Communicate(text=clean_text, voice=cand_voice, volume=vol)
-                    async for chunk in communicate.stream():
-                        if chunk.get("type") == "audio" and chunk.get("data"):
-                            chunks.append(chunk["data"])
-                audio_bytes = b"".join(chunks)
-                if audio_bytes:
-                    _store_in_cache(_TTS_SEGMENT_CACHE, seg_key, audio_bytes)
-                    return audio_bytes
-            except Exception as e:
-                logger.warning(
-                    f"Segment synthesis attempt failed for voice '{cand_voice}', vol '{vol}': {e}"
-                )
-                await asyncio.sleep(0.05)
-
-    logger.error(f"Failed to synthesize segment for text: '{clean_text[:40]}...' with all candidate voices.")
-    return b""
-
-
-async def _synthesize_mono_audio_bytes(clean_text: str, voice: str) -> bytes:
-    """Синтезирует полный моно-аудиопоток в байты с кэшированием."""
-    if "et-EE" in voice:
-        clean_text = normalize_text_for_estonian_tts(clean_text)
-
-    fallback_voice = VOICE_FALLBACK_MAP.get(voice)
-    candidates = [voice]
-    if fallback_voice and fallback_voice != voice:
-        candidates.append(fallback_voice)
-
-    for cand_voice in candidates:
-        volume = "+20%" if "et-EE" in cand_voice else "+0%"
-        for vol in ([volume, "+0%"] if volume != "+0%" else ["+0%"]):
-            try:
-                chunks_buffer: List[bytes] = []
-                async with _get_tts_semaphore():
-                    communicate = edge_tts.Communicate(text=clean_text, voice=cand_voice, volume=vol)
-                    async for chunk in communicate.stream():
-                        if chunk.get("type") == "audio" and chunk.get("data"):
-                            chunks_buffer.append(chunk["data"])
-
-                audio_bytes = b"".join(chunks_buffer)
-                if audio_bytes:
-                    return audio_bytes
-            except Exception as e:
-                logger.warning(
-                    f"TTS mono stream candidate '{cand_voice}' (vol '{vol}') failed: {e}. Trying fallback..."
-                )
-                await asyncio.sleep(0.08)
-
-    raise RuntimeError(f"All TTS candidates failed for text: {clean_text[:50]}...")
-
-
-async def _synthesize_bilingual_audio_bytes(clean_text: str) -> Tuple[bytes, bool]:
-    """Синтезирует и склеивает двуязычные фрагменты. Возвращает (audio_bytes, is_complete)."""
-    segments = parse_bilingual_segments(clean_text)
-    has_estonian = any(v == ESTONIAN_VOICE for _, v in segments)
-
-    if not has_estonian:
-        audio = await _synthesize_mono_audio_bytes(clean_text, DEFAULT_VOICE)
-        return audio, bool(audio)
-
-    logger.info(
-        f"Bilingual TTS: {len(segments)} segments parsed for text ({len(clean_text)} chars). Fetching concurrently..."
+def _escape_ssml(text: str) -> str:
+    """Экранирует специальные символы XML для корректного SSML."""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
     )
 
-    # Параллельный запрос фрагментов с шагом 0.02s через семафор
-    tasks = [
-        synthesize_segment(seg_text, seg_voice, delay=i * 0.02)
-        for i, (seg_text, seg_voice) in enumerate(segments)
-    ]
-    audio_parts: List[bytes] = await asyncio.gather(*tasks)
 
-    all_succeeded = all(bool(part) for part in audio_parts)
-    stitched_audio = b"".join(part for part in audio_parts if part)
-    if not stitched_audio:
-        logger.warning("Bilingual segments returned empty audio. Falling back to mono.")
-        mono_audio = await _synthesize_mono_audio_bytes(clean_text, DEFAULT_VOICE)
-        return mono_audio, False
+def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -> str:
+    """
+    Формирует SSML разметку для одного запроса к Azure Speech Services:
+    - Теги <est>...</est> и эстонские термины оборачиваются в <voice name="et-EE-AnuNeural">
+    - Русский и смешанный текст оборачивается в <voice name="ru-RU-SvetlanaMultilingualNeural">
+    - Поддерживает моно-эстонский и моно-русский текст.
+    """
+    clean_text = text.strip()
+    if not clean_text:
+        return ""
 
-    return stitched_audio, all_succeeded
+    has_est_tag = bool(re.search(r'<\s*est(?:\s+[^>]*)?>', clean_text, re.IGNORECASE))
+
+    if bilingual or has_est_tag:
+        segments = parse_bilingual_segments(clean_text)
+    elif "et-EE" in voice or voice == "et":
+        clean_est = normalize_text_for_estonian_tts(clean_text)
+        segments = [(clean_est, ESTONIAN_VOICE)]
+    else:
+        # Если во всем тексте нет кириллицы и это не английский термин — озвучиваем эстонским
+        if not re.search(r'[а-яА-ЯёЁ]', clean_text) and not _is_pure_english_brand_or_key(clean_text):
+            clean_est = normalize_text_for_estonian_tts(clean_text)
+            segments = [(clean_est, ESTONIAN_VOICE)]
+        else:
+            norm_text = normalize_text_for_speech(clean_text, is_russian_context=True)
+            segments = [(norm_text, DEFAULT_VOICE)]
+
+    is_all_est = all("et-EE" in v or v == "et" for _, v in segments)
+    root_lang = "et-EE" if is_all_est else "ru-RU"
+
+    voice_blocks: List[str] = []
+    for seg_text, seg_voice in segments:
+        s_clean = seg_text.strip()
+        if not s_clean:
+            continue
+        v_name = ESTONIAN_VOICE if ("et-EE" in seg_voice or seg_voice == "et") else DEFAULT_VOICE
+        escaped_content = _escape_ssml(s_clean)
+        voice_blocks.append(f'  <voice name="{v_name}">{escaped_content}</voice>')
+
+    if not voice_blocks:
+        voice_blocks.append(f'  <voice name="{DEFAULT_VOICE}">{_escape_ssml(clean_text)}</voice>')
+
+    inner_xml = "\n".join(voice_blocks)
+    return (
+        f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
+        f'xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="{root_lang}">\n'
+        f'{inner_xml}\n'
+        f'</speak>'
+    )
+
+
+def _synthesize_azure_ssml(ssml: str) -> bytes:
+    """Синхронный вызов Azure Speech SDK speak_ssml_async().get() для выполнения в отдельном потоке."""
+    if speechsdk is None:
+        raise RuntimeError("azure-cognitiveservices-speech package is not installed.")
+
+    key = settings.AZURE_SPEECH_KEY
+    if not key:
+        raise RuntimeError("AZURE_SPEECH_KEY is not configured in environment.")
+
+    region = settings.AZURE_SPEECH_REGION or "northeurope"
+
+    speech_config = speechsdk.SpeechConfig(subscription=key, region=region)
+    speech_config.set_speech_synthesis_output_format(
+        speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3
+    )
+
+    synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
+    result = synthesizer.speak_ssml_async(ssml).get()
+
+    if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+        return result.audio_data
+    elif result.reason == speechsdk.ResultReason.Canceled:
+        details = result.cancellation_details
+        err_msg = (
+            f"Azure Speech synthesis canceled. Reason: {details.reason}, "
+            f"ErrorCode: {details.error_code}, Details: {details.error_details}"
+        )
+        logger.error(err_msg)
+        raise RuntimeError(err_msg)
+    else:
+        raise RuntimeError(f"Azure Speech synthesis failed with reason: {result.reason}")
 
 
 async def get_or_synthesize_audio(
@@ -807,48 +703,68 @@ async def get_or_synthesize_audio(
     bilingual: bool = False,
 ) -> bytes:
     """
-    Получает готовый байтовый буфер аудио (MP3) с мгновенным кэшированием (0 мс при повторе)
-    и дедупликацией одновременных in-flight запросов.
+    Получает готовый байтовый буфер аудио (MP3) с локальным файловым кэшированием на диске
+    (static/audio/cache/{md5}.mp3), оперативным кэшем и дедупликацией одновременных in-flight запросов.
+    Генерация выполняется за один запрос к Azure SpeechSynthesizer через SSML.
     """
     clean_text = text.strip()
     if not clean_text:
         return b""
 
-    cache_prefix = "bi" if bilingual else "mono"
-    cache_key = _get_cache_key(cache_prefix, clean_text, voice)
+    # Строим итоговый SSML
+    ssml = build_ssml(clean_text, voice=voice, bilingual=bilingual)
+    ssml_hash = hashlib.md5(ssml.encode("utf-8")).hexdigest()
 
-    # 1. Быстрый возврат из кэша
-    if cache_key in _TTS_STREAM_CACHE:
-        logger.info(f"Serving TTS from cache [{cache_prefix}] for text ({len(clean_text)} chars)")
-        return _TTS_STREAM_CACHE[cache_key]
+    # 1. Быстрый возврат из оперативной памяти
+    if ssml_hash in _TTS_STREAM_CACHE:
+        logger.info(f"Serving TTS from RAM cache (md5={ssml_hash[:10]}...)")
+        return _TTS_STREAM_CACHE[ssml_hash]
 
-    # 2. Дедупликация: если для этого же текста уже идёт синтез, ожидаем ту же задачу
-    if cache_key in _IN_FLIGHT_TASKS:
-        logger.info(f"Awaiting existing in-flight TTS task for text ({len(clean_text)} chars)")
+    # 2. Проверка локального файлового кэша на диске
+    cache_file = AUDIO_CACHE_DIR / f"{ssml_hash}.mp3"
+    if cache_file.is_file() and cache_file.stat().st_size > 0:
+        logger.info(f"Serving TTS from disk cache: {cache_file} (md5={ssml_hash[:10]}...)")
         try:
-            return await _IN_FLIGHT_TASKS[cache_key]
+            cached_bytes = cache_file.read_bytes()
+            if cached_bytes:
+                _store_in_memory_cache(_TTS_STREAM_CACHE, ssml_hash, cached_bytes)
+                return cached_bytes
+        except Exception as read_err:
+            logger.warning(f"Failed reading cache file {cache_file}: {read_err}")
+
+    # 3. Дедупликация: если для этого SSML уже запущен запрос, ожидаем текущую задачу
+    if ssml_hash in _IN_FLIGHT_TASKS:
+        logger.info(f"Awaiting in-flight Azure Speech task for md5={ssml_hash[:10]}...")
+        try:
+            return await _IN_FLIGHT_TASKS[ssml_hash]
         except Exception:
             pass
 
-    # 3. Создаем новую in-flight задачу
+    # 4. Синтез через Azure Speech SDK в фоновом пуле потоков
     async def _worker() -> bytes:
-        if bilingual:
-            audio, is_complete = await _synthesize_bilingual_audio_bytes(clean_text)
-        else:
-            audio = await _synthesize_mono_audio_bytes(clean_text, voice)
-            is_complete = bool(audio)
-        if audio and is_complete:
-            _store_in_cache(_TTS_STREAM_CACHE, cache_key, audio)
-        return audio
+        logger.info(f"Synthesizing audio via Azure Speech SDK (md5={ssml_hash[:10]}...)")
+        audio_bytes = await asyncio.to_thread(_synthesize_azure_ssml, ssml)
+        if audio_bytes:
+            # Сохраняем в кэш на диск
+            try:
+                AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                cache_file.write_bytes(audio_bytes)
+                logger.info(f"Cached audio to disk: {cache_file} ({len(audio_bytes)} bytes)")
+            except Exception as write_err:
+                logger.warning(f"Failed to write audio cache file {cache_file}: {write_err}")
+
+            # Сохраняем в память
+            _store_in_memory_cache(_TTS_STREAM_CACHE, ssml_hash, audio_bytes)
+        return audio_bytes
 
     task = asyncio.create_task(_worker())
-    _IN_FLIGHT_TASKS[cache_key] = task
+    _IN_FLIGHT_TASKS[ssml_hash] = task
 
     try:
         audio_result = await task
         return audio_result
     finally:
-        _IN_FLIGHT_TASKS.pop(cache_key, None)
+        _IN_FLIGHT_TASKS.pop(ssml_hash, None)
 
 
 async def generate_speech_stream(
@@ -868,7 +784,7 @@ async def generate_speech_stream(
 async def generate_bilingual_speech_stream(
     text: str,
 ) -> AsyncGenerator[bytes, None]:
-    """Стримит двуязычную склейку порциями по 16 КБ из кэшированного буфера."""
+    """Стримит двуязычную озвучку порциями по 16 КБ из кэшированного буфера."""
     if not text or not text.strip():
         return
 
