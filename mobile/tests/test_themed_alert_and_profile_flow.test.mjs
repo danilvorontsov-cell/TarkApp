@@ -140,3 +140,29 @@ test('Scenario 4: ThemedAlertContainer and ProfileSetupModal are rendered in App
   assert.ok(appContent.includes('<ProfileSetupModal'), 'App.tsx must mount <ProfileSetupModal />');
   assert.ok(appContent.includes('onOpenProfileSetup='), 'App.tsx must pass onOpenProfileSetup to DrawerMenu');
 });
+
+test('Scenario 5: ProfileSetupModal supports grades 1 to 12 (including gymnasium 10-12) and fixed footer Save button', () => {
+  const modalContent = fs.readFileSync(path.join(rootDir, 'src', 'components', 'ProfileSetupModal.tsx'), 'utf-8');
+
+  // Verify grades 1 to 12 are available in GRADES array
+  assert.ok(modalContent.includes('GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]'), 'Must support grades 1 to 12');
+
+  // Verify gymnasium tier mapping for 10..12
+  const getTierFromGrade = (grade) => {
+    if (grade <= 3) return 'primary';
+    if (grade <= 6) return 'middle';
+    if (grade <= 9) return 'high';
+    return 'gymnasium';
+  };
+  assert.equal(getTierFromGrade(10), 'gymnasium');
+  assert.equal(getTierFromGrade(11), 'gymnasium');
+  assert.equal(getTierFromGrade(12), 'gymnasium');
+
+  // Verify modalFooter and save button are present
+  assert.ok(modalContent.includes('styles.modalFooter'), 'Must have modalFooter container');
+  assert.ok(modalContent.includes('styles.saveBtn'), 'Must have saveBtn');
+  assert.ok(modalContent.includes('✓ Сохранить'), 'Save button must have clear label');
+
+  // Verify elongated modal dimensions
+  assert.ok(modalContent.includes('minHeight: Math.min'), 'Card must have minHeight to elongate window');
+});

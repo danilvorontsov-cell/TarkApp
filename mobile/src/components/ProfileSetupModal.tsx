@@ -13,13 +13,13 @@ import {
   ScrollView,
   Image,
 } from 'react-native';
-import { UserProfile, SchoolTier, getTierFromGrade } from '../types';
+import { UserProfile, SchoolTier, getTierFromGrade, getTierPolicy } from '../types';
 import { Theme, darkTheme } from '../theme/colors';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const MODAL_WIDTH = Math.min(SCREEN_WIDTH * 0.9, 360);
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const MODAL_WIDTH = Math.min(SCREEN_WIDTH * 0.92, 400);
 
-const GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+export const GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 interface ProfileSetupModalProps {
   visible: boolean;
@@ -45,6 +45,9 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
       setSelectedGrade(currentProfile.grade || 3);
     }
   }, [visible, currentProfile]);
+
+  const tierPolicy = getTierPolicy(selectedGrade);
+  const tierBadgeLabel = tierPolicy.name.split(' (')[0];
 
   const handleSave = () => {
     const trimmed = name.trim() || 'Ученик';
@@ -100,7 +103,13 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                   <Text style={styles.closeBtnText}>✕</Text>
                 </TouchableOpacity>
 
-                <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+                <ScrollView
+                  style={styles.scrollView}
+                  contentContainerStyle={styles.scrollContent}
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  bounces={false}
+                >
                   {/* Avatar Circle */}
                   <TouchableOpacity
                     style={styles.avatarCircle}
@@ -142,7 +151,14 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
 
                   {/* Grade Selector */}
                   <View style={styles.gradeSection}>
-                    <Text style={styles.inputLabel}>Класс обучения ({selectedGrade} класс)</Text>
+                    <View style={styles.gradeHeaderRow}>
+                      <Text style={styles.inputLabel}>
+                        Класс обучения: <Text style={styles.gradeHighlight}>{selectedGrade} класс</Text>
+                      </Text>
+                      <View style={styles.tierBadge}>
+                        <Text style={styles.tierBadgeText}>{tierBadgeLabel}</Text>
+                      </View>
+                    </View>
                     <View style={styles.gradeGrid}>
                       {GRADES.map((g) => {
                         const isSelected = selectedGrade === g;
@@ -169,14 +185,16 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                       })}
                     </View>
                   </View>
+                </ScrollView>
 
-                  {/* Save Button */}
+                {/* Fixed Footer: Save & Continue Buttons */}
+                <View style={styles.modalFooter}>
                   <TouchableOpacity
                     style={styles.saveBtn}
                     onPress={handleSave}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.saveBtnText}>✓ Сохранить и продолжить</Text>
+                    <Text style={styles.saveBtnText}>✓ Сохранить</Text>
                   </TouchableOpacity>
 
                   {!currentProfile.nickname?.trim() && (
@@ -188,7 +206,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                       <Text style={styles.skipBtnText}>Продолжить как Ученик</Text>
                     </TouchableOpacity>
                   )}
-                </ScrollView>
+                </View>
               </View>
             </TouchableWithoutFeedback>
           </KeyboardAvoidingView>
@@ -204,7 +222,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(5, 8, 11, 0.85)',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     zIndex: 9990,
   },
   keyboardView: {
@@ -214,16 +232,16 @@ const styles = StyleSheet.create({
   },
   card: {
     width: MODAL_WIDTH,
-    maxHeight: '90%',
+    maxHeight: Math.min(SCREEN_HEIGHT * 0.9, 680),
+    minHeight: Math.min(SCREEN_HEIGHT * 0.7, 520),
     backgroundColor: '#161B20',
     borderRadius: 24,
     borderWidth: 1,
     borderColor: '#2D3844',
-    padding: 22,
+    paddingTop: 18,
+    paddingHorizontal: 20,
+    paddingBottom: 16,
     ...Theme.shadow.modal,
-  },
-  scrollContent: {
-    alignItems: 'center',
   },
   closeBtn: {
     position: 'absolute',
@@ -242,35 +260,44 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  scrollView: {
+    width: '100%',
+    flexGrow: 0,
+    flexShrink: 1,
+  },
+  scrollContent: {
+    alignItems: 'center',
+    paddingBottom: 4,
+  },
   avatarCircle: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     backgroundColor: 'rgba(95, 237, 197, 0.14)',
     borderWidth: 2,
     borderColor: '#5FEDC5',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 6,
-    marginBottom: 12,
+    marginTop: 2,
+    marginBottom: 10,
     position: 'relative',
     ...Theme.shadow.chip,
   },
   avatarImage: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
   },
   avatarEmoji: {
-    fontSize: 32,
+    fontSize: 30,
   },
   avatarBadge: {
     position: 'absolute',
     bottom: -2,
     right: -2,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: '#1E252B',
     borderWidth: 1.5,
     borderColor: '#5FEDC5',
@@ -278,7 +305,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   avatarBadgeText: {
-    fontSize: 11,
+    fontSize: 10,
   },
   title: {
     fontSize: 20,
@@ -286,26 +313,25 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     textAlign: 'center',
     letterSpacing: -0.3,
-    marginBottom: 6,
+    marginBottom: 4,
   },
   subtitle: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '500',
     color: '#94A3B8',
     textAlign: 'center',
-    lineHeight: 18,
-    marginBottom: 18,
+    lineHeight: 17,
+    marginBottom: 14,
     paddingHorizontal: 8,
   },
   inputSection: {
     width: '100%',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   inputLabel: {
     fontSize: 12.5,
     fontWeight: '700',
     color: '#CBD5E1',
-    marginBottom: 8,
   },
   textInput: {
     width: '100%',
@@ -314,25 +340,52 @@ const styles = StyleSheet.create({
     borderColor: '#2D3844',
     borderRadius: 14,
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingVertical: 10,
+    marginTop: 6,
+    height: 46,
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '600',
   },
   gradeSection: {
     width: '100%',
-    marginBottom: 20,
+    marginBottom: 14,
+  },
+  gradeHeaderRow: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  gradeHighlight: {
+    color: '#5FEDC5',
+    fontWeight: '800',
+  },
+  tierBadge: {
+    backgroundColor: 'rgba(95, 237, 197, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(95, 237, 197, 0.3)',
+  },
+  tierBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#5FEDC5',
   },
   gradeGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
-    justifyContent: 'center',
+    justifyContent: 'space-between',
+    rowGap: 8,
+    width: '100%',
   },
   gradeChip: {
-    width: 32,
-    height: 34,
-    borderRadius: 10,
+    width: '14.8%',
+    height: 42,
+    borderRadius: 12,
     backgroundColor: '#202830',
     borderWidth: 1,
     borderColor: '#334155',
@@ -353,23 +406,29 @@ const styles = StyleSheet.create({
     color: '#064E3B',
     fontWeight: '900',
   },
+  modalFooter: {
+    width: '100%',
+    paddingTop: 8,
+    alignItems: 'center',
+  },
   saveBtn: {
     width: '100%',
     backgroundColor: '#5FEDC5',
     borderRadius: 16,
-    paddingVertical: 14,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
+    marginBottom: 4,
     ...Theme.shadow.button,
   },
   saveBtnText: {
     fontSize: 15,
     fontWeight: '800',
     color: '#064E3B',
+    letterSpacing: 0.2,
   },
   skipBtn: {
-    paddingVertical: 8,
+    paddingVertical: 6,
   },
   skipBtnText: {
     fontSize: 13,
