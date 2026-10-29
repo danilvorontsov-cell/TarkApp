@@ -7,7 +7,7 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://10.253.79.137:8080"
+        "EXPO_PUBLIC_API_URL": "http://185.31.243.124:8080"
       }
     },
     "preview": {
@@ -16,7 +16,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://uvn-235-67.ams01.zonevs.eu"
+        "EXPO_PUBLIC_API_URL": "http://185.31.243.124:8080"
       }
     },
     "production": {
@@ -24,7 +24,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://uvn-235-67.ams01.zonevs.eu"
+        "EXPO_PUBLIC_API_URL": "http://185.31.243.124:8080"
       }
     }
   },
