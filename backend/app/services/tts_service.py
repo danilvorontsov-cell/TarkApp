@@ -15,27 +15,26 @@ VOICE_MAP = {
     "et": "et-EE-KertNeural",
 }
 
-DEFAULT_VOICE = "ru-RU-SvetlanaMultilingualNeural"
+DEFAULT_VOICE = "ru-RU-SvetlanaNeural"
 ESTONIAN_VOICE = "et-EE-KertNeural"
 
 # Карта резервных голосов для отказоустойчивости при сетевых сбоях Edge-TTS
 VOICE_FALLBACK_MAP = {
-    "ru-RU-SvetlanaMultilingualNeural": "ru-RU-SvetlanaNeural",
     "ru-RU-SvetlanaNeural": "ru-RU-DmitryNeural",
-    "ru-RU-DmitryNeural": "ru-RU-SvetlanaMultilingualNeural",
+    "ru-RU-DmitryNeural": "ru-RU-SvetlanaNeural",
     "et-EE-KertNeural": "et-EE-AnuNeural",
     "et-EE-AnuNeural": "et-EE-KertNeural",
 }
 
-# Семафор для параллельных WebSocket-запросов к Microsoft Edge-TTS (до 4 одновременных сокетов)
-# Заменяет жесткий одиночный Lock(), ускоряя склейку двуязычных фрагментов в 8-10 раз
+# Семафор для параллельных WebSocket-запросов к Microsoft Edge-TTS (до 2 одновременных сокетов)
+# Защищает от троттлинга и сбросов соединений Microsoft Bing Edge-TTS при параллельном синтезе
 _tts_semaphore: Optional[asyncio.Semaphore] = None
 
 
 def _get_tts_semaphore() -> asyncio.Semaphore:
     global _tts_semaphore
     if _tts_semaphore is None:
-        _tts_semaphore = asyncio.Semaphore(4)
+        _tts_semaphore = asyncio.Semaphore(2)
     return _tts_semaphore
 
 # Серверные кэши синтезированного аудио в оперативной памяти (LRU-ограничение)
@@ -591,17 +590,28 @@ def _stitch_and_clean_segments(raw_segments: List[Tuple[str, str]], fallback_tex
     return segments
 
 
+ENGLISH_COMMON_TERMS = {
+    "minecraft", "roblox", "lego", "youtube", "tiktok", "brawl", "stars",
+    "fortnite", "google", "apple", "discord", "steam", "playstation", "xbox",
+    "w", "a", "s", "d", "wasd", "shift", "space", "enter", "ctrl", "alt", "esc"
+}
+
+
+def _is_pure_english_brand_or_key(text: str) -> bool:
+    clean = re.sub(r'[^a-zA-Z0-9\s]', '', text).strip().lower()
+    words = clean.split()
+    return bool(words) and all(w in ENGLISH_COMMON_TERMS for w in words)
+
+
 def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
     """
     Разбивает двуязычный текст на последовательные сегменты (текст, голос):
-    - Фрагменты внутри тегов <est>...</est> отправляются эстонскому диктору (et-EE-KertNeural / et-EE-AnuNeural),
-      теги удаляются перед синтезом.
-    - Весь остальной текст вне тегов <est> (русский язык + свободная английская латиница вроде
-      Minecraft, Roblox, YouTube, W/A/S/D) озвучивается русским мультиязычным голосом
-      (ru-RU-SvetlanaMultilingualNeural).
-    - Если тегов <est> в тексте нет, и в тексте нет кириллицы (чистый эстонский термин или фраза),
-      текст целиком отправляется эстонскому диктору.
-    - В противном случае весь текст без тегов озвучивается русским диктором единым блоком без склеек.
+    - Приоритет 1: Фрагменты внутри тегов <est>...</est> отправляются эстонскому диктору (et-EE-KertNeural / et-EE-AnuNeural).
+    - Приоритет 2: Фразы на эстонском языке в кавычках (например: 'Mis seade see on ja milleks sa seda kasutad?')
+      или термины в скобках (например: (klahv), (klaviatuur)) без кириллицы, не являющиеся английскими терминами (Minecraft, W/A/S/D).
+    - Весь остальной текст (русский язык + свободная английская латиница Minecraft, Roblox, W/A/S/D)
+      озвучивается русским голосом (ru-RU-SvetlanaNeural).
+    - Если во всем тексте нет кириллицы (чистый эстонский текст) — отправляется эстонскому диктору.
     """
     if not text or not text.strip():
         return [(text or "", DEFAULT_VOICE)]
@@ -609,51 +619,73 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
     # Предварительная нормализация римских цифр и математических переменных в русском контексте
     text = normalize_text_for_speech(text, is_russian_context=True)
 
-    est_tag_pattern = re.compile(r'<\s*est(?:\s+[^>]*)?>(.*?)<\s*/\s*est\s*>', re.IGNORECASE | re.DOTALL)
-
-    # 1. Если присутствуют теги <est>...</est>, выполняем строгое разделение по тегам
-    if est_tag_pattern.search(text):
-        raw_segments: List[Tuple[str, str]] = []
-        last_idx = 0
-
-        for match in est_tag_pattern.finditer(text):
-            start, end = match.span()
-            if start > last_idx:
-                prefix = text[last_idx:start]
-                # Срезаем одиночные открывающие скобки/кавычки в конце префикса, если они оборачивали <est>
-                clean_prefix = prefix.rstrip(' ([«"“„')
-                if clean_prefix:
-                    raw_segments.append((clean_prefix, DEFAULT_VOICE))
-
-            inner = match.group(1).strip()
-            clean_est = normalize_text_for_estonian_tts(inner)
-            if clean_est:
-                raw_segments.append((clean_est, ESTONIAN_VOICE))
-
-            # Проверяем, если сразу после тега идет закрывающая скобка/кавычка, сдвигаем last_idx
-            trailing_wrapper = re.match(r'^[\s)\]»"”„]*', text[end:])
-            if trailing_wrapper:
-                last_idx = end + trailing_wrapper.end()
-            else:
-                last_idx = end
-
-        if last_idx < len(text):
-            suffix = text[last_idx:]
-            clean_suffix = suffix.strip(' .')
-            if clean_suffix:
-                raw_segments.append((clean_suffix, DEFAULT_VOICE))
-
-        return _stitch_and_clean_segments(raw_segments, text)
-
-    # 2. Если тегов <est> нет:
-    # 2a. Чистый эстонский текст (без кириллических букв — например, отдельные слова словаря)
+    # 1. Если во всём тексте нет кириллицы вообще — озвучиваем целиком эстонским диктором
     if not re.search(r'[а-яА-ЯёЁ]', text):
         clean_est = normalize_text_for_estonian_tts(text.strip())
         return [(clean_est or text.strip(), ESTONIAN_VOICE)]
 
-    # 2b. Текст на русском языке без тегов <est> (свободная латиница Minecraft, Roblox, W/A/S/D и т.д.)
-    # Полностью и без лишних склеек читается русским мультиязычным диктором ru-RU-SvetlanaMultilingualNeural
-    return [(text.strip(), DEFAULT_VOICE)]
+    # 2. Ищем все эстонские фрагменты в русском тексте:
+    #   а) Явные теги <est>...</est>
+    #   б) Фразы в кавычках без кириллицы (например: 'Mis seade see on ja milleks sa seda kasutad?')
+    #   в) Термины в скобках без кириллицы (например: (klahv), (klaviatuur))
+    # При этом исключаем чисто английские бренды/клавиши (Minecraft, Roblox, W/A/S/D).
+    pattern = re.compile(
+        r'<\s*est(?:\s+[^>]*)?>(.*?)<\s*/\s*est\s*>'
+        r'|[\'\"«“]([a-zA-ZäöüõÄÖÜÕšžŠŽ0-9\s\.,\?!-]{2,})[\'\"»”]'
+        r'|\(([a-zA-ZäöüõÄÖÜÕšžŠŽ0-9\s\.,\?!-]{2,})\)',
+        re.DOTALL
+    )
+
+    matches: List[Tuple[int, int, str]] = []
+    for m in pattern.finditer(text):
+        tag_val = m.group(1)
+        quote_val = m.group(2)
+        paren_val = m.group(3)
+
+        if tag_val is not None:
+            clean = tag_val.strip()
+            if clean:
+                matches.append((m.start(), m.end(), clean))
+        elif quote_val is not None:
+            val = quote_val.strip()
+            if val and not _is_pure_english_brand_or_key(val):
+                matches.append((m.start(), m.end(), val))
+        elif paren_val is not None:
+            val = paren_val.strip()
+            if val and not _is_pure_english_brand_or_key(val):
+                matches.append((m.start(), m.end(), val))
+
+    if not matches:
+        return [(text.strip(), DEFAULT_VOICE)]
+
+    raw_segments: List[Tuple[str, str]] = []
+    last_idx = 0
+
+    for start, end, est_content in matches:
+        if start > last_idx:
+            prefix = text[last_idx:start]
+            # Срезаем одиночные открывающие скобки/кавычки в конце префикса, если они оборачивали эстонский фрагмент
+            clean_prefix = prefix.rstrip(' ([«"“„')
+            if clean_prefix:
+                raw_segments.append((clean_prefix, DEFAULT_VOICE))
+
+        clean_est = normalize_text_for_estonian_tts(est_content)
+        if clean_est:
+            raw_segments.append((clean_est, ESTONIAN_VOICE))
+
+        trailing_wrapper = re.match(r'^[\s)\]»"”„]*', text[end:])
+        if trailing_wrapper:
+            last_idx = end + trailing_wrapper.end()
+        else:
+            last_idx = end
+
+    if last_idx < len(text):
+        suffix = text[last_idx:]
+        clean_suffix = suffix.strip(' .')
+        if clean_suffix:
+            raw_segments.append((clean_suffix, DEFAULT_VOICE))
+
+    return _stitch_and_clean_segments(raw_segments, text)
 
 
 async def synthesize_segment(text: str, voice: str, delay: float = 0.0) -> bytes:

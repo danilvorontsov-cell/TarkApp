@@ -36,14 +36,14 @@ def test_parse_standalone_latin_word():
 
 def test_minecraft_and_est_tag_segmentation():
     # "Давай построим в Minecraft <est>maja</est>"
-    # - "Давай построим в Minecraft " -> ru-RU-SvetlanaMultilingualNeural
+    # - "Давай построим в Minecraft" -> ru-RU-SvetlanaNeural
     # - "maja" -> et-EE-KertNeural
     text = "Давай построим в Minecraft <est>maja</est>"
     segments = parse_bilingual_segments(text)
     assert len(segments) == 2
     assert segments[0] == ("Давай построим в Minecraft", DEFAULT_VOICE)
     assert segments[1] == ("maja", ESTONIAN_VOICE)
-    assert DEFAULT_VOICE == "ru-RU-SvetlanaMultilingualNeural"
+    assert DEFAULT_VOICE == "ru-RU-SvetlanaNeural"
 
 def test_multiple_english_brands_no_tags_stay_intact():
     # Without <est> tags, text with multiple English terms (Minecraft, Roblox, YouTube, W/A/S/D) is not chopped
@@ -86,3 +86,27 @@ def test_pure_estonian_without_cyrillic():
     segments = parse_bilingual_segments("kass")
     assert len(segments) == 1
     assert segments[0] == ("kass", ESTONIAN_VOICE)
+
+
+def test_estonian_term_in_parentheses_without_tag():
+    text = "Каждая кнопка (klahv) здесь работает как микропереключатель."
+    segments = parse_bilingual_segments(text)
+    assert len(segments) == 3
+    assert segments[0] == ("Каждая кнопка", DEFAULT_VOICE)
+    assert segments[1] == ("klahv", ESTONIAN_VOICE)
+    assert segments[2] == ("здесь работает как микропереключатель", DEFAULT_VOICE)
+
+def test_estonian_quote_in_given_condition():
+    text = "Учитель на уроке спрашивает: 'Mis seade see on ja milleks sa seda kasutad?'"
+    segments = parse_bilingual_segments(text)
+    assert len(segments) == 2
+    assert segments[0] == ("Учитель на уроке спрашивает:", DEFAULT_VOICE)
+    assert segments[1] == ("Mis seade see on ja milleks sa seda kasutad?", ESTONIAN_VOICE)
+
+def test_estonian_russian_pair_in_parentheses():
+    text = "Перед нами крутая игровая клавиатура (<est>klaviatuur</est>) с яркой подсветкой!"
+    segments = parse_bilingual_segments(text)
+    assert len(segments) == 3
+    assert segments[0] == ("Перед нами крутая игровая клавиатура", DEFAULT_VOICE)
+    assert segments[1] == ("klaviatuur", ESTONIAN_VOICE)
+    assert segments[2] == ("с яркой подсветкой!", DEFAULT_VOICE)
