@@ -92,7 +92,7 @@ def test_voice_tts_bilingual(client):
 
 def test_bilingual_parser():
     from app.services.tts_service import parse_bilingual_segments, DEFAULT_VOICE, ESTONIAN_VOICE
-    text = "Найди слово: «koolikott» и скажи «tere»."
+    text = "Найди слово: <est>koolikott</est> и скажи <est>tere</est>."
     segments = parse_bilingual_segments(text)
     assert len(segments) == 4
     assert segments[0][0] == "Найди слово:"

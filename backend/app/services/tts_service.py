@@ -594,16 +594,14 @@ def _stitch_and_clean_segments(raw_segments: List[Tuple[str, str]], fallback_tex
 def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
     """
     Разбивает двуязычный текст на последовательные сегменты (текст, голос):
-    - Предварительно нормализует римские цифры и математику в русском контексте.
-    - Сегменты внутри тегов <est>...</est> отправляются эстонскому диктору (et-EE-KertNeural / et-EE-AnuNeural),
-      предварительно очистив сам тег.
-    - Весь остальной текст (русский язык + свободная английская латиница вроде Minecraft/Roblox)
-      озвучивается русским мультиязычным голосом (ru-RU-SvetlanaMultilingualNeural).
-    - Если теги <est> в тексте отсутствуют, текст не дробится по случайным латинским буквам — его
-      полностью озвучивает русский голос.
-    - Для обратной совместимости с историческими записями фразы в кавычках («...», "...", “...”, „...“)
-      или скобках ((...)) поддерживаются при отсутствии тегов <est>.
-    - Чистый эстонский текст (без кириллических букв) полностью озвучивается эстонским диктором.
+    - Фрагменты внутри тегов <est>...</est> отправляются эстонскому диктору (et-EE-KertNeural / et-EE-AnuNeural),
+      теги удаляются перед синтезом.
+    - Весь остальной текст вне тегов <est> (русский язык + свободная английская латиница вроде
+      Minecraft, Roblox, YouTube, W/A/S/D) озвучивается русским мультиязычным голосом
+      (ru-RU-SvetlanaMultilingualNeural).
+    - Если тегов <est> в тексте нет, и в тексте нет кириллицы (чистый эстонский термин или фраза),
+      текст целиком отправляется эстонскому диктору.
+    - В противном случае весь текст без тегов озвучивается русским диктором единым блоком без склеек.
     """
     if not text or not text.strip():
         return [(text or "", DEFAULT_VOICE)]
@@ -613,7 +611,7 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
 
     est_tag_pattern = re.compile(r'<\s*est(?:\s+[^>]*)?>(.*?)<\s*/\s*est\s*>', re.IGNORECASE | re.DOTALL)
 
-    # 1. Если присутствуют теги <est>...</est>, выполняем разделение по тегам
+    # 1. Если присутствуют теги <est>...</est>, выполняем строгое разделение по тегам
     if est_tag_pattern.search(text):
         raw_segments: List[Tuple[str, str]] = []
         last_idx = 0
@@ -622,95 +620,40 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
             start, end = match.span()
             if start > last_idx:
                 prefix = text[last_idx:start]
-                if prefix:
-                    raw_segments.append((prefix, DEFAULT_VOICE))
+                # Срезаем одиночные открывающие скобки/кавычки в конце префикса, если они оборачивали <est>
+                clean_prefix = prefix.rstrip(' ([«"“„')
+                if clean_prefix:
+                    raw_segments.append((clean_prefix, DEFAULT_VOICE))
 
             inner = match.group(1).strip()
             clean_est = normalize_text_for_estonian_tts(inner)
             if clean_est:
                 raw_segments.append((clean_est, ESTONIAN_VOICE))
 
-            last_idx = end
+            # Проверяем, если сразу после тега идет закрывающая скобка/кавычка, сдвигаем last_idx
+            trailing_wrapper = re.match(r'^[\s)\]»"”„]*', text[end:])
+            if trailing_wrapper:
+                last_idx = end + trailing_wrapper.end()
+            else:
+                last_idx = end
 
         if last_idx < len(text):
             suffix = text[last_idx:]
-            if suffix:
-                raw_segments.append((suffix, DEFAULT_VOICE))
+            clean_suffix = suffix.strip(' .')
+            if clean_suffix:
+                raw_segments.append((clean_suffix, DEFAULT_VOICE))
 
         return _stitch_and_clean_segments(raw_segments, text)
 
     # 2. Если тегов <est> нет:
-    # 2a. Чистый эстонский текст (без единой буквы кириллицы)
+    # 2a. Чистый эстонский текст (без кириллических букв — например, отдельные слова словаря)
     if not re.search(r'[а-яА-ЯёЁ]', text):
         clean_est = normalize_text_for_estonian_tts(text.strip())
         return [(clean_est or text.strip(), ESTONIAN_VOICE)]
 
-    # 2b. Текст содержит кириллицу без тегов <est>.
-    # Проверяем наличие фраз в кавычках («...», "...", “...”, „...“) или скобках ((...)) для обратной совместимости.
-    # ВНИМАНИЕ: свободные латинские слова (Minecraft, Roblox, Lego, YouTube) без кавычек НЕ захватываются
-    # и остаются частью русского текста для ru-RU-SvetlanaMultilingualNeural.
-    token_pattern = re.compile(
-        r'([«"“„][^»"”]+[»"”])|'  # фраза в кавычках
-        r'(\([^)]+\))'             # фраза в скобках
-    )
-
-    est_char_pattern = re.compile(r'[A-Za-zõäöüšžÕÄÖÜŠŽ]')
-    cyr_char_pattern = re.compile(r'[а-яА-ЯёЁ]')
-
-    raw_segments: List[Tuple[str, str]] = []
-    last_idx = 0
-
-    for match in token_pattern.finditer(text):
-        start, end = match.span()
-        if start > last_idx:
-            prefix = text[last_idx:start]
-            raw_segments.append((prefix, DEFAULT_VOICE))
-
-        matched_str = match.group(0)
-        inner = matched_str
-        is_wrapped = False
-        if (matched_str.startswith(('«', '"', '“', '„')) and matched_str.endswith(('»', '"', '”', '“'))):
-            inner = matched_str[1:-1]
-            is_wrapped = True
-        elif matched_str.startswith('(') and matched_str.endswith(')'):
-            inner = matched_str[1:-1]
-            is_wrapped = True
-
-        if est_char_pattern.search(inner):
-            if is_wrapped and cyr_char_pattern.search(inner) and len(inner) < len(text):
-                # Смешанный русско-эстонский фрагмент внутри кавычек/скобок (напр. "(по-эстонски: liidetav)")
-                # Выделяем латинские/эстонские слова внутри этих скобок/кавычек
-                inner_token_pattern = re.compile(
-                    r'((?:[A-Za-zõäöüšžÕÄÖÜŠŽ][A-Za-zõäöüšžÕÄÖÜŠŽ0-9\-\']*|\b\d+-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)(?:\s+(?:[A-Za-zõäöüšžÕÄÖÜŠŽ][A-Za-zõäöüšžÕÄÖÜŠŽ0-9\-\']*|\b\d+-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b))*)'
-                )
-                inner_last_idx = 0
-                for in_match in inner_token_pattern.finditer(inner):
-                    in_start, in_end = in_match.span()
-                    if in_start > inner_last_idx:
-                        in_prefix = inner[inner_last_idx:in_start]
-                        raw_segments.append((in_prefix, DEFAULT_VOICE))
-                    in_matched = in_match.group(0).strip()
-                    clean_est = normalize_text_for_estonian_tts(in_matched)
-                    if clean_est:
-                        raw_segments.append((clean_est, ESTONIAN_VOICE))
-                    inner_last_idx = in_end
-                if inner_last_idx < len(inner):
-                    in_suffix = inner[inner_last_idx:]
-                    raw_segments.append((in_suffix, DEFAULT_VOICE))
-            else:
-                clean_est = normalize_text_for_estonian_tts(inner)
-                if clean_est:
-                    raw_segments.append((clean_est, ESTONIAN_VOICE))
-        else:
-            raw_segments.append((matched_str, DEFAULT_VOICE))
-
-        last_idx = end
-
-    if last_idx < len(text):
-        suffix = text[last_idx:]
-        raw_segments.append((suffix, DEFAULT_VOICE))
-
-    return _stitch_and_clean_segments(raw_segments, text)
+    # 2b. Текст на русском языке без тегов <est> (свободная латиница Minecraft, Roblox, W/A/S/D и т.д.)
+    # Полностью и без лишних склеек читается русским мультиязычным диктором ru-RU-SvetlanaMultilingualNeural
+    return [(text.strip(), DEFAULT_VOICE)]
 
 
 async def synthesize_segment(text: str, voice: str, delay: float = 0.0) -> bytes:

@@ -2,6 +2,10 @@ import asyncio
 import pytest
 import edge_tts
 from app.main import app
+from app.database import init_db
+
+# Initialize database tables for all test runs
+init_db()
 
 
 class _MockEdgeCommunicate:

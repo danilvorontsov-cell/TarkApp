@@ -84,21 +84,9 @@ interface CapturedPageItem {
   mimeType?: string;
 }
 
-function renderFormattedExplanation(text?: string | null) {
-  if (!text) return null;
-  const parts = text.split(/(<\s*est(?:\s+[^>]*)?>.*?<\s*\/\s*est\s*>)/gi);
-  if (parts.length === 1) return text;
-  return parts.map((part, idx) => {
-    const match = part.match(/<\s*est(?:\s+[^>]*)?>(.*?)<\s*\/\s*est\s*>/i);
-    if (match) {
-      return (
-        <Text key={idx} style={{ color: '#5FEDC5', fontWeight: '700' }}>
-          {match[1]}
-        </Text>
-      );
-    }
-    return part;
-  });
+export function cleanEstTags(text?: string | null): string {
+  if (!text) return '';
+  return text.replace(/<\s*\/?\s*est(?:\s+[^>]*)?>/gi, '');
 }
 
 function MainApp() {
@@ -1013,7 +1001,7 @@ function MainApp() {
                       ]}
                       numberOfLines={2}
                     >
-                      {item.title}
+                      {cleanEstTags(item.title)}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -1299,7 +1287,7 @@ function MainApp() {
           {/* Card 1: Task Context / Title - растянуто на всё окно, с мягкой подсветкой фона */}
           <View style={[styles.modularCard, styles.topicTitleCard, isJunior && styles.topicTitleCardJunior]}>
             <Text style={[styles.resultTitle, isJunior && styles.resultTitleJunior]}>
-              {analysis.task_title}
+              {cleanEstTags(analysis.task_title)}
             </Text>
           </View>
 
@@ -1318,7 +1306,7 @@ function MainApp() {
                     : 'Послушай подсказку голосом:'}
                 </Text>
               </View>
-              <Text style={styles.voiceScriptText}>{analysis.voice_prompt_script}</Text>
+              <Text style={styles.voiceScriptText}>{cleanEstTags(analysis.voice_prompt_script)}</Text>
               <TouchableOpacity
                 style={[
                   styles.voiceHeroPlayButton,
@@ -1414,7 +1402,7 @@ function MainApp() {
               </View>
             )}
             <Text style={styles.explanationText}>
-              {renderFormattedExplanation(showAlternativeExplanation ? analysis.alternative_explanation : analysis.theme_explanation)}
+              {cleanEstTags(showAlternativeExplanation ? analysis.alternative_explanation : analysis.theme_explanation)}
             </Text>
 
             {/* Кнопка «Объяснить по-другому» в правом нижнем углу карточки */}
@@ -1461,7 +1449,7 @@ function MainApp() {
                   <View key={idx} style={styles.vocabItemCard}>
                     <View style={styles.vocabPillRow}>
                       <View style={styles.vocabEstChip}>
-                        <Text style={styles.vocabEstText}>{v.est}</Text>
+                        <Text style={styles.vocabEstText}>{cleanEstTags(v.est)}</Text>
                         <TouchableOpacity
                           style={[
                             styles.vocabCircleSpeaker,
@@ -1480,7 +1468,7 @@ function MainApp() {
                           )}
                         </TouchableOpacity>
                       </View>
-                      <Text style={styles.vocabRuText}>— {v.ru}</Text>
+                      <Text style={styles.vocabRuText}>— {cleanEstTags(v.ru)}</Text>
                     </View>
 
                     {v.example ? (
@@ -1502,7 +1490,7 @@ function MainApp() {
                             </Text>
                           )}
                         </TouchableOpacity>
-                        <Text style={styles.vocabExampleText}>«{v.example}»</Text>
+                        <Text style={styles.vocabExampleText}>«{cleanEstTags(v.example)}»</Text>
                       </View>
                     ) : null}
                   </View>
@@ -1519,7 +1507,7 @@ function MainApp() {
                   <Text style={styles.naidisBadgeText}>Образец • Näidis</Text>
                 </View>
                 <Text style={styles.sectionHeader}>
-                  📝 {analysis.worked_example.title || 'Пример решения (Näidis)'}
+                  📝 {cleanEstTags(analysis.worked_example.title || 'Пример решения (Näidis)')}
                 </Text>
               </View>
 
@@ -1581,7 +1569,7 @@ function MainApp() {
               {/* Given condition / situation */}
               <View style={styles.naidisGivenBox}>
                 <Text style={styles.naidisGivenLabel}>📋 УСЛОВИЕ / ДАНО:</Text>
-                <Text style={styles.naidisGivenText}>{analysis.worked_example.given}</Text>
+                <Text style={styles.naidisGivenText}>{cleanEstTags(analysis.worked_example.given)}</Text>
               </View>
 
               {/* Step by step breakdown */}
@@ -1592,7 +1580,7 @@ function MainApp() {
                     <View style={styles.naidisStepNumberBadge}>
                       <Text style={styles.naidisStepNumberText}>{sIdx + 1}</Text>
                     </View>
-                    <Text style={styles.naidisStepText}>{step.replace(/^\d+[\.\)]\s*/, '')}</Text>
+                    <Text style={styles.naidisStepText}>{cleanEstTags(step).replace(/^\d+[\.\)]\s*/, '')}</Text>
                   </View>
                 ))}
               </View>
@@ -1601,7 +1589,7 @@ function MainApp() {
               {analysis.worked_example.note ? (
                 <View style={styles.naidisNoteBox}>
                   <Text style={styles.naidisNoteText}>
-                    💡 <Text style={{ fontWeight: '700' }}>Совет:</Text> {renderFormattedExplanation(analysis.worked_example.note)}
+                    💡 <Text style={{ fontWeight: '700' }}>Совет:</Text> {cleanEstTags(analysis.worked_example.note)}
                   </Text>
                 </View>
               ) : null}
@@ -1646,7 +1634,7 @@ function MainApp() {
                 </TouchableOpacity>
               </View>
             )}
-            <Text style={styles.instructionText}>{renderFormattedExplanation(analysis.how_to_answer)}</Text>
+            <Text style={styles.instructionText}>{cleanEstTags(analysis.how_to_answer)}</Text>
           </View>
 
           {/* Card 6: Собери ответ на эстонском (1–9 классы) / Формулировка для ответа (Гимназия 10–12) */}
@@ -1914,9 +1902,9 @@ function MainApp() {
                     </View>
                   </View>
 
-                  <Text style={styles.historyItemTitle}>{item.task_title}</Text>
+                  <Text style={styles.historyItemTitle}>{cleanEstTags(item.task_title)}</Text>
                   <Text style={styles.historyItemSnippet} numberOfLines={2}>
-                    {renderFormattedExplanation(item.analysis.theme_explanation)}
+                    {cleanEstTags(item.analysis.theme_explanation)}
                   </Text>
 
                   <View style={styles.historyItemActions}>

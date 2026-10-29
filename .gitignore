@@ -19,6 +19,7 @@ logs/
 backend/logs/
 *.log
 backend/static/audio/*.mp3
+static/
 
 # Python
 __pycache__/
