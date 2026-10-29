@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
-  Alert,
   Image,
   Platform,
   PanResponder,
@@ -61,6 +60,8 @@ import { LoadingOverlay } from './src/components/LoadingOverlay';
 import { QuickTranslatorScreen } from './src/screens/QuickTranslatorScreen';
 import { FeedbackScreen } from './src/screens/FeedbackScreen';
 import { PaywallScreen } from './src/screens/PaywallScreen';
+import { ThemedAlert, ThemedAlertContainer } from './src/components/ThemedAlert';
+import { ProfileSetupModal } from './src/components/ProfileSetupModal';
 
 // Initialize Sentry stub/client once at entry
 initSentry();
@@ -118,6 +119,7 @@ function MainApp() {
   const [modalBlockReason, setModalBlockReason] = useState<'trial_expired' | 'reviews_limit_reached' | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [isPaywallVisible, setIsPaywallVisible] = useState<boolean>(false);
+  const [isProfileSetupModalVisible, setIsProfileSetupModalVisible] = useState<boolean>(false);
 
   const edgePanResponder = useRef(
     PanResponder.create({
@@ -152,6 +154,9 @@ function MainApp() {
       }
 
       const isRegistered = Boolean(saved.nickname && saved.nickname.trim().length > 0);
+      if (!isRegistered) {
+        setIsProfileSetupModalVisible(true);
+      }
 
       StorageService.getHistory().then((h) => {
         setHistory(h);
@@ -257,7 +262,7 @@ function MainApp() {
         bilingual,
         {
           onError: () => {
-            Alert.alert(
+            ThemedAlert.alert(
               'Аудио',
               'Не удалось загрузить аудиофайл. Проверьте подключение к бэкенду.'
             );
@@ -266,7 +271,7 @@ function MainApp() {
         API_BASE_URL
       );
     } catch (err: any) {
-      Alert.alert('Аудио', formatFriendlyErrorMessage(err));
+      ThemedAlert.alert('Аудио', formatFriendlyErrorMessage(err));
     }
   };
 
@@ -282,7 +287,7 @@ function MainApp() {
 
   const handleLogout = () => {
     setIsDrawerOpen(false);
-    Alert.alert(
+    ThemedAlert.alert(
       'Выход из профиля',
       'Вы уверены, что хотите выйти из профиля и завершить сессию?',
       [
@@ -326,10 +331,23 @@ function MainApp() {
     );
   };
 
+  const handleSaveProfile = async (updated: UserProfile) => {
+    setProfile(updated);
+    if (updated.interests && updated.interests.length > 0) {
+      setInterestsText(updated.interests.join(', '));
+    }
+    await StorageService.saveProfile(updated);
+    ThemedAlert.alert(
+      'Добро пожаловать!',
+      `Профиль активирован для: ${updated.nickname}. Все настройки сохранены!`,
+      [{ text: 'Отлично' }]
+    );
+  };
+
   const handleSaveAndContinue = async () => {
     const trimmed = (profile.nickname || '').trim();
     if (!trimmed) {
-      Alert.alert(
+      ThemedAlert.alert(
         'Укажите имя',
         'Пожалуйста, введите имя или никнейм ученика перед сохранением.'
       );
@@ -338,7 +356,7 @@ function MainApp() {
     const updated: UserProfile = { ...profile, nickname: trimmed };
     setProfile(updated);
     await StorageService.saveProfile(updated);
-    Alert.alert(
+    ThemedAlert.alert(
       'Добро пожаловать!',
       `Профиль активирован для: ${trimmed}. Все настройки и уроки сохранены!`,
       [{ text: 'Отлично', onPress: () => switchTab('study') }]
@@ -514,7 +532,7 @@ function MainApp() {
       }
       const friendlyMsg = formatFriendlyErrorMessage(err);
       setAnalysisError(friendlyMsg);
-      Alert.alert(
+      ThemedAlert.alert(
         'Ошибка анализа страниц',
         friendlyMsg
       );
@@ -538,7 +556,7 @@ function MainApp() {
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
+        ThemedAlert.alert(
           'Доступ к камере',
           'TarkApp требуется доступ к камере для фото учебников или тетрадей. Разрешите его в настройках устройства.'
         );
@@ -581,7 +599,7 @@ function MainApp() {
     } catch (err: any) {
       setLoading(false);
       setLoadingStep('');
-      Alert.alert('Камера', `Не удалось запустить камеру: ${err?.message || 'Неизвестная ошибка'}`);
+      ThemedAlert.alert('Камера', `Не удалось запустить камеру: ${err?.message || 'Неизвестная ошибка'}`);
     }
   };
 
@@ -597,7 +615,7 @@ function MainApp() {
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
+        ThemedAlert.alert(
           'Доступ к галерее',
           'TarkApp требуется доступ к галерее фото. Пожалуйста, разрешите его в настройках.'
         );
@@ -650,7 +668,7 @@ function MainApp() {
     } catch (err: any) {
       setLoading(false);
       setLoadingStep('');
-      Alert.alert('Галерея', `Не удалось открыть галерею: ${err?.message || 'Неизвестная ошибка'}`);
+      ThemedAlert.alert('Галерея', `Не удалось открыть галерею: ${err?.message || 'Неизвестная ошибка'}`);
     }
   };
 
@@ -662,7 +680,7 @@ function MainApp() {
       return;
     }
 
-    Alert.alert(
+    ThemedAlert.alert(
       'Добавить страницу к уроку',
       'Если задание продолжается на другой странице или в тетради, добавьте фото для связного контекста:',
       [
@@ -691,7 +709,7 @@ function MainApp() {
   };
 
   const handleRetakeAll = () => {
-    Alert.alert(
+    ThemedAlert.alert(
       'Снять заново',
       'Вы хотите очистить все фото и сфотографировать материал заново?',
       [
@@ -719,7 +737,7 @@ function MainApp() {
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
+        ThemedAlert.alert(
           'Доступ к камере',
           'TarkApp требуется доступ к камере, чтобы сделать снимок для аватарки.'
         );
@@ -742,7 +760,7 @@ function MainApp() {
       setProfile(updatedProfile);
       await StorageService.saveProfile(updatedProfile);
     } catch (err: any) {
-      Alert.alert('Ошибка', `Не удалось сделать снимок: ${err?.message || 'Сбой камеры'}`);
+      ThemedAlert.alert('Ошибка камеры', `Не удалось сделать снимок: ${err?.message || 'Сбой камеры'}`);
     }
   };
 
@@ -750,7 +768,7 @@ function MainApp() {
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
+        ThemedAlert.alert(
           'Доступ к галерее',
           'TarkApp требуется доступ к галерее, чтобы выбрать фото для аватарки.'
         );
@@ -773,7 +791,7 @@ function MainApp() {
       setProfile(updatedProfile);
       await StorageService.saveProfile(updatedProfile);
     } catch (err: any) {
-      Alert.alert('Ошибка', `Не удалось выбрать фото: ${err?.message || 'Сбой галереи'}`);
+      ThemedAlert.alert('Ошибка галереи', `Не удалось выбрать фото: ${err?.message || 'Сбой галереи'}`);
     }
   };
 
@@ -821,12 +839,12 @@ function MainApp() {
       setHistory(updatedHistory);
       const updatedVocab = await StorageService.getSavedVocabulary();
       setSavedVocab(updatedVocab);
-      Alert.alert(
+      ThemedAlert.alert(
         '⭐ Сохранено в историю!',
         'Разбор урока и все новые слова сохранены в историю и словарик устройства.'
       );
     } catch (err: any) {
-      Alert.alert('Ошибка', 'Не удалось сохранить урок в историю.');
+      ThemedAlert.alert('Ошибка сохранения', 'Не удалось сохранить урок в историю.');
     }
   };
 
@@ -890,7 +908,7 @@ function MainApp() {
   };
 
   const handleClearAllData = () => {
-    Alert.alert(
+    ThemedAlert.alert(
       'Очистить историю и словарь?',
       'Это действие удалит сохранённые уроки и словарь из памяти телефона. Настройки профиля сохранятся.',
       [
@@ -907,7 +925,7 @@ function MainApp() {
             setAnalysis(null);
             setCapturedImageUri(null);
             setIsSaved(false);
-            Alert.alert('Готово', 'История и словарик очищены.');
+            ThemedAlert.alert('Готово', 'История и словарик очищены.');
           },
         },
       ]
@@ -2265,7 +2283,7 @@ function MainApp() {
               styles.headerProfilePill,
               !profile.nickname?.trim() && styles.headerProfilePillGuest,
             ]}
-            onPress={() => switchTab(currentTab === 'settings' ? 'study' : 'settings')}
+            onPress={() => setIsProfileSetupModalVisible(true)}
             accessibilityLabel={
               profile.nickname?.trim()
                 ? `Профиль: ${profile.nickname.trim()}`
@@ -2414,6 +2432,7 @@ function MainApp() {
         onLogout={handleLogout}
         onOpenPaywall={() => setIsPaywallVisible(true)}
         hasPro={Boolean(licenseStatus?.has_key)}
+        onOpenProfileSetup={() => setIsProfileSetupModalVisible(true)}
       />
 
       {/* Attractive Centered Avatar Picker Modal */}
@@ -2461,6 +2480,18 @@ function MainApp() {
         subtitle="Переводим термины и готовим подсказку"
         stepText={loadingStep}
       />
+
+      {/* Profile Setup / Authentication Modal */}
+      <ProfileSetupModal
+        visible={isProfileSetupModalVisible}
+        onClose={() => setIsProfileSetupModalVisible(false)}
+        currentProfile={profile}
+        onSaveProfile={handleSaveProfile}
+        onOpenAvatarPicker={handleSelectAvatarSource}
+      />
+
+      {/* TarkApp Themed Modal Alert Host */}
+      <ThemedAlertContainer />
     </LinearGradient>
   );
 }

@@ -6,7 +6,6 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Platform,
 } from 'react-native';
 import * as Device from 'expo-device';
@@ -14,6 +13,7 @@ import * as Application from 'expo-application';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Theme, darkTheme } from '../theme/colors';
 import { sendFeedback, getLastRequestId } from '../services/api';
+import { ThemedAlert } from '../components/ThemedAlert';
 
 interface FeedbackScreenProps {
   onBack: () => void;
@@ -34,7 +34,7 @@ export const FeedbackScreen: React.FC<FeedbackScreenProps> = ({
   const handleSubmit = async () => {
     const trimmedMessage = message.trim();
     if (!trimmedMessage) {
-      Alert.alert('Пустое сообщение', 'Пожалуйста, опишите проблему или вашу идею.');
+      ThemedAlert.alert('Пустое сообщение', 'Пожалуйста, опишите проблему или вашу идею.');
       return;
     }
 
@@ -63,7 +63,7 @@ export const FeedbackScreen: React.FC<FeedbackScreenProps> = ({
         client_time: clientTime,
       });
 
-      Alert.alert(
+      ThemedAlert.alert(
         'Спасибо!',
         'Сообщение передано разработчику. Мы обязательно изучим ваш отзыв и логи!',
         [
@@ -74,7 +74,7 @@ export const FeedbackScreen: React.FC<FeedbackScreenProps> = ({
         ]
       );
     } catch (err: any) {
-      Alert.alert(
+      ThemedAlert.alert(
         'Не удалось отправить',
         err?.message || 'Проверьте соединение с интернетом и попробуйте снова.'
       );

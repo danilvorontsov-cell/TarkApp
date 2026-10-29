@@ -32,6 +32,7 @@ interface DrawerMenuProps {
   onLogout?: () => void;
   onOpenPaywall?: () => void;
   hasPro?: boolean;
+  onOpenProfileSetup?: () => void;
 }
 
 interface MenuItemDef {
@@ -54,6 +55,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
   onLogout,
   onOpenPaywall,
   hasPro = false,
+  onOpenProfileSetup,
 }) => {
   const insets = useSafeAreaInsets();
   const animProgress = useRef(new Animated.Value(0)).current;
@@ -169,8 +171,12 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
         {/* Drawer Header (Vertical Gradient ['#66F6CF', '#42DCA3'] with rounded bottom corners) */}
         <TouchableOpacity
           onPress={() => {
-            onSelectTab('settings');
             onClose();
+            if (onOpenProfileSetup) {
+              onOpenProfileSetup();
+            } else {
+              onSelectTab('settings');
+            }
           }}
           activeOpacity={0.85}
           accessibilityLabel="Профиль ученика"
@@ -352,7 +358,11 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
               style={[styles.menuItem, styles.menuItemLogin]}
               onPress={() => {
                 onClose();
-                onSelectTab('settings');
+                if (onOpenProfileSetup) {
+                  onOpenProfileSetup();
+                } else {
+                  onSelectTab('settings');
+                }
               }}
               activeOpacity={0.7}
             >

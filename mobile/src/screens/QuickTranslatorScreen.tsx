@@ -6,7 +6,6 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Keyboard,
   Platform,
 } from 'react-native';
@@ -19,6 +18,7 @@ import { optimizePageImage } from '../services/imageOptimizer';
 import { StorageService } from '../services/storage';
 import { playTts, stopTts } from '../services/audioPlayer';
 import { VocabularyItem } from '../types';
+import { ThemedAlert } from '../components/ThemedAlert';
 
 interface QuickTranslatorScreenProps {
   onBackToStudy?: () => void;
@@ -58,7 +58,7 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
   const handleTranslate = async (textToTranslate?: string, imageBase64?: string) => {
     const query = (textToTranslate !== undefined ? textToTranslate : inputText).trim();
     if (!query && !imageBase64) {
-      Alert.alert('Введите текст', 'Пожалуйста, введите слово, фразу или сделайте снимок текста учебника.');
+      ThemedAlert.alert('Введите текст', 'Пожалуйста, введите слово, фразу или сделайте снимок текста учебника.');
       return;
     }
 
@@ -81,7 +81,7 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
         setInputText(resp.original_text);
       }
     } catch (err: any) {
-      Alert.alert(
+      ThemedAlert.alert(
         'Ошибка перевода',
         err.message || 'Не удалось выполнить перевод. Проверьте соединение с сервером.'
       );
@@ -117,7 +117,7 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
     try {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert(
+        ThemedAlert.alert(
           'Доступ к камере',
           'Разрешите приложению доступ к камере, чтобы фотографировать фрагменты учебника.'
         );
@@ -140,7 +140,7 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
         await handleTranslate(undefined, opt.base64);
       }
     } catch (err: any) {
-      Alert.alert('Ошибка камеры', err.message || 'Не удалось сделать фото.');
+      ThemedAlert.alert('Ошибка камеры', err.message || 'Не удалось сделать фото.');
     }
   };
 

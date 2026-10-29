@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   ScrollView,
   Modal,
-  Alert,
   TextInput,
   ActivityIndicator,
   Platform,
@@ -17,6 +16,7 @@ import * as Clipboard from 'expo-clipboard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { darkTheme, Theme } from '../theme/colors';
 import { requestInvoiceEmail } from '../services/api';
+import { ThemedAlert } from '../components/ThemedAlert';
 
 export type SubscriptionPlan = 'year' | 'semester' | 'month' | 'full_year';
 
@@ -60,7 +60,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
       setCopiedField(label);
       setTimeout(() => setCopiedField(null), 2000);
     } catch {
-      Alert.alert('Скопировано', text);
+      ThemedAlert.alert('Скопировано', text);
     }
   };
 
@@ -77,7 +77,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
         type: 'error',
         text: 'Пожалуйста, укажите корректный e-mail адрес (например, ivan.ivanov@mail.ee).',
       });
-      Alert.alert(
+      ThemedAlert.alert(
         'Некорректный e-mail',
         'Пожалуйста, укажите верный адрес электронной почты для отправки PDF-счёта.'
       );
@@ -94,7 +94,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
           type: 'success',
           text: res.message,
         });
-        Alert.alert(
+        ThemedAlert.alert(
           'Счёт отправлен! ✅',
           res.message,
           [
@@ -113,7 +113,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
           type: 'warning',
           text: res.message,
         });
-        Alert.alert(
+        ThemedAlert.alert(
           'Требуется настройка почты (SMTP / Resend)',
           res.message
         );
@@ -126,7 +126,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
         type: 'error',
         text: errMsg,
       });
-      Alert.alert('Ошибка отправки счёта', errMsg);
+      ThemedAlert.alert('Ошибка отправки счёта', errMsg);
     } finally {
       setIsSendingInvoice(false);
     }
