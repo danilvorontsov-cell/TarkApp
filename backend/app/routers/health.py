@@ -8,7 +8,7 @@ router = APIRouter(tags=["Health"])
 @router.get("/health")
 @router.get("/api/v1/health")
 async def health_check():
-    has_live_client = gemini_tutor_service._client is not None
+    has_live_client = gemini_tutor_service.client is not None
     return {
         "status": "healthy",
         "service": settings.APP_NAME,
