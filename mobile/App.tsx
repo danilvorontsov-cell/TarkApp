@@ -84,6 +84,23 @@ interface CapturedPageItem {
   mimeType?: string;
 }
 
+function renderFormattedExplanation(text?: string | null) {
+  if (!text) return null;
+  const parts = text.split(/(<\s*est(?:\s+[^>]*)?>.*?<\s*\/\s*est\s*>)/gi);
+  if (parts.length === 1) return text;
+  return parts.map((part, idx) => {
+    const match = part.match(/<\s*est(?:\s+[^>]*)?>(.*?)<\s*\/\s*est\s*>/i);
+    if (match) {
+      return (
+        <Text key={idx} style={{ color: '#5FEDC5', fontWeight: '700' }}>
+          {match[1]}
+        </Text>
+      );
+    }
+    return part;
+  });
+}
+
 function MainApp() {
   const insets = useSafeAreaInsets();
   const [currentTab, setCurrentTab] = useState<TabType>('study');
@@ -1397,7 +1414,7 @@ function MainApp() {
               </View>
             )}
             <Text style={styles.explanationText}>
-              {showAlternativeExplanation ? analysis.alternative_explanation : analysis.theme_explanation}
+              {renderFormattedExplanation(showAlternativeExplanation ? analysis.alternative_explanation : analysis.theme_explanation)}
             </Text>
 
             {/* Кнопка «Объяснить по-другому» в правом нижнем углу карточки */}
@@ -1584,7 +1601,7 @@ function MainApp() {
               {analysis.worked_example.note ? (
                 <View style={styles.naidisNoteBox}>
                   <Text style={styles.naidisNoteText}>
-                    💡 <Text style={{ fontWeight: '700' }}>Совет:</Text> {analysis.worked_example.note}
+                    💡 <Text style={{ fontWeight: '700' }}>Совет:</Text> {renderFormattedExplanation(analysis.worked_example.note)}
                   </Text>
                 </View>
               ) : null}
@@ -1629,7 +1646,7 @@ function MainApp() {
                 </TouchableOpacity>
               </View>
             )}
-            <Text style={styles.instructionText}>{analysis.how_to_answer}</Text>
+            <Text style={styles.instructionText}>{renderFormattedExplanation(analysis.how_to_answer)}</Text>
           </View>
 
           {/* Card 6: Собери ответ на эстонском (1–9 классы) / Формулировка для ответа (Гимназия 10–12) */}
@@ -1899,7 +1916,7 @@ function MainApp() {
 
                   <Text style={styles.historyItemTitle}>{item.task_title}</Text>
                   <Text style={styles.historyItemSnippet} numberOfLines={2}>
-                    {item.analysis.theme_explanation}
+                    {renderFormattedExplanation(item.analysis.theme_explanation)}
                   </Text>
 
                   <View style={styles.historyItemActions}>

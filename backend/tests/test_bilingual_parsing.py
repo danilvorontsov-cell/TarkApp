@@ -25,8 +25,37 @@ def test_parse_slash_in_parentheses():
     assert any('loodusõpetus' in s[0] and s[1] == ESTONIAN_VOICE for s in segments)
 
 def test_parse_standalone_latin_word():
-    segments = parse_bilingual_segments('Запиши результат — это и будет summa.')
-    assert any(s[0] == 'summa' and s[1] == ESTONIAN_VOICE for s in segments)
+    # Without <est> tags, bare Latin words stay with Russian multilingual voice without chopping
+    segments_no_tag = parse_bilingual_segments('Запиши результат — это и будет summa.')
+    assert len(segments_no_tag) == 1
+    assert segments_no_tag[0][1] == DEFAULT_VOICE
+
+    # With <est> tag, Estonian term is cleanly extracted for Estonian voice
+    segments_tagged = parse_bilingual_segments('Запиши результат — это и будет <est>summa</est>.')
+    assert any(s[0] == 'summa' and s[1] == ESTONIAN_VOICE for s in segments_tagged)
+
+
+def test_minecraft_and_est_tag_segmentation():
+    # "Давай построим в Minecraft <est>maja</est>"
+    # - "Давай построим в Minecraft " -> ru-RU-SvetlanaMultilingualNeural
+    # - "maja" -> et-EE-KertNeural
+    text = "Давай построим в Minecraft <est>maja</est>"
+    segments = parse_bilingual_segments(text)
+    assert len(segments) == 2
+    assert segments[0] == ("Давай построим в Minecraft", DEFAULT_VOICE)
+    assert segments[1] == ("maja", ESTONIAN_VOICE)
+    assert DEFAULT_VOICE == "ru-RU-SvetlanaMultilingualNeural"
+
+
+def test_multiple_english_brands_no_tags_stay_intact():
+    # Without <est> tags, text with multiple English terms (Minecraft, Roblox, YouTube) is not chopped
+    text = "Сегодня мы играем в Minecraft и Roblox, а потом смотрим гайд на YouTube."
+    segments = parse_bilingual_segments(text)
+    assert len(segments) == 1
+    assert segments[0][1] == DEFAULT_VOICE
+    assert "Minecraft" in segments[0][0]
+    assert "Roblox" in segments[0][0]
+    assert "YouTube" in segments[0][0]
 
 def test_russian_in_parentheses_stays_russian():
     segments = parse_bilingual_segments('Сложи два числа (первое и второе).')

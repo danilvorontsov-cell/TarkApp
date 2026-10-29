@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api/v1/voice", tags=["Voice TTS"])
     summary="Синтез речи (Edge-TTS с мгновенным кэшированием и поддержкой двуязычной склейки)",
     description=(
         "Синтезирует аудио на лету с кэшированием в памяти и дедупликацией in-flight запросов. "
-        "Поддерживает русский язык (ru-RU-SvetlanaNeural с автоматическим fallback) для подсказок, "
+        "Поддерживает русский язык (ru-RU-SvetlanaMultilingualNeural с автоматическим fallback) для подсказок, "
         "эстонский язык (et-EE-KertNeural / et-EE-AnuNeural) для терминов учебника, "
         "а также двуязычную склейку (bilingual=true) для блоков с эстонскими цитатами в кавычках. "
         "Для 7–12 классов длинная озвучка блокируется со статусом audio_disabled: true."

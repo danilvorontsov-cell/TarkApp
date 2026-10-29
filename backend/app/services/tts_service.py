@@ -8,20 +8,21 @@ import edge_tts
 logger = logging.getLogger(__name__)
 
 # Supported voice mappings
-# ru-RU-SvetlanaNeural: максимально стабильный, чистый и надежный русский голос (Edge-TTS не сбрасывает соединение)
+# ru-RU-SvetlanaMultilingualNeural: чистый русский голос с нативной поддержкой английских слов и терминов
 # et-EE-KertNeural: четкий мужской эстонский голос (+20% громкости)
 VOICE_MAP = {
-    "ru": "ru-RU-SvetlanaNeural",
+    "ru": "ru-RU-SvetlanaMultilingualNeural",
     "et": "et-EE-KertNeural",
 }
 
-DEFAULT_VOICE = "ru-RU-SvetlanaNeural"
+DEFAULT_VOICE = "ru-RU-SvetlanaMultilingualNeural"
 ESTONIAN_VOICE = "et-EE-KertNeural"
 
 # Карта резервных голосов для отказоустойчивости при сетевых сбоях Edge-TTS
 VOICE_FALLBACK_MAP = {
+    "ru-RU-SvetlanaMultilingualNeural": "ru-RU-SvetlanaNeural",
     "ru-RU-SvetlanaNeural": "ru-RU-DmitryNeural",
-    "ru-RU-DmitryNeural": "ru-RU-SvetlanaNeural",
+    "ru-RU-DmitryNeural": "ru-RU-SvetlanaMultilingualNeural",
     "et-EE-KertNeural": "et-EE-AnuNeural",
     "et-EE-AnuNeural": "et-EE-KertNeural",
 }
@@ -523,7 +524,21 @@ def normalize_text_for_speech(text: str, is_russian_context: bool = True) -> str
     if not is_russian_context:
         return text
 
-    # Защищаем чистые эстонские фразы в кавычках перед нормализацией
+    # Защищаем явные теги <est>...</est> и фразы в кавычках перед нормализацией
+    est_tags: List[str] = []
+
+    def mask_est_tag(match):
+        idx = len(est_tags)
+        est_tags.append(match.group(0))
+        return f"___EST_TAG_{idx}___"
+
+    masked_text = re.sub(
+        r'<\s*est(?:\s+[^>]*)?>.*?<\s*/\s*est\s*>',
+        mask_est_tag,
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
     est_quotes: List[str] = []
 
     def mask_est_quote(match):
@@ -535,7 +550,7 @@ def normalize_text_for_speech(text: str, is_russian_context: bool = True) -> str
             return f"___EST_QUOTE_{idx}___"
         return q
 
-    masked_text = re.sub(r'([«"“„][^»"”]+[»"”])', mask_est_quote, text)
+    masked_text = re.sub(r'([«"“„][^»"”]+[»"”])', mask_est_quote, masked_text)
     norm_text = normalize_russian_ordinals_with_dot(masked_text)
     norm_text = normalize_roman_numerals(norm_text)
     norm_text = normalize_math_expressions(norm_text)
@@ -543,17 +558,52 @@ def normalize_text_for_speech(text: str, is_russian_context: bool = True) -> str
     for idx, orig_q in enumerate(est_quotes):
         norm_text = norm_text.replace(f"___EST_QUOTE_{idx}___", orig_q)
 
+    for idx, orig_t in enumerate(est_tags):
+        norm_text = norm_text.replace(f"___EST_TAG_{idx}___", orig_t)
+
     return norm_text
+
+
+def _stitch_and_clean_segments(raw_segments: List[Tuple[str, str]], fallback_text: str) -> List[Tuple[str, str]]:
+    """Вспомогательная функция для склеивания и очистки смежных фрагментов одинакового голоса."""
+    segments: List[Tuple[str, str]] = []
+    for s_text, s_voice in raw_segments:
+        s_clean = s_text.strip()
+        if not s_clean:
+            continue
+
+        # Если в сегменте нет букв/цифр (только знаки препинания вроде точки или запятой)
+        if not re.search(r'\w', s_clean):
+            if segments and segments[-1][1] == DEFAULT_VOICE:
+                prev_text, prev_voice = segments[-1]
+                segments[-1] = (f"{prev_text}{s_clean}", prev_voice)
+            continue
+
+        if segments and segments[-1][1] == s_voice:
+            prev_text, prev_voice = segments[-1]
+            segments[-1] = (f"{prev_text} {s_clean}", prev_voice)
+        else:
+            segments.append((s_clean, s_voice))
+
+    if not segments:
+        segments.append((fallback_text.strip(), DEFAULT_VOICE))
+
+    return segments
 
 
 def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
     """
     Разбивает двуязычный текст на последовательные сегменты (текст, голос):
     - Предварительно нормализует римские цифры и математику в русском контексте.
-    - Эстонские фразы и слова в кавычках («...», "...", “...”, „...“) -> et-EE-KertNeural (+20% громкости).
-    - Эстонские слова и фразы в скобках ((...)) (напр. (loodusõpetus)) -> et-EE-KertNeural.
-    - Отдельные эстонские слова/термины на латинице (loodusõpetus, matemaatika) -> et-EE-KertNeural.
-    - Основной русский текст -> ru-RU-SvetlanaNeural.
+    - Сегменты внутри тегов <est>...</est> отправляются эстонскому диктору (et-EE-KertNeural / et-EE-AnuNeural),
+      предварительно очистив сам тег.
+    - Весь остальной текст (русский язык + свободная английская латиница вроде Minecraft/Roblox)
+      озвучивается русским мультиязычным голосом (ru-RU-SvetlanaMultilingualNeural).
+    - Если теги <est> в тексте отсутствуют, текст не дробится по случайным латинским буквам — его
+      полностью озвучивает русский голос.
+    - Для обратной совместимости с историческими записями фразы в кавычках («...», "...", “...”, „...“)
+      или скобках ((...)) поддерживаются при отсутствии тегов <est>.
+    - Чистый эстонский текст (без кириллических букв) полностью озвучивается эстонским диктором.
     """
     if not text or not text.strip():
         return [(text or "", DEFAULT_VOICE)]
@@ -561,13 +611,51 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
     # Предварительная нормализация римских цифр и математических переменных в русском контексте
     text = normalize_text_for_speech(text, is_russian_context=True)
 
-    est_char_pattern = re.compile(r'[A-Za-zõäöüšžÕÄÖÜŠŽ]')
-    cyr_char_pattern = re.compile(r'[а-яА-ЯёЁ]')
+    est_tag_pattern = re.compile(r'<\s*est(?:\s+[^>]*)?>(.*?)<\s*/\s*est\s*>', re.IGNORECASE | re.DOTALL)
+
+    # 1. Если присутствуют теги <est>...</est>, выполняем разделение по тегам
+    if est_tag_pattern.search(text):
+        raw_segments: List[Tuple[str, str]] = []
+        last_idx = 0
+
+        for match in est_tag_pattern.finditer(text):
+            start, end = match.span()
+            if start > last_idx:
+                prefix = text[last_idx:start]
+                if prefix:
+                    raw_segments.append((prefix, DEFAULT_VOICE))
+
+            inner = match.group(1).strip()
+            clean_est = normalize_text_for_estonian_tts(inner)
+            if clean_est:
+                raw_segments.append((clean_est, ESTONIAN_VOICE))
+
+            last_idx = end
+
+        if last_idx < len(text):
+            suffix = text[last_idx:]
+            if suffix:
+                raw_segments.append((suffix, DEFAULT_VOICE))
+
+        return _stitch_and_clean_segments(raw_segments, text)
+
+    # 2. Если тегов <est> нет:
+    # 2a. Чистый эстонский текст (без единой буквы кириллицы)
+    if not re.search(r'[а-яА-ЯёЁ]', text):
+        clean_est = normalize_text_for_estonian_tts(text.strip())
+        return [(clean_est or text.strip(), ESTONIAN_VOICE)]
+
+    # 2b. Текст содержит кириллицу без тегов <est>.
+    # Проверяем наличие фраз в кавычках («...», "...", “...”, „...“) или скобках ((...)) для обратной совместимости.
+    # ВНИМАНИЕ: свободные латинские слова (Minecraft, Roblox, Lego, YouTube) без кавычек НЕ захватываются
+    # и остаются частью русского текста для ru-RU-SvetlanaMultilingualNeural.
     token_pattern = re.compile(
         r'([«"“„][^»"”]+[»"”])|'  # фраза в кавычках
-        r'(\([^)]+\))|'            # фраза в скобках
-        r'((?:[A-Za-zõäöüšžÕÄÖÜŠŽ][A-Za-zõäöüšžÕÄÖÜŠŽ0-9\-\']*|\b\d+-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)(?:\s+(?:[A-Za-zõäöüšžÕÄÖÜŠŽ][A-Za-zõäöüšžÕÄÖÜŠŽ0-9\-\']*|\b\d+-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b))*)'  # латинские/эстонские слова и падежи числительных
+        r'(\([^)]+\))'             # фраза в скобках
     )
+
+    est_char_pattern = re.compile(r'[A-Za-zõäöüšžÕÄÖÜŠŽ]')
+    cyr_char_pattern = re.compile(r'[а-яА-ЯёЁ]')
 
     raw_segments: List[Tuple[str, str]] = []
     last_idx = 0
@@ -591,8 +679,24 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
         if est_char_pattern.search(inner):
             if is_wrapped and cyr_char_pattern.search(inner) and len(inner) < len(text):
                 # Смешанный русско-эстонский фрагмент внутри кавычек/скобок (напр. "(по-эстонски: liidetav)")
-                # Рекурсивно разделяем, чтобы русские слова читались русским голосом, а эстонские — эстонским
-                raw_segments.extend(parse_bilingual_segments(inner))
+                # Выделяем латинские/эстонские слова внутри этих скобок/кавычек
+                inner_token_pattern = re.compile(
+                    r'((?:[A-Za-zõäöüšžÕÄÖÜŠŽ][A-Za-zõäöüšžÕÄÖÜŠŽ0-9\-\']*|\b\d+-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)(?:\s+(?:[A-Za-zõäöüšžÕÄÖÜŠŽ][A-Za-zõäöüšžÕÄÖÜŠŽ0-9\-\']*|\b\d+-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b))*)'
+                )
+                inner_last_idx = 0
+                for in_match in inner_token_pattern.finditer(inner):
+                    in_start, in_end = in_match.span()
+                    if in_start > inner_last_idx:
+                        in_prefix = inner[inner_last_idx:in_start]
+                        raw_segments.append((in_prefix, DEFAULT_VOICE))
+                    in_matched = in_match.group(0).strip()
+                    clean_est = normalize_text_for_estonian_tts(in_matched)
+                    if clean_est:
+                        raw_segments.append((clean_est, ESTONIAN_VOICE))
+                    inner_last_idx = in_end
+                if inner_last_idx < len(inner):
+                    in_suffix = inner[inner_last_idx:]
+                    raw_segments.append((in_suffix, DEFAULT_VOICE))
             else:
                 clean_est = normalize_text_for_estonian_tts(inner)
                 if clean_est:
@@ -606,30 +710,7 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
         suffix = text[last_idx:]
         raw_segments.append((suffix, DEFAULT_VOICE))
 
-    # Склеиваем и очищаем пустые сегменты и знаки препинания
-    segments: List[Tuple[str, str]] = []
-    for s_text, s_voice in raw_segments:
-        s_clean = s_text.strip()
-        if not s_clean:
-            continue
-
-        # Если в сегменте нет букв/цифр (только знаки препинания вроде точки или запятой)
-        if not re.search(r'\w', s_clean):
-            if segments and segments[-1][1] == DEFAULT_VOICE:
-                prev_text, prev_voice = segments[-1]
-                segments[-1] = (f"{prev_text}{s_clean}", prev_voice)
-            continue
-
-        if segments and segments[-1][1] == s_voice:
-            prev_text, prev_voice = segments[-1]
-            segments[-1] = (f"{prev_text} {s_clean}", prev_voice)
-        else:
-            segments.append((s_clean, s_voice))
-
-    if not segments:
-        segments.append((text.strip(), DEFAULT_VOICE))
-
-    return segments
+    return _stitch_and_clean_segments(raw_segments, text)
 
 
 async def synthesize_segment(text: str, voice: str, delay: float = 0.0) -> bytes:
