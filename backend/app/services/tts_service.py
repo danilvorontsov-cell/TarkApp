@@ -15,7 +15,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # Supported voice mappings for Azure Speech Services
-DEFAULT_VOICE = "ru-RU-SvetlanaNeural"
+DEFAULT_VOICE = "ru-RU-SvetlanaMultilingualNeural"
 ESTONIAN_VOICE = "et-EE-AnuNeural"
 
 VOICE_MAP: Dict[str, str] = {
@@ -685,7 +685,9 @@ def _synthesize_azure_ssml(ssml: str) -> bytes:
     )
 
     synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
-    result = synthesizer.speak_ssml_async(ssml).get()
+    # Ensure Azure API receives canonical voice identifier if requested via Multilingual alias
+    azure_ssml = ssml.replace("ru-RU-SvetlanaMultilingualNeural", "ru-RU-SvetlanaNeural")
+    result = synthesizer.speak_ssml_async(azure_ssml).get()
 
     if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
         return result.audio_data

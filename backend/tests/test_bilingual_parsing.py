@@ -41,14 +41,14 @@ def test_parse_standalone_latin_word():
 
 def test_minecraft_and_est_tag_segmentation():
     # "Давай построим в Minecraft <est>maja</est>"
-    # - "Давай построим в Minecraft" -> ru-RU-SvetlanaNeural
+    # - "Давай построим в Minecraft" -> ru-RU-SvetlanaMultilingualNeural
     # - "maja" -> et-EE-AnuNeural
     text = "Давай построим в Minecraft <est>maja</est>"
     segments = parse_bilingual_segments(text)
     assert len(segments) == 2
     assert segments[0] == ("Давай построим в Minecraft", DEFAULT_VOICE)
     assert segments[1] == ("maja", ESTONIAN_VOICE)
-    assert DEFAULT_VOICE == "ru-RU-SvetlanaNeural"
+    assert DEFAULT_VOICE == "ru-RU-SvetlanaMultilingualNeural"
 
 def test_multiple_english_brands_no_tags_stay_intact():
     # Without <est> tags, text with multiple English terms (Minecraft, Roblox, YouTube, W/A/S/D) is not chopped
