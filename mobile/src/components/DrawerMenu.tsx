@@ -33,6 +33,7 @@ interface DrawerMenuProps {
   onOpenPaywall?: () => void;
   hasPro?: boolean;
   onOpenProfileSetup?: () => void;
+  onOpenDemoLesson?: () => void;
 }
 
 interface MenuItemDef {
@@ -56,6 +57,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
   onOpenPaywall,
   hasPro = false,
   onOpenProfileSetup,
+  onOpenDemoLesson,
 }) => {
   const insets = useSafeAreaInsets();
   const animProgress = useRef(new Animated.Value(0)).current;
@@ -257,6 +259,31 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
               </TouchableOpacity>
             );
           })}
+
+          {onOpenDemoLesson ? (
+            <TouchableOpacity
+              style={[
+                styles.menuItem,
+                {
+                  backgroundColor: 'rgba(95, 237, 197, 0.08)',
+                  borderColor: 'rgba(95, 237, 197, 0.25)',
+                  borderWidth: 1,
+                  borderRadius: 12,
+                  marginTop: 6,
+                },
+              ]}
+              onPress={() => {
+                onClose();
+                onOpenDemoLesson();
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.menuItemIcon}>✨</Text>
+              <Text style={[styles.menuItemText, { color: '#5FEDC5', fontWeight: '700' }]}>
+                Пример: Кубики (3 + 2)
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {/* PRO Subscription Banner */}

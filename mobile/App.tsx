@@ -136,6 +136,8 @@ const SAMPLE_MATH_LESSON: PageAnalysisResponse = {
   is_acceptable: true,
 };
 
+const DEFAULT_MATH_VISUAL: VisualData = SAMPLE_MATH_LESSON.visual!;
+
 interface SessionLesson {
   id: string;
   title: string;
@@ -1343,6 +1345,36 @@ function MainApp() {
       {/* Analysis Results View - Nordic Clean Modular Cards */}
       {analysis && (
         <View style={styles.analysisModularContainer}>
+          {/* Top Control Bar: "← К началу (Новое фото)" and "✨ Пример 3 + 2 = 5" */}
+          <View style={styles.analysisTopControlBar}>
+            <TouchableOpacity
+              style={styles.analysisBackToStartBtn}
+              onPress={() => {
+                AudioQueueManager.stop();
+                setAnalysis(null);
+                setCapturedImages([]);
+                setCapturedImageUri(null);
+              }}
+              activeOpacity={0.7}
+              accessibilityLabel="Вернуться к началу и новому фото"
+            >
+              <Text style={styles.analysisBackToStartBtnText}>← Новое фото</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.analysisDemoSwitchBtn}
+              onPress={() => {
+                AudioQueueManager.stop();
+                setAnalysis(SAMPLE_MATH_LESSON);
+                setShowAlternativeExplanation(false);
+              }}
+              activeOpacity={0.7}
+              accessibilityLabel="Показать пример со сложением и перестановкой кубиков"
+            >
+              <Text style={styles.analysisDemoSwitchBtnText}>✨ Пример: 3 + 2 = 5</Text>
+            </TouchableOpacity>
+          </View>
+
           {/* Banner when image was unreadable / blurry (is_acceptable === false) */}
           {analysis.is_acceptable === false && (
             <View style={styles.errorRetryCard}>
@@ -1390,8 +1422,11 @@ function MainApp() {
               <Text style={styles.voiceScriptText}>{cleanEstTags(analysis.voice_prompt_script)}</Text>
 
               {/* Автоматическая наглядная визуализация прямо между текстом подсказки и кнопками действий */}
-              {Boolean(analysis.visual) && profile.grade <= 6 && (
-                <TaskVisualizer visual={analysis.visual} grade={profile.grade} />
+              {profile.grade <= 6 && (
+                <TaskVisualizer
+                  visual={analysis.visual || DEFAULT_MATH_VISUAL}
+                  grade={profile.grade}
+                />
               )}
 
               <TouchableOpacity
@@ -2526,6 +2561,12 @@ function MainApp() {
         onOpenPaywall={() => setIsPaywallVisible(true)}
         hasPro={Boolean(licenseStatus?.has_key)}
         onOpenProfileSetup={() => setIsProfileSetupModalVisible(true)}
+        onOpenDemoLesson={() => {
+          AudioQueueManager.stop();
+          setAnalysis(SAMPLE_MATH_LESSON);
+          setShowAlternativeExplanation(false);
+          switchTab('study');
+        }}
       />
 
       {/* Attractive Centered Avatar Picker Modal */}
@@ -3403,6 +3444,39 @@ const styles = StyleSheet.create({
   // Analysis Modular Cards
   analysisModularContainer: {
     marginTop: 2,
+  },
+  analysisTopControlBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    gap: 8,
+  },
+  analysisBackToStartBtn: {
+    backgroundColor: '#1E293B',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  analysisBackToStartBtnText: {
+    color: '#94A3B8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  analysisDemoSwitchBtn: {
+    backgroundColor: 'rgba(95, 237, 197, 0.1)',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(95, 237, 197, 0.4)',
+  },
+  analysisDemoSwitchBtnText: {
+    color: '#5FEDC5',
+    fontSize: 13,
+    fontWeight: '800',
   },
   modularCard: {
     backgroundColor: darkTheme.cardBackground,
