@@ -36,13 +36,6 @@ def is_sentence_frame_enabled(grade_or_tier: Union[int, AgeTier]) -> bool:
     return grade_or_tier != AgeTier.GYMNASIUM
 
 
-def is_visual_template_enabled(grade_or_tier: Union[int, AgeTier]) -> bool:
-    """Returns True if interactive visual templates (grades 1–6) are permitted."""
-    if isinstance(grade_or_tier, int):
-        return 1 <= grade_or_tier <= 6
-    return grade_or_tier in (AgeTier.PRIMARY, AgeTier.MIDDLE)
-
-
 # Обратная совместимость для старых клиентов
 class ThemeInterest(str, Enum):
     MINECRAFT = "minecraft"
@@ -169,92 +162,6 @@ class WorkedExample(BaseModel):
     )
 
 
-# --- Интерактивные визуальные шаблоны (1–6 классы) ---
-
-class MathBlockGroup(BaseModel):
-    label: str = Field(..., description="Название группы (напр. 'Красные кубики' или 'Liidetav 1')")
-    count: int = Field(..., ge=1, le=50, description="Количество элементов в группе")
-    color: Optional[str] = Field(default=None, description="Цвет плашки (HEX, напр. '#3B82F6')")
-    item_label: Optional[str] = Field(default=None, description="Подпись единичного предмета (яблоко, кубик)")
-    symbol: Optional[str] = Field(default=None, description="Эмодзи или символ (🍎, 🟦, ⭐️)")
-
-
-class MathBlocksVisual(BaseModel):
-    type: Literal["math_blocks"] = "math_blocks"
-    title: Optional[str] = Field(default=None, description="Заголовок визуализации (напр. 'Счёт группами')")
-    instruction: Optional[str] = Field(default=None, description="Инструкция ученику (напр. 'Нажимай на кубики, чтобы посчитать их')")
-    groups: List[MathBlockGroup] = Field(..., description="Группы счётных предметов")
-    operation: Optional[str] = Field(default="+", description="Математическая операция (+, -, *, /, =)")
-    target_count: Optional[int] = Field(default=None, description="Ожидаемая сумма/результат")
-
-
-class MatchPairItem(BaseModel):
-    id: str = Field(..., description="Уникальный идентификатор пары")
-    left: str = Field(..., description="Левый элемент (термин на эстонском или понятие)")
-    right: str = Field(..., description="Правый элемент (русский перевод или соответствие)")
-    hint: Optional[str] = Field(default=None, description="Краткая подсказка при затруднении")
-
-
-class MatchPairsVisual(BaseModel):
-    type: Literal["match_pairs"] = "match_pairs"
-    title: Optional[str] = Field(default=None, description="Заголовок (напр. 'Соедини пары терминов')")
-    instruction: Optional[str] = Field(default=None, description="Инструкция для ученика")
-    pairs: List[MatchPairItem] = Field(..., min_length=2, max_length=8, description="Список пар для сопоставления")
-
-
-class StepSequenceItem(BaseModel):
-    step_number: int = Field(..., description="Порядковый номер шага (1, 2, 3...)")
-    title: str = Field(..., description="Краткое название шага")
-    description: Optional[str] = Field(default=None, description="Подробное описание или действие")
-    icon_or_badge: Optional[str] = Field(default=None, description="Эмодзи или иконка шага")
-    is_highlighted: Optional[bool] = Field(default=False, description="Выделен ли шаг как ключевой")
-
-
-class StepSequenceVisual(BaseModel):
-    type: Literal["step_sequence"] = "step_sequence"
-    title: Optional[str] = Field(default=None, description="Заголовок цепочки (напр. 'Этапы решения' или 'Жизненный цикл')")
-    instruction: Optional[str] = Field(default=None, description="Инструкция ученику")
-    steps: List[StepSequenceItem] = Field(..., min_length=2, max_length=10, description="Последовательные шаги алгоритма или процесса")
-
-
-class BalanceScaleItem(BaseModel):
-    label: str = Field(..., description="Подпись предмета")
-    count: int = Field(default=1, ge=1, description="Количество предметов")
-    color: Optional[str] = Field(default=None, description="Цвет плашки")
-
-
-class BalanceScaleSide(BaseModel):
-    label: str = Field(..., description="Подпись чаши (напр. 'Левая чаша: 5 + 3' или 'Kast A')")
-    value: Union[int, float, str] = Field(..., description="Числовое значение или выражение для сравнения")
-    items: Optional[List[BalanceScaleItem]] = Field(default=None, description="Визуальные предметы на чаше")
-
-
-class BalanceScaleVisual(BaseModel):
-    type: Literal["balance_scale"] = "balance_scale"
-    title: Optional[str] = Field(default=None, description="Заголовок (напр. 'Сравнение величин на весах')")
-    instruction: Optional[str] = Field(default=None, description="Инструкция ученику")
-    left_side: BalanceScaleSide = Field(..., description="Левая чаша весов")
-    right_side: BalanceScaleSide = Field(..., description="Правая чаша весов")
-    comparison: Literal["<", ">", "=", "?"] = Field(default="?", description="Соотношение весов (<, >, = или ? для интерактива)")
-    hint: Optional[str] = Field(default=None, description="Подсказка к сравнению")
-
-
-class UniversalCardVisual(BaseModel):
-    type: Literal["universal_card"] = "universal_card"
-    title: str = Field(..., description="Заголовок фокусной карточки")
-    icon: str = Field(default="💡", description="Крупная иконка или эмодзи")
-    badge: Optional[str] = Field(default=None, description="Бейдж-категория (напр. 'Правило', 'Лайфхак', 'Важно')")
-    highlight_text: str = Field(..., description="Ключевое правило, формула или формула-акцент")
-    explanation: Optional[str] = Field(default=None, description="Краткое пояснение правила")
-    accent_color: Optional[str] = Field(default=None, description="Цветовой акцент карточки")
-
-
-VisualData = Annotated[
-    Union[MathBlocksVisual, MatchPairsVisual, StepSequenceVisual, BalanceScaleVisual, UniversalCardVisual],
-    Field(discriminator="type"),
-]
-
-
 class PageAnalysisResponse(BaseModel):
     task_title: str = Field(
         ...,
@@ -275,10 +182,6 @@ class PageAnalysisResponse(BaseModel):
     worked_example: Optional[WorkedExample] = Field(
         default=None,
         description="Наглядный пример решения (Näidis)"
-    )
-    visual: Optional[VisualData] = Field(
-        default=None,
-        description="Интерактивный визуальный шаблон (UI-primitive) для 1–6 классов (строго null для 7–12 классов)"
     )
     how_to_answer: str = Field(
         ...,

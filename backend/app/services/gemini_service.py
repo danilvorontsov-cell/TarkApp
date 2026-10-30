@@ -11,12 +11,8 @@ from app.config import settings
 from app.models.page_analysis import (
     AgeTier,
     AGE_TIER_DEFAULT_INTERESTS,
-    MathBlockGroup,
-    MathBlocksVisual,
     MoreExamplesResponse,
     PageAnalysisResponse,
-    StepSequenceItem,
-    StepSequenceVisual,
     UserProfile,
     VocabularyItem,
     WorkedExample,
@@ -119,9 +115,6 @@ class GeminiTutorService:
                     raw_text = response.text or ""
                     result = self._parse_json_response(raw_text)
 
-                # Strict rule: for grades 7+, visual templates and animations are completely disabled
-                if profile and profile.grade >= 7:
-                    result.visual = None
                 return result
 
             except APIError as e:
@@ -301,30 +294,8 @@ class GeminiTutorService:
                 ),
                 answer_template="Esimene liidetav on [liidetav], teine liidetav on [liidetav], summa on [summa].",
                 voice_prompt_script=(
-                    f"Привет, {nickname}! Посмотри на кубики прямо под подсказкой: они меняются местами, а сумма остается прежней — 5! Сложи числа и скажи: summa on viis!"
+                    f"Привет, {nickname}! Сложи числа и скажи: summa on viis!"
                 ),
-                visual=MathBlocksVisual(
-                    title="Переместительный закон (Liitmise vahetuvusseadus)",
-                    instruction="Смотри, как слагаемые меняются местами: 3 + 2 = 2 + 3 = 5",
-                    groups=[
-                        MathBlockGroup(
-                            label="Esimene liidetav (3)",
-                            count=3,
-                            color="#3B82F6",
-                            item_label="синий кубик",
-                            symbol="🟦"
-                        ),
-                        MathBlockGroup(
-                            label="Teine liidetav (2)",
-                            count=2,
-                            color="#10B981",
-                            item_label="зеленый кубик",
-                            symbol="🟩"
-                        ),
-                    ],
-                    operation="+",
-                    target_count=5,
-                )
             )
 
         # 4-6 классы (Среднее звено I - природоведение / биология)
@@ -390,34 +361,9 @@ class GeminiTutorService:
                     "Главное запомни три вещи на входе: свет, вода и газ, и две на выходе: сахар и кислород. "
                     "Потренируй фразу по шаблону!"
                 ),
-                visual=StepSequenceVisual(
-                    title="Этапы фотосинтеза (Fotosünteesi etapid)",
-                    instruction="Изучи пошаговый порядок природного процесса",
-                    steps=[
-                        StepSequenceItem(
-                            step_number=1,
-                            title="Valgusenergia neeldumine",
-                            description="Хлоропласты листа поглощают солнечную энергию",
-                            icon_or_badge="☀️",
-                            is_highlighted=True
-                        ),
-                        StepSequenceItem(
-                            step_number=2,
-                            title="Vee ja süsihappegaasi omastamine",
-                            description="Корни поглощают воду, а устьица листьев — углекислый газ",
-                            icon_or_badge="💧"
-                        ),
-                        StepSequenceItem(
-                            step_number=3,
-                            title="Glükoosi ja hapniku teke",
-                            description="Образуется питательная глюкоза и выделяется кислород",
-                            icon_or_badge="🌿"
-                        ),
-                    ]
-                )
             )
 
-        # 7-9 классы (Старшее звено - физика / химия / биология, строгий стиль, visual=None)
+        # 7-9 классы (Старшее звено - физика / химия / биология, строгий стиль)
         elif tier == AgeTier.HIGH:
             return PageAnalysisResponse(
                 task_title="Fotosüntees ja rakuhingamine (Фотосинтез и клеточное дыхание)",
@@ -467,8 +413,7 @@ class GeminiTutorService:
                     "3. Сформулируй аргументированный вывод научным стилем."
                 ),
                 answer_template="Fotosünteesi käigus muundatakse [valgusenergia] keemiliseks energiaks, mille tulemusena tekib [glükoos] ja eraldub [hapnik].",
-                voice_prompt_script="",
-                visual=None
+                voice_prompt_script=""
             )
 
         # 10-12 классы (Гимназия - аналитическое эссе / обществознание / физика)
