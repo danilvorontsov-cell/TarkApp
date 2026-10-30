@@ -1421,10 +1421,10 @@ function MainApp() {
               </View>
               <Text style={styles.voiceScriptText}>{cleanEstTags(analysis.voice_prompt_script)}</Text>
 
-              {/* Автоматическая наглядная визуализация прямо между текстом подсказки и кнопками действий */}
-              {profile.grade <= 6 && (
+              {/* Автоматическая наглядная визуализация прямо между текстом подсказки и кнопками действий (когда есть визуальное объяснение) */}
+              {profile.grade <= 6 && Boolean(analysis.visual) && (
                 <TaskVisualizer
-                  visual={analysis.visual || DEFAULT_MATH_VISUAL}
+                  visual={analysis.visual}
                   grade={profile.grade}
                 />
               )}
