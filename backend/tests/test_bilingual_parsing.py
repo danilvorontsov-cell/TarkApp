@@ -2,6 +2,7 @@ import pytest
 from app.services.tts_service import (
     parse_bilingual_segments,
     build_ssml,
+    clean_text_for_speech,
     DEFAULT_VOICE,
     ESTONIAN_VOICE,
 )
@@ -122,16 +123,21 @@ def test_build_ssml_with_est_tag():
     ssml = build_ssml(text)
     assert '<speak version="1.0"' in ssml
     assert 'xml:lang="ru-RU"' in ssml
-    assert f'<voice name="{DEFAULT_VOICE}">Привет! Запомни слово</voice>' in ssml
-    assert f'<voice name="{ESTONIAN_VOICE}">klaviatuur</voice>' in ssml
-    assert f'<voice name="{DEFAULT_VOICE}">и повтори</voice>' in ssml
+    assert '<prosody rate="-8%">' in ssml
+    assert f'<voice name="{DEFAULT_VOICE}">' in ssml
+    assert 'Привет! <break time="500ms" /> Запомни слово' in ssml
+    assert f'<voice name="{ESTONIAN_VOICE}">' in ssml
+    assert 'klaviatuur' in ssml
+    assert 'и повтори. <break time="500ms" />' in ssml
 
 
 def test_build_ssml_pure_estonian():
     text = "Tere tulemast kooli!"
     ssml = build_ssml(text, voice=ESTONIAN_VOICE)
     assert 'xml:lang="et-EE"' in ssml
-    assert f'<voice name="{ESTONIAN_VOICE}">Tere tulemast kooli!</voice>' in ssml
+    assert '<prosody rate="-8%">' in ssml
+    assert f'<voice name="{ESTONIAN_VOICE}">' in ssml
+    assert 'Tere tulemast kooli! <break time="500ms" />' in ssml
 
 
 def test_build_ssml_escapes_special_characters():
@@ -139,3 +145,64 @@ def test_build_ssml_escapes_special_characters():
     ssml = build_ssml(text)
     assert "&amp;" in ssml
     assert "&lt;" not in ssml.split("<speak>")[0]
+
+
+def test_clean_text_for_speech_sanitization():
+    # Стрелки -> затем, <- -> ранее
+    raw = "Шаг 1 -> шаг 2 => шаг 3 ==> финал."
+    assert clean_text_for_speech(raw) == "Шаг 1 затем шаг 2 затем шаг 3 затем финал."
+
+    raw_back = "Действие 2 <-- действие 1, шаг <= ранее."
+    assert "ранее" in clean_text_for_speech(raw_back)
+
+    # Дедупликация -> затем
+    assert clean_text_for_speech("нажми -> затем кнопку") == "нажми затем кнопку"
+
+    # Математические знаки сравнения сохраняются
+    math_text = "5 > 3 и 2 < 7, а также 5 <= 10"
+    cleaned_math = clean_text_for_speech(math_text)
+    assert "5 > 3" in cleaned_math
+    assert "2 < 7" in cleaned_math
+    assert "меньше или равно" in cleaned_math
+
+    # Очистка Markdown
+    md_text = "**Жирный** и *курсив*, `код`, [ссылка](http://test.com) # Заголовок ~тильда~ _подчеркивание_ [список]"
+    cleaned_md = clean_text_for_speech(md_text)
+    assert "**" not in cleaned_md
+    assert "*" not in cleaned_md
+    assert "`" not in cleaned_md
+    assert "#" not in cleaned_md
+    assert "~" not in cleaned_md
+    assert "_" not in cleaned_md
+    assert "[" not in cleaned_md and "]" not in cleaned_md
+    assert "Жирный и курсив, код, ссылка Заголовок тильда подчеркивание список" in cleaned_md
+
+
+def test_phonetic_replacements_in_clean_text():
+    raw = "В игре Minecraft и Roblox нажми Enter, затем Space и Shift, посмотри в Google и на YouTube."
+    cleaned = clean_text_for_speech(raw)
+    assert "Майнкрафт" in cleaned
+    assert "Роблокс" in cleaned
+    assert "Энтер" in cleaned
+    assert "Пробел" in cleaned
+    assert "Шифт" in cleaned
+    assert "Гугл" in cleaned
+    assert "Ютуб" in cleaned
+
+    # Проверка, что эстонские теги защищены от русской фонетической замены
+    est_tag_text = "Игра <est>Minecraft</est> по-эстонски."
+    cleaned_est = clean_text_for_speech(est_tag_text)
+    assert "<est>Minecraft</est>" in cleaned_est
+
+
+def test_target_phrase_ssml_pipeline():
+    phrase = "В игре Minecraft нажми 5 > 3 -> затем клавишу <est>klaviatuur</est>."
+    ssml = build_ssml(phrase)
+    assert "Майнкрафт" in ssml
+    assert "5 &gt; 3" in ssml
+    assert "затем клавишу" in ssml
+    assert '<prosody rate="-8%">' in ssml
+    assert '<break time="500ms" />' in ssml
+    assert f'<voice name="{DEFAULT_VOICE}">' in ssml
+    assert f'<voice name="{ESTONIAN_VOICE}">' in ssml
+    assert "klaviatuur. <break time=\"500ms\" />" in ssml

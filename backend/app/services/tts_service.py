@@ -50,6 +50,124 @@ def _store_in_memory_cache(cache: Dict[str, bytes], key: str, data: bytes) -> No
     cache[key] = data
 
 
+# Фонетическая замена для диктора (словарик подмен популярных брендов/игр/клавиш)
+PHONETIC_REPLACEMENTS = [
+    (re.compile(r'\b(?:minecraft|майнкрафт)(?:[’\'-]?([а-яё]+))?\b', re.IGNORECASE), lambda m: 'Майнкрафт' + (m.group(1) or '') if m.group(1) else 'Майнкрафт'),
+    (re.compile(r'\b(?:roblox|роблокс)(?:[’\'-]?([а-яё]+))?\b', re.IGNORECASE), lambda m: 'Роблокс' + (m.group(1) or '') if m.group(1) else 'Роблокс'),
+    (re.compile(r'\b(?:youtube|ютуб)(?:[’\'-]?([а-яё]+))?\b', re.IGNORECASE), lambda m: 'Ютуб' + (m.group(1) or '') if m.group(1) else 'Ютуб'),
+    (re.compile(r'\b(?:google|гугл)(?:[’\'-]?([а-яё]+))?\b', re.IGNORECASE), lambda m: 'Гугл' + (m.group(1) or '') if m.group(1) else 'Гугл'),
+    (re.compile(r'\benter\b', re.IGNORECASE), 'Энтер'),
+    (re.compile(r'\bspace\b', re.IGNORECASE), 'Пробел'),
+    (re.compile(r'\bshift\b', re.IGNORECASE), 'Шифт'),
+]
+
+
+def clean_text_for_speech(text: str) -> str:
+    """
+    Санитизирует текст перед озвучкой:
+    1. Заменяет стрелки и псевдографику ('->', '-->', '=>', '==>') на ' затем ',
+       а '<-', '<--', '<==', '<=' (в стрелочном контексте) на ' ранее '.
+    2. Удаляет служебные символы разметки Markdown (**, *, #, _, ~, `, [, ]).
+    3. Сохраняет одиночные математические знаки '>' и '<' для сравнения чисел.
+    4. Применяет фонетическую замену англоязычных брендов и клавиш (Minecraft -> Майнкрафт).
+    Не затрагивает содержимое внутри тегов <est>...</est>.
+    """
+    if not text:
+        return ""
+
+    # 1. Защищаем теги <est>...</est> (без спецсимволов маркдауна в плейсхолдере)
+    est_tags: List[str] = []
+    def mask_est_tag(match):
+        idx = len(est_tags)
+        est_tags.append(match.group(0))
+        return f"ESTTAGPLACEHOLDER{idx}ESTTAG"
+
+    t = re.sub(
+        r'<\s*est(?:\s+[^>]*)?>.*?<\s*/\s*est\s*>',
+        mask_est_tag,
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    # 2. Markdown ссылки: [текст](url) -> текст
+    t = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', t)
+
+    # 3. Стрелки и псевдографика:
+    # 3.1. Правые стрелки -> затем
+    t = re.sub(r'(?:==>|-->|=>|->|→|⇒)', ' затем ', t)
+
+    # 3.2. Левые стрелки -> ранее
+    t = re.sub(r'(?:<==|<--|<-|←|⇐)', ' ранее ', t)
+
+    # 3.3. Стрелка <= vs математическое <= (меньше или равно):
+    # Если <= между числами или мат. переменными (x <= 5, 5 <= 10) - заменяем на "меньше или равно"
+    t = re.sub(r'(?<=[0-9a-zA-Zа-яА-ЯёЁ])\s*<=\s*(?=[0-9a-zA-Zа-яА-ЯёЁ])', ' меньше или равно ', t)
+    # Если >= между операндами:
+    t = re.sub(r'(?<=[0-9a-zA-Zа-яА-ЯёЁ])\s*>=\s*(?=[0-9a-zA-Zа-яА-ЯёЁ])', ' больше или равно ', t)
+    # Оставшиеся стрелочные <=
+    t = re.sub(r'<=\s*', ' ранее ', t)
+
+    # Дедупликация повторов "затем затем" / "ранее ранее"
+    t = re.sub(r'\b(затем|ранее)\s+\1\b', r'\1', t, flags=re.IGNORECASE)
+
+    # 4. Удаление служебных символов разметки Markdown:
+    # Заголовки (#, ##, ###)
+    t = re.sub(r'#+', ' ', t)
+    # Звездочки жирного/курсива (**) и одиночные (*)
+    t = re.sub(r'\*+', ' ', t)
+    # Нижние подчеркивания (__ и _)
+    t = re.sub(r'_+', ' ', t)
+    # Тильды (~) и обратные кавычки (`)
+    t = re.sub(r'[~`]+', ' ', t)
+    # Квадратные скобки ([ и ])
+    t = re.sub(r'[\[\]]', ' ', t)
+
+    # 5. Фонетическая замена для диктора (только в русском контексте)
+    for pattern, repl in PHONETIC_REPLACEMENTS:
+        if callable(repl):
+            t = pattern.sub(repl, t)
+        else:
+            t = pattern.sub(repl, t)
+
+    # 6. Восстанавливаем теги <est>...</est>
+    for idx, orig_t in enumerate(est_tags):
+        t = t.replace(f"ESTTAGPLACEHOLDER{idx}ESTTAG", orig_t)
+
+    # 7. Устраняем лишние пробелы перед знаками препинания после удаления разметки
+    t = re.sub(r'\s+([,!?;:])', r'\1', t)
+    return re.sub(r'[ \t]+', ' ', t).strip()
+
+
+def add_ssml_sentence_breaks(escaped_xml: str) -> str:
+    """
+    Добавляет <break time="500ms" /> после знаков препинания (. ! ? :)
+    в экранированный XML-текст.
+    - Исключает десятичные точки (3.14) и время (14:30).
+    - Исключает точку с запятой, чтобы не нарушать XML-сущности (&gt;, &lt;, &amp;).
+    """
+    masked = []
+    def mask_num_time(m):
+        idx = len(masked)
+        masked.append(m.group(0))
+        return f"NUMTIMEPLACEHOLDER{idx}NUMTIME"
+
+    t = re.sub(r'\b\d+[:.]\d+\b', mask_num_time, escaped_xml)
+
+    # Находим знаки конца предложения: точки, восклицательные, вопросительные, двоеточия
+    pattern = re.compile(r'([.!?\u2026]+|:(?!\d))(?!\s*<break\b)')
+    def repl(m):
+        return f'{m.group(1)} <break time="500ms" /> '
+
+    t = pattern.sub(repl, t)
+
+    for idx, orig in enumerate(masked):
+        t = t.replace(f"NUMTIMEPLACEHOLDER{idx}NUMTIME", orig)
+
+    # Предотвращаем дублирование тегов break
+    t = re.sub(r'(?:<break\s+time="[^"]+"\s*\/?>\s*){2,}', '<break time="500ms" /> ', t)
+    return re.sub(r'[ \t]+', ' ', t).strip()
+
+
 # Dictionary of Estonian ordinal numbers: (nominative, inessive, genitive)
 EST_ORDINALS: Dict[int, Tuple[str, str, str]] = {
     1: ("esimene", "esimeses", "esimese"),
@@ -620,11 +738,14 @@ def _escape_ssml(text: str) -> str:
 def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -> str:
     """
     Формирует SSML разметку для одного запроса к Azure Speech Services:
-    - Теги <est>...</est> и эстонские термины оборачиваются в <voice name="et-EE-AnuNeural">
-    - Русский и смешанный текст оборачивается в <voice name="ru-RU-SvetlanaMultilingualNeural">
+    - Санитизирует текст (очищает markdown, конвертирует стрелки, выполняет фонетическую замену брендов/клавиш).
+    - Оборачивает речь в <prosody rate="-8%"> для комфортного детского темпа.
+    - Добавляет естественные паузы <break time="500ms" /> между предложениями.
+    - Теги <est>...</est> и эстонские термины оборачиваются в <voice name="et-EE-AnuNeural">.
+    - Русский и смешанный текст оборачивается в <voice name="ru-RU-SvetlanaMultilingualNeural">.
     - Поддерживает моно-эстонский и моно-русский текст.
     """
-    clean_text = text.strip()
+    clean_text = clean_text_for_speech(text)
     if not clean_text:
         return ""
 
@@ -648,16 +769,35 @@ def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -
     root_lang = "et-EE" if is_all_est else "ru-RU"
 
     voice_blocks: List[str] = []
-    for seg_text, seg_voice in segments:
+    for i, (seg_text, seg_voice) in enumerate(segments):
         s_clean = seg_text.strip()
         if not s_clean:
             continue
         v_name = ESTONIAN_VOICE if ("et-EE" in seg_voice or seg_voice == "et") else DEFAULT_VOICE
         escaped_content = _escape_ssml(s_clean)
-        voice_blocks.append(f'  <voice name="{v_name}">{escaped_content}</voice>')
+        content_with_breaks = add_ssml_sentence_breaks(escaped_content)
+        # Если последний сегмент не имел знака препинания, но исходный текст заканчивался на [.!?:],
+        # добавляем точку и паузу в конец для естественного завершения речи
+        if i == len(segments) - 1 and re.search(r'[.!?:]\s*$', clean_text):
+            if not content_with_breaks.endswith('/>'):
+                content_with_breaks = f'{content_with_breaks}. <break time="500ms" />'
+
+        voice_blocks.append(
+            f'  <voice name="{v_name}">\n'
+            f'    <prosody rate="-8%">\n'
+            f'      {content_with_breaks}\n'
+            f'    </prosody>\n'
+            f'  </voice>'
+        )
 
     if not voice_blocks:
-        voice_blocks.append(f'  <voice name="{DEFAULT_VOICE}">{_escape_ssml(clean_text)}</voice>')
+        voice_blocks.append(
+            f'  <voice name="{DEFAULT_VOICE}">\n'
+            f'    <prosody rate="-8%">\n'
+            f'      {_escape_ssml(clean_text)}\n'
+            f'    </prosody>\n'
+            f'  </voice>'
+        )
 
     inner_xml = "\n".join(voice_blocks)
     return (
