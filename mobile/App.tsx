@@ -62,11 +62,13 @@ import { FeedbackScreen } from './src/screens/FeedbackScreen';
 import { PaywallScreen } from './src/screens/PaywallScreen';
 import { ThemedAlert, ThemedAlertContainer } from './src/components/ThemedAlert';
 import { ProfileSetupModal } from './src/components/ProfileSetupModal';
+import { TaskVisualizer } from './src/components/TaskVisualizer';
+import { DevVisualScreen } from './src/screens/DevVisualScreen';
 
 // Initialize Sentry stub/client once at entry
 initSentry();
 
-type TabType = 'study' | 'dictionary' | 'translator' | 'tests' | 'reading' | 'settings' | 'feedback';
+type TabType = 'study' | 'dictionary' | 'translator' | 'tests' | 'reading' | 'settings' | 'feedback' | 'visual_dev';
 type Tab2Mode = 'vocab' | 'history';
 
 interface SessionLesson {
@@ -1597,6 +1599,9 @@ function MainApp() {
             </View>
           ) : null}
 
+          {/* Card: Интерактивный визуальный шаблон (1–6 классы) */}
+          <TaskVisualizer visual={analysis.visual} grade={profile.grade} />
+
           {/* Card 5: Как решить задание самому */}
           <View style={styles.modularCard}>
             <Text style={styles.sectionHeader}>🎯 Как решить задание самому</Text>
@@ -2420,6 +2425,9 @@ function MainApp() {
               onBack={() => switchTab('study')}
               currentGrade={profile.grade}
             />
+          )}
+          {currentTab === 'visual_dev' && (
+            <DevVisualScreen onBack={() => switchTab('study')} />
           )}
         </ScrollView>
       </View>

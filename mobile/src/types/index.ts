@@ -7,6 +7,9 @@ export {
   getTierPolicy,
 } from '../services/gradePolicy';
 import { SchoolTier } from '../services/gradePolicy';
+import { VisualData } from './visual';
+
+export * from './visual';
 
 export interface UserProfile {
   grade: number; // 1 - 12
@@ -35,6 +38,7 @@ export interface PageAnalysisResponse {
   alternative_explanation?: string;
   vocabulary: VocabularyItem[];
   worked_example?: WorkedExample;
+  visual?: VisualData | null;
   how_to_answer: string;
   answer_template: string;
   voice_prompt_script: string;

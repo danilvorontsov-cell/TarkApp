@@ -11,8 +11,12 @@ from app.config import settings
 from app.models.page_analysis import (
     AgeTier,
     AGE_TIER_DEFAULT_INTERESTS,
+    MathBlockGroup,
+    MathBlocksVisual,
     MoreExamplesResponse,
     PageAnalysisResponse,
+    StepSequenceItem,
+    StepSequenceVisual,
     UserProfile,
     VocabularyItem,
     WorkedExample,
@@ -109,11 +113,16 @@ class GeminiTutorService:
 
                 # Check if response.parsed was populated by the SDK
                 if hasattr(response, "parsed") and isinstance(response.parsed, PageAnalysisResponse):
-                    return response.parsed
+                    result = response.parsed
+                else:
+                    # Otherwise parse response.text
+                    raw_text = response.text or ""
+                    result = self._parse_json_response(raw_text)
 
-                # Otherwise parse response.text
-                raw_text = response.text or ""
-                return self._parse_json_response(raw_text)
+                # Strict rule: for grades 7+, visual templates and animations are completely disabled
+                if profile and profile.grade >= 7:
+                    result.visual = None
+                return result
 
             except APIError as e:
                 logger.error(f"Gemini API error (attempt {attempt + 1}): {e}", exc_info=True)
@@ -294,11 +303,33 @@ class GeminiTutorService:
                 voice_prompt_script=(
                     f"Привет, {nickname}! Не бойся задания. Мы разберем числа через {chosen_interest}. "
                     "Сложи числа и скажи: summa on, и назови свой ответ!"
+                ),
+                visual=MathBlocksVisual(
+                    title="Сложение слагаемых (Liidetavad)",
+                    instruction="Нажимай на кубики, чтобы наглядно сложить группы",
+                    groups=[
+                        MathBlockGroup(
+                            label="Esimene liidetav (9)",
+                            count=9,
+                            color="#3B82F6",
+                            item_label="кубик",
+                            symbol="🟦"
+                        ),
+                        MathBlockGroup(
+                            label="Teine liidetav (7)",
+                            count=7,
+                            color="#10B981",
+                            item_label="кубик",
+                            symbol="🟩"
+                        ),
+                    ],
+                    operation="+",
+                    target_count=16,
                 )
             )
 
-        # 4-9 классы (Среднее и старшее звено - природоведение / биология / физика)
-        elif tier in (AgeTier.MIDDLE, AgeTier.HIGH):
+        # 4-6 классы (Среднее звено I - природоведение / биология)
+        elif tier == AgeTier.MIDDLE:
             return PageAnalysisResponse(
                 task_title="Fotosüntees ja taime toitumine (Фотосинтез и питание растений)",
                 theme_explanation=(
@@ -359,7 +390,86 @@ class GeminiTutorService:
                     f"Привет, {nickname}! Это параграф о фотосинтезе — частая тема на контрольной (kontrolltöö). "
                     "Главное запомни три вещи на входе: свет, вода и газ, и две на выходе: сахар и кислород. "
                     "Потренируй фразу по шаблону!"
+                ),
+                visual=StepSequenceVisual(
+                    title="Этапы фотосинтеза (Fotosünteesi etapid)",
+                    instruction="Изучи пошаговый порядок природного процесса",
+                    steps=[
+                        StepSequenceItem(
+                            step_number=1,
+                            title="Valgusenergia neeldumine",
+                            description="Хлоропласты листа поглощают солнечную энергию",
+                            icon_or_badge="☀️",
+                            is_highlighted=True
+                        ),
+                        StepSequenceItem(
+                            step_number=2,
+                            title="Vee ja süsihappegaasi omastamine",
+                            description="Корни поглощают воду, а устьица листьев — углекислый газ",
+                            icon_or_badge="💧"
+                        ),
+                        StepSequenceItem(
+                            step_number=3,
+                            title="Glükoosi ja hapniku teke",
+                            description="Образуется питательная глюкоза и выделяется кислород",
+                            icon_or_badge="🌿"
+                        ),
+                    ]
                 )
+            )
+
+        # 7-9 классы (Старшее звено - физика / химия / биология, строгий стиль, visual=None)
+        elif tier == AgeTier.HIGH:
+            return PageAnalysisResponse(
+                task_title="Fotosüntees ja rakuhingamine (Фотосинтез и клеточное дыхание)",
+                theme_explanation=(
+                    f"Здравствуй, {nickname}! В 7–9 классах тема фотосинтеза рассматривается на уровне биохимических реакций. "
+                    "Хлоропласты осуществляют световые и темновые фазы синтеза органических соединений из CO2 и H2O."
+                ),
+                alternative_explanation=(
+                    "Химическое уравнение баланса: 6 CO2 + 6 H2O + свет -> C6H12O6 + 6 O2. "
+                    "Это реакция запасания энергии химических связей в молекулах глюкозы."
+                ),
+                vocabulary=[
+                    VocabularyItem(
+                        est="fotosüntees",
+                        ru="фотосинтез (эндотермический процесс синтеза органики)",
+                        example="Fotosüntees toimub kloroplastide tülakoidides ja stroomas."
+                    ),
+                    VocabularyItem(
+                        est="kloroplast",
+                        ru="хлоропласт (двумембранная органелла растительной клетки)",
+                        example="Kloroplastides paikneb roheline pigment klorofüll."
+                    ),
+                    VocabularyItem(
+                        est="süsihappegaas",
+                        ru="углекислый газ (CO2)",
+                        example="CO2 seotakse Calvini tsükli käigus."
+                    ),
+                    VocabularyItem(
+                        est="hapnik",
+                        ru="кислород (побочный продукт фотолиза воды)",
+                        example="Vee fotolüüsil eraldub molekulaarne hapnik."
+                    ),
+                ],
+                worked_example=WorkedExample(
+                    title="Пример анализа биохимической схемы (Näidis)",
+                    given="Задание: 'Selgita, millist rolli mängib valgusenergia fotosünteesi esimeses etapis.'",
+                    steps=[
+                        "1. Начало реакции: Valgusenergia ergastab klorofülli molekulid.",
+                        "2. Фотолиз воды: Toimub vee fotolüüs ja vabanevad prootonid ning hapnik.",
+                        "3. Синтез АТФ: Toodetakse keemilist energiat (ATP ja NADPH)."
+                    ],
+                    note="Зафиксируй тезисы для ответа у доски или в контрольной работе."
+                ),
+                how_to_answer=(
+                    "1. Выдели ключевые реагенты реакции (lähteained) и продукты (saadused).\n"
+                    "2. Укажи локализацию процесса в клетке растения.\n"
+                    "3. Сформулируй аргументированный вывод научным стилем."
+                ),
+                answer_template="Fotosünteesi käigus muundatakse [valgusenergia] keemiliseks energiaks, mille tulemusena tekib [glükoos] ja eraldub [hapnik].",
+                voice_prompt_script="",
+                visual=None
             )
 
         # 10-12 классы (Гимназия - аналитическое эссе / обществознание / физика)
