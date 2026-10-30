@@ -5,6 +5,7 @@ import {
   Text,
   TouchableOpacity,
   Animated,
+  Easing,
   Dimensions,
 } from 'react-native';
 import {
@@ -35,26 +36,27 @@ export const TaskVisualizer: React.FC<TaskVisualizerProps> = ({ visual, grade, o
   return (
     <View style={[styles.rootContainer, isJunior ? styles.rootJunior : styles.rootMiddle]}>
       {visual.type === 'math_blocks' && (
-        <RenderMathBlocks visual={visual} isJunior={isJunior} onAction={onAction} />
+        <RenderAutoMathBlocks visual={visual} isJunior={isJunior} onAction={onAction} />
       )}
       {visual.type === 'match_pairs' && (
-        <RenderMatchPairs visual={visual} isJunior={isJunior} onAction={onAction} />
+        <RenderAutoMatchPairs visual={visual} isJunior={isJunior} onAction={onAction} />
       )}
       {visual.type === 'step_sequence' && (
-        <RenderStepSequence visual={visual} isJunior={isJunior} onAction={onAction} />
+        <RenderAutoStepSequence visual={visual} isJunior={isJunior} onAction={onAction} />
       )}
       {visual.type === 'balance_scale' && (
-        <RenderBalanceScale visual={visual} isJunior={isJunior} onAction={onAction} />
+        <RenderAutoBalanceScale visual={visual} isJunior={isJunior} onAction={onAction} />
       )}
       {visual.type === 'universal_card' && (
-        <RenderUniversalCard visual={visual} isJunior={isJunior} onAction={onAction} />
+        <RenderAutoUniversalCard visual={visual} isJunior={isJunior} onAction={onAction} />
       )}
     </View>
   );
 };
 
 // =============================================================================
-// 1. MATH BLOCKS (1–4 классы: счетные кубики / жетоны с анимацией тапа)
+// 1. MATH BLOCKS: АВТОМАТИЧЕСКАЯ ФИЗИЧЕСКАЯ АНИМАЦИЯ ПЕРЕЛЕТА КУБИКОВ
+// Демонстрация переместительного закона слагаемых: 3 + 2 <-> 2 + 3 = 5
 // =============================================================================
 
 interface MathBlocksProps {
@@ -63,436 +65,278 @@ interface MathBlocksProps {
   onAction?: (action: string, payload?: any) => void;
 }
 
-const RenderMathBlocks: React.FC<MathBlocksProps> = ({ visual, isJunior, onAction }) => {
-  // Keyed by groupIdx_itemIdx
-  const [tappedMap, setTappedMap] = useState<Record<string, boolean>>({});
-  const scalesRef = useRef<Record<string, Animated.Value>>({});
+type SwapPhase = 'initial' | 'flying_forward' | 'swapped' | 'flying_back';
 
-  const totalCubes = visual.groups.reduce((acc, g) => acc + g.count, 0);
-  const countedCount = Object.values(tappedMap).filter(Boolean).length;
+const RenderAutoMathBlocks: React.FC<MathBlocksProps> = ({ visual, isJunior, onAction }) => {
+  const [phase, setPhase] = useState<SwapPhase>('initial');
+  const [containerWidth, setContainerWidth] = useState<number>(SCREEN_WIDTH - 64);
+  const flightAnim = useRef(new Animated.Value(0)).current;
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const isMountedRef = useRef(true);
 
-  const handleTapCube = (key: string) => {
-    const isNowTapped = !tappedMap[key];
-    setTappedMap((prev) => ({ ...prev, [key]: isNowTapped }));
+  // Group 1: defaults to 3 blue cubes, Group 2: defaults to 2 green cubes
+  const countA = visual.groups[0]?.count || 3;
+  const countB = visual.groups[1]?.count || 2;
+  const colorA = visual.groups[0]?.color || '#3B82F6';
+  const colorB = visual.groups[1]?.color || '#10B981';
+  const totalSum = visual.target_count || countA + countB;
 
-    if (!scalesRef.current[key]) {
-      scalesRef.current[key] = new Animated.Value(1);
-    }
-    const anim = scalesRef.current[key];
-    Animated.sequence([
-      Animated.timing(anim, { toValue: 1.25, duration: 90, useNativeDriver: true }),
-      Animated.spring(anim, { toValue: 1, friction: 3, tension: 40, useNativeDriver: true }),
-    ]).start();
+  // The flight distance depends on available container width
+  const swapDistance = Math.min(Math.max(containerWidth * 0.45, 110), 150);
 
-    if (onAction) {
-      onAction('tap_cube', { key, isNowTapped });
-    }
+  const startAnimationCycle = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (!isMountedRef.current) return;
+
+    // Шаг 1: Показываем исходное состояние 1.5 секунды
+    setPhase('initial');
+    flightAnim.setValue(0);
+
+    timerRef.current = setTimeout(() => {
+      if (!isMountedRef.current) return;
+
+      // Шаг 2: Кубики плавно взлетают и летят навстречу друг другу
+      setPhase('flying_forward');
+      Animated.timing(flightAnim, {
+        toValue: 1,
+        duration: 1200,
+        easing: Easing.bezier(0.4, 0, 0.2, 1),
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (!finished || !isMountedRef.current) return;
+
+        // Шаг 3: Приземлились в новом порядке [ 2 зеленых ] + [ 3 синих ] = 5
+        setPhase('swapped');
+        if (onAction) onAction('math_swapped');
+
+        // Шаг 4: Пауза 2.5 секунды, затем возвращение обратно в цикле
+        timerRef.current = setTimeout(() => {
+          if (!isMountedRef.current) return;
+
+          setPhase('flying_back');
+          Animated.timing(flightAnim, {
+            toValue: 0,
+            duration: 1200,
+            easing: Easing.bezier(0.4, 0, 0.2, 1),
+            useNativeDriver: true,
+          }).start(({ finished: retFinished }) => {
+            if (!retFinished || !isMountedRef.current) return;
+
+            // Зацикливаем показ с паузой в 2 секунды
+            timerRef.current = setTimeout(() => {
+              startAnimationCycle();
+            }, 2000);
+          });
+        }, 2500);
+      });
+    }, 1500);
   };
-
-  const handleReset = () => {
-    setTappedMap({});
-    if (onAction) onAction('reset_math_blocks');
-  };
-
-  return (
-    <View style={styles.cardContent}>
-      {/* Header */}
-      <View style={styles.headerRow}>
-        <Text style={styles.templateIcon}>{isJunior ? '🧱' : '🔢'}</Text>
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.templateTitle, isJunior && styles.titleJunior]}>
-            {visual.title || (isJunior ? 'Считаем по кубикам' : 'Наглядный расчёт')}
-          </Text>
-          {visual.instruction ? (
-            <Text style={styles.templateInstruction}>{visual.instruction}</Text>
-          ) : null}
-        </View>
-        <View style={styles.counterBadge}>
-          <Text style={styles.counterBadgeText}>
-            {countedCount} / {totalCubes}
-          </Text>
-        </View>
-      </View>
-
-      {/* Groups Display */}
-      <View style={styles.groupsContainer}>
-        {visual.groups.map((group, gIdx) => {
-          const groupColor = group.color || (gIdx === 0 ? '#3B82F6' : '#10B981');
-          return (
-            <View key={gIdx} style={styles.groupWrapper}>
-              <View style={styles.groupLabelRow}>
-                <View style={[styles.groupColorDot, { backgroundColor: groupColor }]} />
-                <Text style={styles.groupLabelText}>{group.label}</Text>
-                <Text style={styles.groupCountPill}>({group.count})</Text>
-              </View>
-
-              <View style={styles.cubesGrid}>
-                {Array.from({ length: group.count }).map((_, cIdx) => {
-                  const key = `${gIdx}_${cIdx}`;
-                  if (!scalesRef.current[key]) {
-                    scalesRef.current[key] = new Animated.Value(1);
-                  }
-                  const isTapped = Boolean(tappedMap[key]);
-                  const scale = scalesRef.current[key];
-
-                  return (
-                    <TouchableOpacity
-                      key={key}
-                      onPress={() => handleTapCube(key)}
-                      activeOpacity={0.8}
-                      accessibilityLabel={`Кубик ${cIdx + 1} группы ${group.label}`}
-                    >
-                      <Animated.View
-                        style={[
-                          styles.cubeBox,
-                          isJunior ? styles.cubeJunior : styles.cubeMiddle,
-                          {
-                            backgroundColor: isTapped ? groupColor : '#1E293B',
-                            borderColor: groupColor,
-                            transform: [{ scale }],
-                          },
-                        ]}
-                      >
-                        <Text style={styles.cubeSymbol}>
-                          {isTapped ? '✓' : group.symbol || (isJunior ? '🟦' : '•')}
-                        </Text>
-                      </Animated.View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {/* Inter-group Operation Badge */}
-              {gIdx < visual.groups.length - 1 && visual.operation ? (
-                <View style={styles.operationDivider}>
-                  <View style={styles.opCircle}>
-                    <Text style={styles.opText}>{visual.operation}</Text>
-                  </View>
-                </View>
-              ) : null}
-            </View>
-          );
-        })}
-      </View>
-
-      {/* Footer result bar */}
-      <View style={styles.blocksFooter}>
-        <Text style={styles.footerResultText}>
-          {countedCount === totalCubes ? (
-            <Text style={{ color: '#10B981' }}>🎉 Все элементы посчитаны! Всего: {totalCubes}</Text>
-          ) : (
-            `Нажимай на элементы, чтобы посчитать их (${countedCount} из ${totalCubes})`
-          )}
-        </Text>
-        {countedCount > 0 ? (
-          <TouchableOpacity style={styles.resetBtn} onPress={handleReset}>
-            <Text style={styles.resetBtnText}>Сбросить</Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
-    </View>
-  );
-};
-
-// =============================================================================
-// 2. MATCH PAIRS (1–6 классы: сопоставление терминов и понятий)
-// =============================================================================
-
-interface MatchPairsProps {
-  visual: MatchPairsVisual;
-  isJunior: boolean;
-  onAction?: (action: string, payload?: any) => void;
-}
-
-const RenderMatchPairs: React.FC<MatchPairsProps> = ({ visual, isJunior, onAction }) => {
-  const [selectedLeft, setSelectedLeft] = useState<string | null>(null);
-  const [matchedIds, setMatchedIds] = useState<string[]>([]);
-  const [mismatchedId, setMismatchedId] = useState<string | null>(null);
-
-  // Deterministically shuffle the right-hand column so it is an interactive match challenge
-  const [shuffledRight, setShuffledRight] = useState<Array<{ id: string; right: string }>>([]);
 
   useEffect(() => {
-    // Stable shuffle on initial mount or visual change
-    const arr = visual.pairs.map((p) => ({ id: p.id, right: p.right }));
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = (i * 7 + 3) % (i + 1);
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    setShuffledRight(arr);
-    setMatchedIds([]);
-    setSelectedLeft(null);
-  }, [visual]);
+    isMountedRef.current = true;
+    startAnimationCycle();
 
-  // Shake animation for mismatch
-  const shakeAnim = useRef(new Animated.Value(0)).current;
+    return () => {
+      isMountedRef.current = false;
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [visual, containerWidth]);
 
-  const triggerShake = () => {
-    Animated.sequence([
-      Animated.timing(shakeAnim, { toValue: 10, duration: 60, useNativeDriver: true }),
-      Animated.timing(shakeAnim, { toValue: -10, duration: 60, useNativeDriver: true }),
-      Animated.timing(shakeAnim, { toValue: 8, duration: 60, useNativeDriver: true }),
-      Animated.timing(shakeAnim, { toValue: -8, duration: 60, useNativeDriver: true }),
-      Animated.timing(shakeAnim, { toValue: 0, duration: 60, useNativeDriver: true }),
-    ]).start();
-  };
+  // Interpolations for Group A (Blue cubes)
+  // Flies from left to right (+swapDistance), soaring up (-42px) in an arc
+  const transX_A = flightAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, swapDistance],
+  });
+  const transY_A = flightAnim.interpolate({
+    inputRange: [0, 0.45, 1],
+    outputRange: [0, -42, 0],
+  });
+  const scale_A = flightAnim.interpolate({
+    inputRange: [0, 0.45, 1],
+    outputRange: [1, 1.15, 1],
+  });
+  const rotate_A = flightAnim.interpolate({
+    inputRange: [0, 0.45, 1],
+    outputRange: ['0deg', '5deg', '0deg'],
+  });
 
-  const handleSelectLeft = (id: string) => {
-    if (matchedIds.includes(id)) return;
-    setSelectedLeft(id);
-    setMismatchedId(null);
-  };
+  // Interpolations for Group B (Green cubes)
+  // Flies from right to left (-swapDistance), soaring up (-48px) slightly higher
+  const transX_B = flightAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -swapDistance],
+  });
+  const transY_B = flightAnim.interpolate({
+    inputRange: [0, 0.55, 1],
+    outputRange: [0, -48, 0],
+  });
+  const scale_B = flightAnim.interpolate({
+    inputRange: [0, 0.55, 1],
+    outputRange: [1, 1.15, 1],
+  });
+  const rotate_B = flightAnim.interpolate({
+    inputRange: [0, 0.55, 1],
+    outputRange: ['0deg', '-5deg', '0deg'],
+  });
 
-  const handleSelectRight = (rightId: string) => {
-    if (matchedIds.includes(rightId)) return;
-    if (!selectedLeft) {
-      return;
-    }
-
-    if (selectedLeft === rightId) {
-      // Success match!
-      const nextMatched = [...matchedIds, rightId];
-      setMatchedIds(nextMatched);
-      setSelectedLeft(null);
-      setMismatchedId(null);
-      if (onAction) onAction('pair_matched', { id: rightId });
-    } else {
-      // Mismatch
-      setMismatchedId(rightId);
-      triggerShake();
-      setTimeout(() => {
-        setMismatchedId(null);
-        setSelectedLeft(null);
-      }, 700);
-      if (onAction) onAction('pair_mismatch', { left: selectedLeft, right: rightId });
-    }
-  };
-
-  const isAllMatched = matchedIds.length > 0 && matchedIds.length === visual.pairs.length;
-
-  const handleResetPairs = () => {
-    setMatchedIds([]);
-    setSelectedLeft(null);
-    setMismatchedId(null);
-    if (onAction) onAction('reset_pairs');
-  };
+  const isSwappedState = phase === 'swapped';
+  const isFlying = phase === 'flying_forward' || phase === 'flying_back';
 
   return (
-    <View style={styles.cardContent}>
-      {/* Header */}
-      <View style={styles.headerRow}>
-        <Text style={styles.templateIcon}>{isJunior ? '🧩' : '🔗'}</Text>
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.templateTitle, isJunior && styles.titleJunior]}>
-            {visual.title || (isJunior ? 'Соедини пары понятий' : 'Сопоставление терминов')}
-          </Text>
-          <Text style={styles.templateInstruction}>
-            {visual.instruction || 'Выбери термин слева, затем его значение справа:'}
+    <View
+      style={styles.cardContent}
+      onLayout={(e) => {
+        const w = e.nativeEvent.layout.width;
+        if (w > 0 && Math.abs(w - containerWidth) > 10) {
+          setContainerWidth(w);
+        }
+      }}
+    >
+      {/* Header with Title and Automatic Tag */}
+      <View style={styles.autoHeaderRow}>
+        <View style={styles.autoHeaderLeft}>
+          <Text style={styles.autoHeaderIcon}>✨</Text>
+          <Text style={[styles.autoHeaderTitle, isJunior && styles.titleJunior]}>
+            {visual.title || 'Переместительный закон сложения'}
           </Text>
         </View>
-        <View style={styles.counterBadge}>
-          <Text style={styles.counterBadgeText}>
-            {matchedIds.length} / {visual.pairs.length}
-          </Text>
+        <View style={styles.autoPlayBadge}>
+          <Text style={styles.autoPlayBadgeText}>АВТОМАТИЧЕСКИЙ ПОКАЗ</Text>
         </View>
       </View>
 
-      {/* Two columns */}
-      <View style={styles.pairsColumnsRow}>
-        {/* Left Column (Estonian terms) */}
-        <View style={styles.pairColumn}>
-          <Text style={styles.columnHeader}>EESTI KEELES</Text>
-          {visual.pairs.map((p) => {
-            const isMatched = matchedIds.includes(p.id);
-            const isSelected = selectedLeft === p.id;
-            return (
-              <TouchableOpacity
-                key={`left_${p.id}`}
-                style={[
-                  styles.pairPill,
-                  isJunior ? styles.pillJunior : styles.pillMiddle,
-                  isSelected && styles.pillSelected,
-                  isMatched && styles.pillMatched,
-                ]}
-                onPress={() => handleSelectLeft(p.id)}
-                disabled={isMatched}
-                activeOpacity={0.7}
-              >
-                <Text
-                  style={[
-                    styles.pairPillText,
-                    isSelected && styles.pairPillTextSelected,
-                    isMatched && styles.pairPillTextMatched,
-                  ]}
-                >
-                  {p.left}
-                </Text>
-                {isMatched ? <Text style={styles.pairCheckIcon}>✓</Text> : null}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+      {/* Narrative Subtitle / Stage Badge */}
+      <View style={styles.stageBanner}>
+        <Text style={styles.stageBannerText}>
+          {phase === 'initial' && `Шаг 1: Было [ ${countA} синих ] + [ ${countB} зеленых ] = ${totalSum}`}
+          {isFlying && `✈️ Меняем слагаемые местами...`}
+          {isSwappedState && `Шаг 2: Стало [ ${countB} зеленых ] + [ ${countA} синих ] = ${totalSum}`}
+        </Text>
+      </View>
 
-        {/* Right Column (Russian meanings) */}
+      {/* Flight Stage / Arena */}
+      <View style={styles.flightArena}>
+        {/* Group A (Blue cubes) */}
         <Animated.View
           style={[
-            styles.pairColumn,
+            styles.cubeGroupPlate,
             {
-              transform: [{ translateX: shakeAnim }],
+              transform: [
+                { translateX: transX_A },
+                { translateY: transY_A },
+                { scale: scale_A },
+                { rotate: rotate_A },
+              ],
+              zIndex: phase === 'flying_forward' ? 5 : 10,
             },
           ]}
         >
-          <Text style={styles.columnHeader}>ПО-РУССКИ</Text>
-          {shuffledRight.map((r) => {
-            const isMatched = matchedIds.includes(r.id);
-            const isMismatched = mismatchedId === r.id;
-            return (
-              <TouchableOpacity
-                key={`right_${r.id}`}
-                style={[
-                  styles.pairPill,
-                  isJunior ? styles.pillJunior : styles.pillMiddle,
-                  isMatched && styles.pillMatched,
-                  isMismatched && styles.pillMismatched,
-                ]}
-                onPress={() => handleSelectRight(r.id)}
-                disabled={isMatched}
-                activeOpacity={0.7}
-              >
-                <Text
-                  style={[
-                    styles.pairPillText,
-                    isMatched && styles.pairPillTextMatched,
-                    isMismatched && styles.pairPillTextMismatched,
-                  ]}
-                >
-                  {r.right}
-                </Text>
-                {isMatched ? <Text style={styles.pairCheckIcon}>✓</Text> : null}
-              </TouchableOpacity>
-            );
-          })}
-        </Animated.View>
-      </View>
-
-      {/* Completion Banner */}
-      {isAllMatched ? (
-        <View style={styles.allMatchedBanner}>
-          <Text style={styles.allMatchedTitle}>🎉 Отлично! Все пары найдены!</Text>
-          <TouchableOpacity style={styles.resetBtn} onPress={handleResetPairs}>
-            <Text style={styles.resetBtnText}>Сыграть ещё раз</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
-    </View>
-  );
-};
-
-// =============================================================================
-// 3. STEP SEQUENCE (1–6 классы: алгоритмы, циклы, порядок действий)
-// =============================================================================
-
-interface StepSequenceProps {
-  visual: StepSequenceVisual;
-  isJunior: boolean;
-  onAction?: (action: string, payload?: any) => void;
-}
-
-const RenderStepSequence: React.FC<StepSequenceProps> = ({ visual, isJunior, onAction }) => {
-  const [completedSteps, setCompletedSteps] = useState<number[]>([]);
-
-  const handleToggleStep = (stepNumber: number) => {
-    const isNowDone = !completedSteps.includes(stepNumber);
-    setCompletedSteps((prev) =>
-      isNowDone ? [...prev, stepNumber] : prev.filter((s) => s !== stepNumber)
-    );
-    if (onAction) onAction('toggle_step', { stepNumber, isNowDone });
-  };
-
-  const progressPercent =
-    visual.steps.length > 0 ? (completedSteps.length / visual.steps.length) * 100 : 0;
-
-  return (
-    <View style={styles.cardContent}>
-      {/* Header */}
-      <View style={styles.headerRow}>
-        <Text style={styles.templateIcon}>{isJunior ? '🚀' : '📋'}</Text>
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.templateTitle, isJunior && styles.titleJunior]}>
-            {visual.title || (isJunior ? 'Шаги решения' : 'Последовательность этапов')}
-          </Text>
-          {visual.instruction ? (
-            <Text style={styles.templateInstruction}>{visual.instruction}</Text>
-          ) : null}
-        </View>
-      </View>
-
-      {/* Progress Bar */}
-      <View style={styles.progressBarTrack}>
-        <View style={[styles.progressBarFill, { width: `${progressPercent}%` }]} />
-      </View>
-
-      {/* Steps List */}
-      <View style={styles.stepsContainer}>
-        {visual.steps.map((step, idx) => {
-          const isDone = completedSteps.includes(step.step_number);
-          const isLast = idx === visual.steps.length - 1;
-
-          return (
-            <View key={step.step_number} style={styles.stepRowWrapper}>
-              {/* Left Timeline Indicator */}
-              <View style={styles.timelineCol}>
-                <TouchableOpacity
-                  style={[
-                    styles.stepBadge,
-                    isDone && styles.stepBadgeDone,
-                    step.is_highlighted && !isDone && styles.stepBadgeHighlighted,
-                  ]}
-                  onPress={() => handleToggleStep(step.step_number)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.stepBadgeText}>
-                    {isDone ? '✓' : step.icon_or_badge || String(step.step_number)}
-                  </Text>
-                </TouchableOpacity>
-                {!isLast && (
-                  <View style={[styles.timelineLine, isDone && styles.timelineLineDone]} />
-                )}
+          <View style={styles.cubesRow}>
+            {Array.from({ length: countA }).map((_, i) => (
+              <View key={`a_${i}`} style={[styles.glossyCube, { backgroundColor: colorA }]}>
+                <View style={styles.cubePip} />
               </View>
+            ))}
+          </View>
+          <View style={[styles.groupNumberBadge, { backgroundColor: `${colorA}30`, borderColor: colorA }]}>
+            <Text style={[styles.groupNumberText, { color: '#93C5FD' }]}>
+              {countA}
+            </Text>
+          </View>
+        </Animated.View>
 
-              {/* Step Card Content */}
-              <TouchableOpacity
-                style={[
-                  styles.stepCard,
-                  isJunior ? styles.stepCardJunior : styles.stepCardMiddle,
-                  isDone && styles.stepCardDone,
-                  step.is_highlighted && !isDone && styles.stepCardHighlighted,
-                ]}
-                onPress={() => handleToggleStep(step.step_number)}
-                activeOpacity={0.8}
-              >
-                <View style={styles.stepCardHeader}>
-                  <Text style={[styles.stepTitleText, isDone && styles.stepTitleDone]}>
-                    {step.title}
-                  </Text>
-                  <Text style={styles.stepCheckboxIcon}>{isDone ? '✅' : '⚪️'}</Text>
-                </View>
-                {step.description ? (
-                  <Text style={[styles.stepDescText, isDone && styles.stepDescDone]}>
-                    {step.description}
-                  </Text>
-                ) : null}
-              </TouchableOpacity>
-            </View>
-          );
-        })}
+        {/* Math Plus Operator in center */}
+        <View style={styles.centerOpCircle}>
+          <Text style={styles.centerOpText}>+</Text>
+        </View>
+
+        {/* Group B (Green cubes) */}
+        <Animated.View
+          style={[
+            styles.cubeGroupPlate,
+            {
+              transform: [
+                { translateX: transX_B },
+                { translateY: transY_B },
+                { scale: scale_B },
+                { rotate: rotate_B },
+              ],
+              zIndex: phase === 'flying_forward' ? 10 : 5,
+            },
+          ]}
+        >
+          <View style={styles.cubesRow}>
+            {Array.from({ length: countB }).map((_, i) => (
+              <View key={`b_${i}`} style={[styles.glossyCube, { backgroundColor: colorB }]}>
+                <View style={styles.cubePip} />
+              </View>
+            ))}
+          </View>
+          <View style={[styles.groupNumberBadge, { backgroundColor: `${colorB}30`, borderColor: colorB }]}>
+            <Text style={[styles.groupNumberText, { color: '#6EE7B7' }]}>
+              {countB}
+            </Text>
+          </View>
+        </Animated.View>
+
+        {/* Equals Sign and Result */}
+        <View style={styles.equalsGroup}>
+          <Text style={styles.equalsSign}>=</Text>
+          <View style={styles.resultBadge}>
+            <Text style={styles.resultBadgeText}>{totalSum}</Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Dynamic Equation Bar */}
+      <View style={styles.equationBar}>
+        <Text style={styles.equationFormula}>
+          {isSwappedState ? (
+            <Text>
+              <Text style={{ color: '#10B981', fontWeight: '800' }}>{countB}</Text>
+              {' + '}
+              <Text style={{ color: '#3B82F6', fontWeight: '800' }}>{countA}</Text>
+              {' = '}
+              <Text style={{ color: '#5FEDC5', fontWeight: '800' }}>{totalSum}</Text>
+            </Text>
+          ) : (
+            <Text>
+              <Text style={{ color: '#3B82F6', fontWeight: '800' }}>{countA}</Text>
+              {' + '}
+              <Text style={{ color: '#10B981', fontWeight: '800' }}>{countB}</Text>
+              {' = '}
+              <Text style={{ color: '#5FEDC5', fontWeight: '800' }}>{totalSum}</Text>
+            </Text>
+          )}
+        </Text>
+      </View>
+
+      {/* Explanatory Conclusion Footer */}
+      <View style={styles.autoFooterRow}>
+        <View style={styles.conclusionBox}>
+          <Text style={styles.conclusionText}>
+            💡 <Text style={{ fontWeight: '700', color: '#F8FAFC' }}>Правило:</Text> От перемены мест слагаемых сумма не меняется! (Summa ei muutu).
+          </Text>
+        </View>
+
+        {/* Quick Replay Button */}
+        <TouchableOpacity
+          style={styles.replayButton}
+          onPress={() => startAnimationCycle()}
+          activeOpacity={0.7}
+          accessibilityLabel="Повторить показ анимации"
+        >
+          <Text style={styles.replayButtonIcon}>↺</Text>
+          <Text style={styles.replayButtonText}>Повторить показ</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
 };
 
 // =============================================================================
-// 4. BALANCE SCALE (1–5 классы: наглядные весы для сравнения величин)
+// 2. BALANCE SCALE: АВТОМАТИЧЕСКОЕ КОЛЕБАНИЕ И НАКЛОН ЧАШ
 // =============================================================================
 
 interface BalanceScaleProps {
@@ -501,10 +345,9 @@ interface BalanceScaleProps {
   onAction?: (action: string, payload?: any) => void;
 }
 
-const RenderBalanceScale: React.FC<BalanceScaleProps> = ({ visual, isJunior, onAction }) => {
-  const [userGuess, setUserGuess] = useState<'<' | '>' | '=' | null>(null);
+const RenderAutoBalanceScale: React.FC<BalanceScaleProps> = ({ visual, isJunior }) => {
+  const tiltAnim = useRef(new Animated.Value(0)).current;
 
-  // Parse numerical or string value to compare
   const parseVal = (v: number | string): number => {
     if (typeof v === 'number') return v;
     const num = parseFloat(String(v).replace(',', '.'));
@@ -513,99 +356,57 @@ const RenderBalanceScale: React.FC<BalanceScaleProps> = ({ visual, isJunior, onA
 
   const leftNum = parseVal(visual.left_side.value);
   const rightNum = parseVal(visual.right_side.value);
-
-  // Compute true comparison
-  const trueComp: '<' | '>' | '=' =
-    leftNum > rightNum ? '>' : leftNum < rightNum ? '<' : '=';
-
-  const activeComp = visual.comparison === '?' ? userGuess || '?' : visual.comparison;
-
-  // Animated beam tilt angle
-  const tiltAnim = useRef(new Animated.Value(0)).current;
+  const targetDegree = leftNum > rightNum ? -8 : leftNum < rightNum ? 8 : 0;
 
   useEffect(() => {
-    let targetDegree = 0;
-    if (activeComp === '>') {
-      // Left heavier -> tilts down on left (-8 deg)
-      targetDegree = -8;
-    } else if (activeComp === '<') {
-      // Right heavier -> tilts down on right (+8 deg)
-      targetDegree = 8;
-    } else if (activeComp === '=') {
-      targetDegree = 0;
-    }
-
-    Animated.spring(tiltAnim, {
-      toValue: targetDegree,
-      friction: 5,
-      tension: 40,
-      useNativeDriver: true,
-    }).start();
-  }, [activeComp]);
+    // Damped physical oscillation: tilts past target, bounces, and settles
+    Animated.sequence([
+      Animated.timing(tiltAnim, { toValue: targetDegree * 1.3, duration: 600, useNativeDriver: true }),
+      Animated.timing(tiltAnim, { toValue: targetDegree * 0.8, duration: 400, useNativeDriver: true }),
+      Animated.timing(tiltAnim, { toValue: targetDegree, duration: 300, useNativeDriver: true }),
+    ]).start();
+  }, [visual]);
 
   const rotateInterpolation = tiltAnim.interpolate({
-    inputRange: [-10, 0, 10],
-    outputRange: ['-10deg', '0deg', '10deg'],
+    inputRange: [-12, 0, 12],
+    outputRange: ['-12deg', '0deg', '12deg'],
   });
-
-  const handleGuess = (guess: '<' | '>' | '=') => {
-    setUserGuess(guess);
-    if (onAction) onAction('balance_guess', { guess, isCorrect: guess === trueComp });
-  };
-
-  const isGuessMode = visual.comparison === '?';
-  const isCorrect = userGuess !== null && userGuess === trueComp;
 
   return (
     <View style={styles.cardContent}>
-      {/* Header */}
-      <View style={styles.headerRow}>
-        <Text style={styles.templateIcon}>⚖️</Text>
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.templateTitle, isJunior && styles.titleJunior]}>
-            {visual.title || (isJunior ? 'Интерактивные весы' : 'Сравнение на весах')}
-          </Text>
-          <Text style={styles.templateInstruction}>
-            {visual.instruction ||
-              (isGuessMode
-                ? 'Какая чаша перевесит? Нажми знак для проверки:'
-                : 'Сравни левую и правую чашу весов:')}
+      <View style={styles.autoHeaderRow}>
+        <View style={styles.autoHeaderLeft}>
+          <Text style={styles.autoHeaderIcon}>⚖️</Text>
+          <Text style={[styles.autoHeaderTitle, isJunior && styles.titleJunior]}>
+            {visual.title || 'Сравнение на весах'}
           </Text>
         </View>
       </View>
 
-      {/* Visual Balance Scale Graphic */}
       <View style={styles.scaleContainer}>
-        {/* Central Stand Fulcrum */}
         <View style={styles.scaleFulcrumTop} />
         <View style={styles.scaleFulcrumPillar} />
         <View style={styles.scaleFulcrumBase} />
 
-        {/* Animated Beam with suspended pans */}
         <Animated.View
           style={[
             styles.scaleBeam,
-            {
-              transform: [{ rotate: rotateInterpolation }],
-            },
+            { transform: [{ rotate: rotateInterpolation }] },
           ]}
         >
-          {/* Left Pan */}
           <View style={styles.leftPanAssembly}>
             <View style={styles.scaleChain} />
-            <View style={[styles.panPlate, isJunior ? styles.panJunior : styles.panMiddle]}>
+            <View style={styles.panPlate}>
               <Text style={styles.panValueText}>{visual.left_side.value}</Text>
               <Text style={styles.panLabelText}>{visual.left_side.label}</Text>
             </View>
           </View>
 
-          {/* Center Pivot Indicator */}
           <View style={styles.centerPivotDot} />
 
-          {/* Right Pan */}
           <View style={styles.rightPanAssembly}>
             <View style={styles.scaleChain} />
-            <View style={[styles.panPlate, isJunior ? styles.panJunior : styles.panMiddle]}>
+            <View style={styles.panPlate}>
               <Text style={styles.panValueText}>{visual.right_side.value}</Text>
               <Text style={styles.panLabelText}>{visual.right_side.label}</Text>
             </View>
@@ -613,135 +414,138 @@ const RenderBalanceScale: React.FC<BalanceScaleProps> = ({ visual, isJunior, onA
         </Animated.View>
       </View>
 
-      {/* Comparison Buttons / Result Bar */}
-      {isGuessMode ? (
-        <View style={styles.guessButtonsRow}>
-          <TouchableOpacity
-            style={[
-              styles.guessBtn,
-              userGuess === '<' && (isCorrect ? styles.guessBtnCorrect : styles.guessBtnSelected),
-            ]}
-            onPress={() => handleGuess('<')}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.guessBtnText}>&lt;</Text>
-            <Text style={styles.guessBtnSub}>Правая тяжелее</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.guessBtn,
-              userGuess === '=' && (isCorrect ? styles.guessBtnCorrect : styles.guessBtnSelected),
-            ]}
-            onPress={() => handleGuess('=')}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.guessBtnText}>=</Text>
-            <Text style={styles.guessBtnSub}>Равновесие</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.guessBtn,
-              userGuess === '>' && (isCorrect ? styles.guessBtnCorrect : styles.guessBtnSelected),
-            ]}
-            onPress={() => handleGuess('>')}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.guessBtnText}>&gt;</Text>
-            <Text style={styles.guessBtnSub}>Левая тяжелее</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <View style={styles.scaleResultBanner}>
-          <Text style={styles.scaleResultSymbol}>{activeComp}</Text>
-          <Text style={styles.scaleResultExplanation}>
-            {visual.hint ||
-              (activeComp === '='
-                ? 'Обе чаши равны — идеальный баланс!'
-                : activeComp === '>'
-                ? 'Левая сторона больше, поэтому она перевесила.'
-                : 'Правая сторона больше, поэтому она перевесила.')}
-          </Text>
-        </View>
-      )}
-
-      {userGuess !== null ? (
-        <View style={styles.feedbackBox}>
-          <Text style={styles.feedbackText}>
-            {isCorrect
-              ? '🎉 Точно! Ты правильно определил соотношение!'
-              : 'Попробуй еще раз: обрати внимание на величины на чашах.'}
-          </Text>
-        </View>
-      ) : null}
+      <View style={styles.conclusionBox}>
+        <Text style={styles.conclusionText}>
+          {targetDegree === 0
+            ? '⚖️ Обе чаши равны: равновесие (=)!'
+            : targetDegree > 0
+            ? '⚖️ Правая чаша тяжелее и опустилась вниз (<).'
+            : '⚖️ Левая чаша тяжелее и опустилась вниз (>).'}
+        </Text>
+      </View>
     </View>
   );
 };
 
 // =============================================================================
-// 5. UNIVERSAL CARD (1–6 классы: фокусная карточка с правилом или акцентом)
+// 3. STEP SEQUENCE: АВТОМАТИЧЕСКАЯ ПОСЛЕДОВАТЕЛЬНОСТЬ ЭТАПОВ
 // =============================================================================
 
-interface UniversalCardProps {
-  visual: UniversalCardVisual;
+interface StepSequenceProps {
+  visual: StepSequenceVisual;
   isJunior: boolean;
   onAction?: (action: string, payload?: any) => void;
 }
 
-const RenderUniversalCard: React.FC<UniversalCardProps> = ({ visual, isJunior, onAction }) => {
-  const scaleAnim = useRef(new Animated.Value(1)).current;
+const RenderAutoStepSequence: React.FC<StepSequenceProps> = ({ visual, isJunior }) => {
+  const [activeStepIdx, setActiveStepIdx] = useState(0);
 
-  const handleTapCard = () => {
-    Animated.sequence([
-      Animated.timing(scaleAnim, { toValue: 1.03, duration: 120, useNativeDriver: true }),
-      Animated.spring(scaleAnim, { toValue: 1, friction: 4, useNativeDriver: true }),
-    ]).start();
-    if (onAction) onAction('tap_universal_card', { title: visual.title });
-  };
-
-  const accentColor = visual.accent_color || '#5FEDC5';
+  useEffect(() => {
+    if (!visual.steps || visual.steps.length === 0) return;
+    const interval = setInterval(() => {
+      setActiveStepIdx((prev) => (prev + 1) % visual.steps.length);
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [visual]);
 
   return (
-    <TouchableOpacity activeOpacity={0.9} onPress={handleTapCard}>
-      <Animated.View
-        style={[
-          styles.universalCardRoot,
-          isJunior ? styles.universalJunior : styles.universalMiddle,
-          {
-            borderColor: accentColor,
-            transform: [{ scale: scaleAnim }],
-          },
-        ]}
-      >
-        <View style={styles.universalHeaderRow}>
-          <View style={[styles.universalIconCircle, { backgroundColor: `${accentColor}25` }]}>
-            <Text style={styles.universalIcon}>{visual.icon || '💡'}</Text>
-          </View>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            {visual.badge ? (
-              <View style={[styles.universalBadge, { backgroundColor: accentColor }]}>
-                <Text style={styles.universalBadgeText}>{visual.badge}</Text>
-              </View>
-            ) : null}
-            <Text style={[styles.universalTitle, isJunior && styles.titleJunior]}>
-              {visual.title}
-            </Text>
-          </View>
-        </View>
-
-        {/* Focal Highlight Text Box */}
-        <View style={[styles.highlightBox, { borderColor: `${accentColor}60` }]}>
-          <Text style={[styles.highlightText, { color: accentColor }]}>
-            {visual.highlight_text}
+    <View style={styles.cardContent}>
+      <View style={styles.autoHeaderRow}>
+        <View style={styles.autoHeaderLeft}>
+          <Text style={styles.autoHeaderIcon}>🚀</Text>
+          <Text style={[styles.autoHeaderTitle, isJunior && styles.titleJunior]}>
+            {visual.title || 'Порядок действий'}
           </Text>
         </View>
+      </View>
 
-        {visual.explanation ? (
-          <Text style={styles.universalExplanation}>{visual.explanation}</Text>
+      <View style={styles.stepsContainer}>
+        {visual.steps.map((step, idx) => {
+          const isActive = idx === activeStepIdx;
+          return (
+            <View
+              key={step.step_number}
+              style={[styles.stepItemCard, isActive && styles.stepItemActive]}
+            >
+              <View style={[styles.stepBadge, isActive && styles.stepBadgeActive]}>
+                <Text style={styles.stepBadgeText}>
+                  {step.icon_or_badge || String(step.step_number)}
+                </Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={[styles.stepTitleText, isActive && styles.stepTitleActive]}>
+                  {step.title}
+                </Text>
+                {step.description ? (
+                  <Text style={styles.stepDescText}>{step.description}</Text>
+                ) : null}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+};
+
+// =============================================================================
+// 4. MATCH PAIRS & 5. UNIVERSAL CARD
+// =============================================================================
+
+const RenderAutoMatchPairs: React.FC<{ visual: MatchPairsVisual; isJunior: boolean; onAction?: any }> = ({ visual, isJunior }) => {
+  return (
+    <View style={styles.cardContent}>
+      <View style={styles.autoHeaderRow}>
+        <View style={styles.autoHeaderLeft}>
+          <Text style={styles.autoHeaderIcon}>🧩</Text>
+          <Text style={[styles.autoHeaderTitle, isJunior && styles.titleJunior]}>
+            {visual.title || 'Сопоставление терминов'}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.pairsList}>
+        {visual.pairs.map((p) => (
+          <View key={p.id} style={styles.pairLinkedRow}>
+            <View style={styles.pairLeftChip}>
+              <Text style={styles.pairLeftText}>{p.left}</Text>
+            </View>
+            <Text style={styles.pairLinkArrow}>⇄</Text>
+            <View style={styles.pairRightChip}>
+              <Text style={styles.pairRightText}>{p.right}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+};
+
+const RenderAutoUniversalCard: React.FC<{ visual: UniversalCardVisual; isJunior: boolean; onAction?: any }> = ({ visual, isJunior }) => {
+  const accentColor = visual.accent_color || '#5FEDC5';
+  return (
+    <View style={[styles.universalCardRoot, { borderColor: accentColor }]}>
+      <View style={styles.autoHeaderRow}>
+        <View style={styles.autoHeaderLeft}>
+          <Text style={styles.autoHeaderIcon}>{visual.icon || '💡'}</Text>
+          <Text style={[styles.autoHeaderTitle, isJunior && styles.titleJunior]}>
+            {visual.title}
+          </Text>
+        </View>
+        {visual.badge ? (
+          <View style={[styles.universalBadge, { backgroundColor: accentColor }]}>
+            <Text style={styles.universalBadgeText}>{visual.badge}</Text>
+          </View>
         ) : null}
-      </Animated.View>
-    </TouchableOpacity>
+      </View>
+      <View style={[styles.highlightBox, { borderColor: `${accentColor}60` }]}>
+        <Text style={[styles.highlightText, { color: accentColor }]}>
+          {visual.highlight_text}
+        </Text>
+      </View>
+      {visual.explanation ? (
+        <Text style={styles.universalExplanation}>{visual.explanation}</Text>
+      ) : null}
+    </View>
   );
 };
 
@@ -751,20 +555,20 @@ const RenderUniversalCard: React.FC<UniversalCardProps> = ({ visual, isJunior, o
 
 const styles = StyleSheet.create({
   rootContainer: {
-    marginVertical: 12,
+    marginVertical: 10,
     backgroundColor: '#161F30',
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
     elevation: 4,
   },
   rootJunior: {
-    borderRadius: 22,
+    borderRadius: 20,
     borderWidth: 2,
     borderColor: '#3B82F6',
-    padding: 16,
+    padding: 14,
   },
   rootMiddle: {
     borderRadius: 14,
@@ -775,554 +579,431 @@ const styles = StyleSheet.create({
   cardContent: {
     width: '100%',
   },
-  headerRow: {
+  autoHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 14,
+    justifyContent: 'space-between',
+    marginBottom: 10,
   },
-  templateIcon: {
-    fontSize: 28,
-    marginRight: 10,
+  autoHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
   },
-  templateTitle: {
-    fontSize: 16,
+  autoHeaderIcon: {
+    fontSize: 20,
+    marginRight: 8,
+  },
+  autoHeaderTitle: {
+    fontSize: 15,
     fontWeight: '700',
     color: '#F8FAFC',
   },
   titleJunior: {
-    fontSize: 18,
+    fontSize: 16,
     color: '#60A5FA',
   },
-  templateInstruction: {
-    fontSize: 13,
-    color: '#94A3B8',
-    marginTop: 2,
-  },
-  counterBadge: {
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
+  autoPlayBadge: {
+    backgroundColor: '#0F766E30',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#14B8A6',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
-  counterBadgeText: {
+  autoPlayBadgeText: {
     color: '#5FEDC5',
-    fontWeight: '700',
-    fontSize: 13,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  stageBanner: {
+    backgroundColor: '#0F172A',
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    alignItems: 'center',
+  },
+  stageBannerText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
   },
 
-  // Math Blocks Styles
-  groupsContainer: {
-    marginVertical: 8,
-  },
-  groupWrapper: {
-    marginBottom: 12,
-  },
-  groupLabelRow: {
+  // Flight Arena
+  flightArena: {
+    height: 110,
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    position: 'relative',
+    marginVertical: 4,
   },
-  groupColorDot: {
+  cubeGroupPlate: {
+    alignItems: 'center',
+    padding: 6,
+    borderRadius: 14,
+    backgroundColor: '#1E293B90',
+    borderWidth: 1,
+    borderColor: '#334155',
+    minWidth: 80,
+  },
+  cubesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  glossyCube: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    borderTopWidth: 2,
+    borderTopColor: '#FFFFFF60',
+    borderBottomWidth: 2,
+    borderBottomColor: '#00000040',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  cubePip: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    marginRight: 6,
+    backgroundColor: '#FFFFFF50',
   },
-  groupLabelText: {
-    color: '#E2E8F0',
-    fontSize: 14,
-    fontWeight: '600',
+  groupNumberBadge: {
+    marginTop: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 1,
+    borderRadius: 6,
+    borderWidth: 1,
   },
-  groupCountPill: {
-    color: '#94A3B8',
+  groupNumberText: {
     fontSize: 12,
-    marginLeft: 6,
+    fontWeight: '800',
   },
-  cubesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  cubeBox: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cubeJunior: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    borderWidth: 2,
-  },
-  cubeMiddle: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    borderWidth: 1.5,
-  },
-  cubeSymbol: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  operationDivider: {
-    alignItems: 'center',
-    marginVertical: 6,
-  },
-  opCircle: {
+  centerOpCircle: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#1E293B',
-    borderWidth: 1,
+    backgroundColor: '#0F172A',
+    borderWidth: 1.5,
     borderColor: '#475569',
     justifyContent: 'center',
     alignItems: 'center',
+    marginHorizontal: 12,
+    zIndex: 1,
   },
-  opText: {
-    color: '#5FEDC5',
+  centerOpText: {
+    color: '#F8FAFC',
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '800',
   },
-  blocksFooter: {
+  equalsGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#1E293B',
+    marginLeft: 10,
   },
-  footerResultText: {
-    fontSize: 13,
+  equalsSign: {
     color: '#94A3B8',
-    flex: 1,
+    fontSize: 20,
+    fontWeight: '800',
+    marginRight: 8,
   },
-  resetBtn: {
-    backgroundColor: '#334155',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-    marginLeft: 8,
-  },
-  resetBtnText: {
-    color: '#F8FAFC',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-
-  // Match Pairs Styles
-  pairsColumnsRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  pairColumn: {
-    flex: 1,
-  },
-  columnHeader: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-    marginBottom: 8,
-    letterSpacing: 0.5,
-  },
-  pairPill: {
-    backgroundColor: '#1E293B',
-    borderWidth: 1.5,
-    borderColor: '#334155',
-    marginBottom: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  pillJunior: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-  },
-  pillMiddle: {
-    paddingVertical: 9,
-    paddingHorizontal: 11,
-    borderRadius: 10,
-  },
-  pillSelected: {
-    borderColor: '#60A5FA',
-    backgroundColor: '#1E3A8A40',
-  },
-  pillMatched: {
-    borderColor: '#10B981',
-    backgroundColor: '#064E3B40',
-    opacity: 0.85,
-  },
-  pillMismatched: {
-    borderColor: '#EF4444',
-    backgroundColor: '#7F1D1D40',
-  },
-  pairPillText: {
-    color: '#E2E8F0',
-    fontSize: 14,
-    fontWeight: '600',
-    flex: 1,
-  },
-  pairPillTextSelected: {
-    color: '#93C5FD',
-  },
-  pairPillTextMatched: {
-    color: '#6EE7B7',
-    textDecorationLine: 'line-through',
-  },
-  pairPillTextMismatched: {
-    color: '#FCA5A5',
-  },
-  pairCheckIcon: {
-    color: '#10B981',
-    fontSize: 14,
-    fontWeight: '700',
-    marginLeft: 6,
-  },
-  allMatchedBanner: {
-    marginTop: 12,
-    backgroundColor: '#064E3B40',
-    borderWidth: 1.5,
-    borderColor: '#10B981',
-    borderRadius: 14,
-    padding: 12,
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  allMatchedTitle: {
-    color: '#6EE7B7',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-
-  // Step Sequence Styles
-  progressBarTrack: {
-    height: 4,
-    backgroundColor: '#1E293B',
-    borderRadius: 2,
-    marginBottom: 14,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#5FEDC5',
-  },
-  stepsContainer: {
-    marginTop: 4,
-  },
-  stepRowWrapper: {
-    flexDirection: 'row',
-    marginBottom: 10,
-  },
-  timelineCol: {
-    alignItems: 'center',
+  resultBadge: {
     width: 36,
-    marginRight: 10,
-  },
-  stepBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#1E293B',
-    borderWidth: 1.5,
-    borderColor: '#475569',
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#064E3B',
+    borderWidth: 2,
+    borderColor: '#10B981',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 2,
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
   },
-  stepBadgeHighlighted: {
-    borderColor: '#5FEDC5',
-    backgroundColor: '#0F766E40',
+  resultBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '900',
   },
-  stepBadgeDone: {
-    borderColor: '#10B981',
-    backgroundColor: '#10B981',
-  },
-  stepBadgeText: {
-    color: '#F8FAFC',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  timelineLine: {
-    flex: 1,
-    width: 2,
-    backgroundColor: '#334155',
-    marginVertical: 4,
-  },
-  timelineLineDone: {
-    backgroundColor: '#10B981',
-  },
-  stepCard: {
-    flex: 1,
-    backgroundColor: '#1E293B',
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  stepCardJunior: {
-    borderRadius: 16,
-    padding: 12,
-  },
-  stepCardMiddle: {
+
+  // Equation Bar
+  equationBar: {
+    backgroundColor: '#0B0F17',
     borderRadius: 10,
-    padding: 10,
-  },
-  stepCardHighlighted: {
-    borderColor: '#5FEDC5',
-    backgroundColor: '#132E3A',
-  },
-  stepCardDone: {
-    borderColor: '#065F46',
-    backgroundColor: '#064E3B20',
-  },
-  stepCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    paddingVertical: 8,
     alignItems: 'center',
+    marginVertical: 8,
+    borderWidth: 1,
+    borderColor: '#1E293B',
   },
-  stepTitleText: {
-    fontSize: 14,
+  equationFormula: {
+    fontSize: 18,
     fontWeight: '700',
     color: '#F1F5F9',
-    flex: 1,
-  },
-  stepTitleDone: {
-    color: '#94A3B8',
-    textDecorationLine: 'line-through',
-  },
-  stepCheckboxIcon: {
-    fontSize: 14,
-    marginLeft: 6,
-  },
-  stepDescText: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginTop: 4,
-    lineHeight: 17,
-  },
-  stepDescDone: {
-    color: '#64748B',
+    letterSpacing: 1,
   },
 
-  // Balance Scale Styles
+  // Footer & Replay
+  autoFooterRow: {
+    marginTop: 6,
+    gap: 8,
+  },
+  conclusionBox: {
+    backgroundColor: '#1E293B',
+    borderRadius: 10,
+    padding: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#5FEDC5',
+  },
+  conclusionText: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  replayButton: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#475569',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  replayButtonIcon: {
+    color: '#5FEDC5',
+    fontSize: 14,
+    fontWeight: '800',
+    marginRight: 6,
+  },
+  replayButtonText: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  // Scale Styles
   scaleContainer: {
-    height: 160,
+    height: 140,
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: 10,
+    marginVertical: 8,
   },
   scaleFulcrumTop: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: '#94A3B8',
     zIndex: 10,
   },
   scaleFulcrumPillar: {
     width: 6,
-    height: 60,
+    height: 50,
     backgroundColor: '#475569',
   },
   scaleFulcrumBase: {
-    width: 60,
-    height: 8,
-    borderRadius: 4,
+    width: 50,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: '#64748B',
   },
   scaleBeam: {
     position: 'absolute',
-    top: 50,
-    width: SCREEN_WIDTH > 400 ? 300 : 260,
-    height: 8,
+    top: 45,
+    width: 250,
+    height: 6,
     backgroundColor: '#CBD5E1',
-    borderRadius: 4,
+    borderRadius: 3,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
   centerPivotDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: '#0F172A',
     borderWidth: 2,
     borderColor: '#5FEDC5',
   },
   leftPanAssembly: {
     position: 'absolute',
-    left: -10,
-    top: 4,
+    left: -8,
+    top: 3,
     alignItems: 'center',
   },
   rightPanAssembly: {
     position: 'absolute',
-    right: -10,
-    top: 4,
+    right: -8,
+    top: 3,
     alignItems: 'center',
   },
   scaleChain: {
-    width: 2,
-    height: 35,
+    width: 1.5,
+    height: 30,
     backgroundColor: '#94A3B8',
   },
   panPlate: {
     backgroundColor: '#1E293B',
     borderWidth: 1.5,
     borderColor: '#3B82F6',
-    alignItems: 'center',
-    minWidth: 90,
-  },
-  panJunior: {
-    borderRadius: 14,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-  },
-  panMiddle: {
     borderRadius: 8,
-    paddingVertical: 6,
+    paddingVertical: 5,
     paddingHorizontal: 8,
+    alignItems: 'center',
+    minWidth: 80,
   },
   panValueText: {
     color: '#F8FAFC',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
   },
   panLabelText: {
     color: '#94A3B8',
+    fontSize: 10,
+  },
+
+  // Step Sequence Styles
+  stepsContainer: {
+    gap: 8,
+    marginVertical: 4,
+  },
+  stepItemCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  stepItemActive: {
+    borderColor: '#5FEDC5',
+    backgroundColor: '#132E3A',
+  },
+  stepBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#334155',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stepBadgeActive: {
+    backgroundColor: '#0F766E',
+  },
+  stepBadgeText: {
+    color: '#F8FAFC',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  stepTitleText: {
+    color: '#E2E8F0',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  stepTitleActive: {
+    color: '#5FEDC5',
+    fontWeight: '700',
+  },
+  stepDescText: {
+    color: '#94A3B8',
     fontSize: 11,
     marginTop: 2,
   },
-  guessButtonsRow: {
+
+  // Match Pairs Styles
+  pairsList: {
+    gap: 6,
+    marginVertical: 6,
+  },
+  pairLinkedRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 8,
-    marginTop: 10,
-  },
-  guessBtn: {
-    flex: 1,
     backgroundColor: '#1E293B',
-    borderWidth: 1.5,
-    borderColor: '#334155',
-    borderRadius: 12,
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  guessBtnSelected: {
-    borderColor: '#3B82F6',
-    backgroundColor: '#1E3A8A30',
-  },
-  guessBtnCorrect: {
-    borderColor: '#10B981',
-    backgroundColor: '#064E3B40',
-  },
-  guessBtnText: {
-    color: '#F8FAFC',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  guessBtnSub: {
-    color: '#94A3B8',
-    fontSize: 10,
-    marginTop: 2,
-  },
-  scaleResultBanner: {
-    marginTop: 12,
-    backgroundColor: '#1E293B',
-    borderRadius: 12,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  scaleResultSymbol: {
-    color: '#5FEDC5',
-    fontSize: 22,
-    fontWeight: '800',
-    marginRight: 10,
-  },
-  scaleResultExplanation: {
-    color: '#E2E8F0',
-    fontSize: 13,
-    flex: 1,
-  },
-  feedbackBox: {
-    marginTop: 10,
-    padding: 8,
     borderRadius: 10,
-    backgroundColor: '#064E3B30',
-    alignItems: 'center',
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
-  feedbackText: {
+  pairLeftChip: {
+    flex: 1,
+    backgroundColor: '#1E3A8A30',
+    padding: 8,
+    borderRadius: 8,
+  },
+  pairLeftText: {
+    color: '#93C5FD',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  pairLinkArrow: {
+    color: '#5FEDC5',
+    fontSize: 16,
+    marginHorizontal: 8,
+    fontWeight: '700',
+  },
+  pairRightChip: {
+    flex: 1,
+    backgroundColor: '#064E3B30',
+    padding: 8,
+    borderRadius: 8,
+  },
+  pairRightText: {
     color: '#6EE7B7',
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
+    textAlign: 'center',
   },
 
   // Universal Card Styles
   universalCardRoot: {
     backgroundColor: '#1E293B',
-    borderWidth: 2,
-  },
-  universalJunior: {
-    borderRadius: 20,
-    padding: 16,
-  },
-  universalMiddle: {
-    borderRadius: 14,
+    borderWidth: 1.5,
+    borderRadius: 16,
     padding: 14,
   },
-  universalHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  universalIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  universalIcon: {
-    fontSize: 24,
-  },
   universalBadge: {
-    alignSelf: 'flex-start',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
-    marginBottom: 4,
   },
   universalBadgeText: {
     color: '#0B0F17',
     fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  universalTitle: {
-    color: '#F8FAFC',
-    fontSize: 15,
-    fontWeight: '700',
   },
   highlightBox: {
     backgroundColor: '#0B0F1760',
-    borderRadius: 12,
+    borderRadius: 10,
     borderWidth: 1,
-    padding: 14,
+    padding: 12,
     alignItems: 'center',
     marginVertical: 8,
   },
   highlightText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
     textAlign: 'center',
-    letterSpacing: 0.5,
   },
   universalExplanation: {
     color: '#94A3B8',
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 16,
   },
 });

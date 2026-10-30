@@ -17,7 +17,7 @@ import { Theme, darkTheme } from '../theme/colors';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 320);
 
-export type DrawerTabType = 'study' | 'dictionary' | 'translator' | 'tests' | 'reading' | 'settings' | 'feedback' | 'visual_dev';
+export type DrawerTabType = 'study' | 'dictionary' | 'translator' | 'tests' | 'reading' | 'settings' | 'feedback';
 
 interface DrawerMenuProps {
   isOpen: boolean;
@@ -117,12 +117,6 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
       id: 'translator',
       icon: '🌐',
       title: 'Быстрый переводчик',
-    },
-    {
-      id: 'visual_dev',
-      icon: '🎨',
-      title: 'Интерактивные шаблоны',
-      badge: 'DEV',
     },
     // Пункты «Подготовка к контрольным» и «Помощь в чтении» сохранены в коде без визуального отображения:
     // {

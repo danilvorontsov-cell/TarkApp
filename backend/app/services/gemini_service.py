@@ -284,12 +284,12 @@ class GeminiTutorService:
                 ],
                 worked_example=WorkedExample(
                     title="Пример решения (Näidis)",
-                    given="Например, в учебнике пример: 9 + 7 = ?",
+                    given="Например, в учебнике пример: 3 + 2 = ?",
                     steps=[
-                        "1. Первое слагаемое: 9 (esimene liidetav)",
-                        "2. Второе слагаемое: 7 (teine liidetav)",
-                        "3. Складываем вместе: 9 + 7 = 16",
-                        "4. Вывод: Сумма равна 16 (summa on 16)"
+                        "1. Первое слагаемое: 3 (esimene liidetav)",
+                        "2. Второе слагаемое: 2 (teine liidetav)",
+                        "3. Складываем вместе: 3 + 2 = 5",
+                        "4. Меняем местами: 2 + 3 = 5. Сумма не изменилась!"
                     ],
                     note="По этому же образцу найди слагаемые и реши остальные примеры на странице!"
                 ),
@@ -301,30 +301,29 @@ class GeminiTutorService:
                 ),
                 answer_template="Esimene liidetav on [liidetav], teine liidetav on [liidetav], summa on [summa].",
                 voice_prompt_script=(
-                    f"Привет, {nickname}! Не бойся задания. Мы разберем числа через {chosen_interest}. "
-                    "Сложи числа и скажи: summa on, и назови свой ответ!"
+                    f"Привет, {nickname}! Посмотри на кубики прямо под подсказкой: они меняются местами, а сумма остается прежней — 5! Сложи числа и скажи: summa on viis!"
                 ),
                 visual=MathBlocksVisual(
-                    title="Сложение слагаемых (Liidetavad)",
-                    instruction="Нажимай на кубики, чтобы наглядно сложить группы",
+                    title="Переместительный закон (Liitmise vahetuvusseadus)",
+                    instruction="Смотри, как слагаемые меняются местами: 3 + 2 = 2 + 3 = 5",
                     groups=[
                         MathBlockGroup(
-                            label="Esimene liidetav (9)",
-                            count=9,
+                            label="Esimene liidetav (3)",
+                            count=3,
                             color="#3B82F6",
-                            item_label="кубик",
+                            item_label="синий кубик",
                             symbol="🟦"
                         ),
                         MathBlockGroup(
-                            label="Teine liidetav (7)",
-                            count=7,
+                            label="Teine liidetav (2)",
+                            count=2,
                             color="#10B981",
-                            item_label="кубик",
+                            item_label="зеленый кубик",
                             symbol="🟩"
                         ),
                     ],
                     operation="+",
-                    target_count=16,
+                    target_count=5,
                 )
             )
 

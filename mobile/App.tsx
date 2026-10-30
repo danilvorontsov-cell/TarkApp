@@ -63,13 +63,78 @@ import { PaywallScreen } from './src/screens/PaywallScreen';
 import { ThemedAlert, ThemedAlertContainer } from './src/components/ThemedAlert';
 import { ProfileSetupModal } from './src/components/ProfileSetupModal';
 import { TaskVisualizer } from './src/components/TaskVisualizer';
-import { DevVisualScreen } from './src/screens/DevVisualScreen';
 
 // Initialize Sentry stub/client once at entry
 initSentry();
 
-type TabType = 'study' | 'dictionary' | 'translator' | 'tests' | 'reading' | 'settings' | 'feedback' | 'visual_dev';
+type TabType = 'study' | 'dictionary' | 'translator' | 'tests' | 'reading' | 'settings' | 'feedback';
 type Tab2Mode = 'vocab' | 'history';
+
+// Демонстрационный разбор для мгновенной наглядной проверки переместительного закона слагаемых
+const SAMPLE_MATH_LESSON: PageAnalysisResponse = {
+  task_title: 'Liitmine: liidetavad ja summa (Сложение и переместительный закон)',
+  theme_explanation:
+    'В математике есть золотое правило: от перемены мест слагаемых сумма не меняется! Складываем 3 синих кубика и 2 зеленых: 3 + 2 = 5. А если поменять их местами: 2 + 3 = 5!',
+  alternative_explanation:
+    'Представь, что в одной руке 3 кубика, а в другой 2. Если поменять руки — кубиков всё равно останется ровно 5!',
+  vocabulary: [
+    {
+      est: 'liidetav',
+      ru: 'слагаемое (число, которое мы складываем)',
+      example: '3 on esimene liidetav ja 2 on teine liidetav.',
+    },
+    {
+      est: 'summa',
+      ru: 'сумма (результат сложения)',
+      example: 'Nende arvude summa on viis (5).',
+    },
+    {
+      est: 'vahetuvusseadus',
+      ru: 'переместительный закон',
+      example: 'Liitmise vahetuvusseadus: a + b = b + a.',
+    },
+  ],
+  worked_example: {
+    title: 'Пример решения (Näidis)',
+    given: 'В учебнике задание: 3 + 2 = ? и 2 + 3 = ?',
+    steps: [
+      '1. Первое слагаемое: 3 (esimene liidetav)',
+      '2. Второе слагаемое: 2 (teine liidetav)',
+      '3. Складываем вместе: 3 + 2 = 5',
+      '4. Меняем слагаемые местами: 2 + 3 = 5. Сумма не изменилась!',
+    ],
+    note: 'Используй переместительный закон для удобного устного счёта!',
+  },
+  visual: {
+    type: 'math_blocks',
+    title: 'Переместительный закон сложения',
+    instruction: 'Смотри, как кубики взлетают и меняются местами: 3 + 2 = 2 + 3 = 5',
+    groups: [
+      {
+        label: 'Первое слагаемое (3)',
+        count: 3,
+        color: '#3B82F6',
+        item_label: 'синий кубик',
+        symbol: '🟦',
+      },
+      {
+        label: 'Второе слагаемое (2)',
+        count: 2,
+        color: '#10B981',
+        item_label: 'зеленый кубик',
+        symbol: '🟩',
+      },
+    ],
+    operation: '+',
+    target_count: 5,
+  },
+  how_to_answer:
+    '1. Найди первое число (esimene liidetav).\n2. Прибавь второе число (teine liidetav).\n3. Запиши результат (summa).\n4. Сформулируй ответ по шаблону.',
+  answer_template: 'Esimene liidetav on [3], teine liidetav on [2], summa on [5].',
+  voice_prompt_script:
+    'Привет! Посмотри на кубики прямо под подсказкой: они взлетают и меняются местами, а сумма остается прежней — 5! Сложи числа и скажи: summa on viis!',
+  is_acceptable: true,
+};
 
 interface SessionLesson {
   id: string;
@@ -1258,6 +1323,20 @@ function MainApp() {
               </Text>
             </View>
           </View>
+
+          {/* Quick Demo Preview Button for testing visual animations */}
+          <TouchableOpacity
+            style={styles.quickDemoLessonButton}
+            onPress={() => {
+              setAnalysis(SAMPLE_MATH_LESSON);
+              setShowAlternativeExplanation(false);
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.quickDemoLessonButtonText}>
+              ✨ Открыть пример: Сложение и перестановка (3 + 2 = 5)
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -1309,6 +1388,12 @@ function MainApp() {
                 </Text>
               </View>
               <Text style={styles.voiceScriptText}>{cleanEstTags(analysis.voice_prompt_script)}</Text>
+
+              {/* Автоматическая наглядная визуализация прямо между текстом подсказки и кнопками действий */}
+              {Boolean(analysis.visual) && profile.grade <= 6 && (
+                <TaskVisualizer visual={analysis.visual} grade={profile.grade} />
+              )}
+
               <TouchableOpacity
                 style={[
                   styles.voiceHeroPlayButton,
@@ -1598,9 +1683,6 @@ function MainApp() {
               ) : null}
             </View>
           ) : null}
-
-          {/* Card: Интерактивный визуальный шаблон (1–6 классы) */}
-          <TaskVisualizer visual={analysis.visual} grade={profile.grade} />
 
           {/* Card 5: Как решить задание самому */}
           <View style={styles.modularCard}>
@@ -2426,9 +2508,6 @@ function MainApp() {
               currentGrade={profile.grade}
             />
           )}
-          {currentTab === 'visual_dev' && (
-            <DevVisualScreen onBack={() => switchTab('study')} />
-          )}
         </ScrollView>
       </View>
 
@@ -3077,6 +3156,24 @@ const styles = StyleSheet.create({
   },
   actionButtonSenior: {
     borderRadius: 14,
+  },
+  quickDemoLessonButton: {
+    marginTop: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    backgroundColor: 'rgba(95, 237, 197, 0.08)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(95, 237, 197, 0.35)',
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickDemoLessonButtonText: {
+    color: '#5FEDC5',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   actionButtonGradient: {
     paddingVertical: 14,
