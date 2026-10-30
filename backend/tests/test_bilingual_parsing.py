@@ -123,7 +123,6 @@ def test_build_ssml_with_est_tag():
     ssml = build_ssml(text)
     assert '<speak version="1.0"' in ssml
     assert 'xml:lang="ru-RU"' in ssml
-    assert '<prosody rate="-8%">' in ssml
     assert f'<voice name="{DEFAULT_VOICE}">' in ssml
     assert 'Привет! <break time="500ms" /> Запомни слово' in ssml
     assert f'<voice name="{ESTONIAN_VOICE}">' in ssml
@@ -135,7 +134,6 @@ def test_build_ssml_pure_estonian():
     text = "Tere tulemast kooli!"
     ssml = build_ssml(text, voice=ESTONIAN_VOICE)
     assert 'xml:lang="et-EE"' in ssml
-    assert '<prosody rate="-8%">' in ssml
     assert f'<voice name="{ESTONIAN_VOICE}">' in ssml
     assert 'Tere tulemast kooli! <break time="500ms" />' in ssml
 
@@ -201,7 +199,6 @@ def test_target_phrase_ssml_pipeline():
     assert "Майнкрафт" in ssml
     assert "5 &gt; 3" in ssml
     assert "затем клавишу" in ssml
-    assert '<prosody rate="-8%">' in ssml
     assert '<break time="500ms" />' in ssml
     assert f'<voice name="{DEFAULT_VOICE}">' in ssml
     assert f'<voice name="{ESTONIAN_VOICE}">' in ssml

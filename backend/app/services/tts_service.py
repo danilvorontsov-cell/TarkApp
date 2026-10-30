@@ -739,7 +739,7 @@ def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -
     """
     Формирует SSML разметку для одного запроса к Azure Speech Services:
     - Санитизирует текст (очищает markdown, конвертирует стрелки, выполняет фонетическую замену брендов/клавиш).
-    - Оборачивает речь в <prosody rate="-8%"> для комфортного детского темпа.
+    - Скорость чтения стандартная естественная (100% темп речи диктора).
     - Добавляет естественные паузы <break time="500ms" /> между предложениями.
     - Теги <est>...</est> и эстонские термины оборачиваются в <voice name="et-EE-AnuNeural">.
     - Русский и смешанный текст оборачивается в <voice name="ru-RU-SvetlanaMultilingualNeural">.
@@ -782,22 +782,10 @@ def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -
             if not content_with_breaks.endswith('/>'):
                 content_with_breaks = f'{content_with_breaks}. <break time="500ms" />'
 
-        voice_blocks.append(
-            f'  <voice name="{v_name}">\n'
-            f'    <prosody rate="-8%">\n'
-            f'      {content_with_breaks}\n'
-            f'    </prosody>\n'
-            f'  </voice>'
-        )
+        voice_blocks.append(f'  <voice name="{v_name}">{content_with_breaks}</voice>')
 
     if not voice_blocks:
-        voice_blocks.append(
-            f'  <voice name="{DEFAULT_VOICE}">\n'
-            f'    <prosody rate="-8%">\n'
-            f'      {_escape_ssml(clean_text)}\n'
-            f'    </prosody>\n'
-            f'  </voice>'
-        )
+        voice_blocks.append(f'  <voice name="{DEFAULT_VOICE}">{_escape_ssml(clean_text)}</voice>')
 
     inner_xml = "\n".join(voice_blocks)
     return (
