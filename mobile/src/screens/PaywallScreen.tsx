@@ -35,8 +35,8 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
   onClose,
   onOpenKeyActivation,
   canClose = true,
-  remainingFreeScans = 5,
-  totalFreeScans = 5,
+  remainingFreeScans = 20,
+  totalFreeScans = 20,
   hasPro = false,
 }) => {
   const insets = useSafeAreaInsets();

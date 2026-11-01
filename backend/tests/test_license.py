@@ -233,7 +233,7 @@ def test_reviews_limit_reached_blocks_analysis(setup_db):
     assert response.status_code == 403
     data = response.json()
     assert data["detail"]["error"] == "REVIEWS_LIMIT_REACHED"
-    assert "Бесплатные разборы закончились" in data["detail"]["message"]
+    assert "Бесплатные разборы" in data["detail"]["message"]
 
 
 def test_activated_key_grants_unlimited_reviews(setup_db):

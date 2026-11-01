@@ -2248,6 +2248,29 @@ function MainApp() {
         <Text style={[styles.cardTitle, isJunior && styles.cardTitleJunior]}>
           🔑 Лицензия и подписка
         </Text>
+
+        {/* Interactive Setting Row: Тариф и ключ доступа */}
+        <TouchableOpacity
+          style={styles.settingTariffRow}
+          onPress={() => setIsPaywallVisible(true)}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="Тариф и ключ доступа"
+        >
+          <View style={styles.settingTariffIconWrap}>
+            <Text style={styles.settingTariffIcon}>💳</Text>
+          </View>
+          <View style={styles.settingTariffContent}>
+            <Text style={styles.settingTariffTitle}>Тариф и ключ доступа</Text>
+            <Text style={styles.settingTariffSubtitle}>
+              {licenseStatus?.has_key
+                ? (licenseStatus.days_left ? `TarkApp PRO активен (${licenseStatus.days_left} дн.)` : 'TarkApp PRO активен')
+                : `Пробный: осталось ${licenseStatus?.days_left ?? 14} дней`}
+            </Text>
+          </View>
+          <Text style={styles.settingTariffChevron}>›</Text>
+        </TouchableOpacity>
+
         <Text style={styles.caption}>
           Учёт доступа ведётся по уникальному номеру устройства без необходимости регистрации.
         </Text>
@@ -2560,6 +2583,7 @@ function MainApp() {
         onLogout={handleLogout}
         onOpenPaywall={() => setIsPaywallVisible(true)}
         hasPro={Boolean(licenseStatus?.has_key)}
+        licenseStatus={licenseStatus}
         onOpenProfileSetup={() => setIsProfileSetupModalVisible(true)}
         onOpenDemoLesson={() => {
           AudioQueueManager.stop();
@@ -4567,6 +4591,51 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     color: darkTheme.textSecondary,
     marginBottom: 8,
+  },
+  settingTariffRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginTop: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  settingTariffIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(95, 237, 197, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  settingTariffIcon: {
+    fontSize: 18,
+  },
+  settingTariffContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  settingTariffTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#EDF2F7',
+    marginBottom: 2,
+  },
+  settingTariffSubtitle: {
+    fontSize: 12.5,
+    color: '#8C9BA8',
+    lineHeight: 16,
+  },
+  settingTariffChevron: {
+    fontSize: 22,
+    color: 'rgba(255, 255, 255, 0.35)',
+    marginLeft: 8,
+    fontWeight: '500',
   },
   openPaywallBtn: {
     borderRadius: 14,

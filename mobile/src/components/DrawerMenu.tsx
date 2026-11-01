@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Theme, darkTheme } from '../theme/colors';
+import { LicenseStatus } from '../services/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 320);
@@ -32,6 +33,7 @@ interface DrawerMenuProps {
   onLogout?: () => void;
   onOpenPaywall?: () => void;
   hasPro?: boolean;
+  licenseStatus?: LicenseStatus | null;
   onOpenProfileSetup?: () => void;
   onOpenDemoLesson?: () => void;
 }
@@ -56,6 +58,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
   onLogout,
   onOpenPaywall,
   hasPro = false,
+  licenseStatus,
   onOpenProfileSetup,
   onOpenDemoLesson,
 }) => {
@@ -64,6 +67,10 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
   const [isRendered, setIsRendered] = React.useState(isOpen);
   const hasUser = Boolean(userNickname && userNickname.trim().length > 0);
   const displayName = hasUser ? userNickname.trim() : '';
+  const isPro = Boolean(hasPro || licenseStatus?.has_key);
+  const freeReviewsLeft = licenseStatus?.free_reviews_left ?? 20;
+  const maxFreeReviews = licenseStatus?.max_free_reviews ?? 20;
+  const daysLeft = licenseStatus?.days_left;
 
   useEffect(() => {
     if (isOpen) {
@@ -286,38 +293,31 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
           ) : null}
         </View>
 
-        {/* PRO Subscription Banner */}
+        {/* Compact Status Card */}
         <TouchableOpacity
-          style={styles.proDrawerCard}
+          style={styles.statusCard}
           onPress={() => {
             onClose();
             if (onOpenPaywall) onOpenPaywall();
           }}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={isPro ? 'TarkApp PRO активен' : 'Бесплатный режим'}
         >
-          <Text style={styles.proDrawerIcon}>{hasPro ? '👑' : '💎'}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.proDrawerTitle}>
-              {hasPro ? 'Подписка активна' : 'Тарифы TarkApp PRO'}
+          <View style={styles.statusIconCircle}>
+            <Text style={styles.statusIconText}>{isPro ? '⭐' : '🎁'}</Text>
+          </View>
+          <View style={styles.statusTextContainer}>
+            <Text style={styles.statusTitle}>
+              {isPro ? 'TarkApp PRO активен' : 'Бесплатный режим'}
             </Text>
-            <Text style={styles.proDrawerSub}>
-              {hasPro ? 'Безлимитный доступ' : 'От 8.88 € / месяц'}
+            <Text style={styles.statusSubtitle} numberOfLines={1}>
+              {isPro
+                ? (daysLeft ? `Безлимитный доступ (${daysLeft} дн.)` : 'Безлимитный доступ')
+                : `Осталось разборов: ${freeReviewsLeft} из ${maxFreeReviews} на сегодня`}
             </Text>
           </View>
-          {hasPro ? (
-            <View style={[styles.proDrawerBadge, styles.proDrawerBadgeActive]}>
-              <Text style={[styles.proDrawerBadgeText, styles.proDrawerBadgeTextActive]}>PRO</Text>
-            </View>
-          ) : (
-            <LinearGradient
-              colors={['#66F6CF', '#42DCA3']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 0, y: 1 }}
-              style={styles.proDrawerBadge}
-            >
-              <Text style={styles.proDrawerBadgeText}>Выбрать</Text>
-            </LinearGradient>
-          )}
+          <Text style={styles.statusChevron}>›</Text>
         </TouchableOpacity>
 
         {/* Thin Divider Line */}
@@ -572,47 +572,52 @@ const styles = StyleSheet.create({
     marginHorizontal: 18,
     marginVertical: 4,
   },
-  proDrawerCard: {
+  statusCard: {
     flexDirection: 'row',
     alignItems: 'center',
     marginHorizontal: 12,
-    marginBottom: 6,
-    padding: 12,
-    borderRadius: 16,
-    backgroundColor: '#1E292F',
+    marginBottom: 8,
+    marginTop: 4,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: '#1E252D',
     borderWidth: 1,
-    borderColor: darkTheme.accent,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  proDrawerIcon: {
-    fontSize: 22,
+  statusIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
     marginRight: 10,
   },
-  proDrawerTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: darkTheme.textPrimary,
+  statusIconText: {
+    fontSize: 16,
   },
-  proDrawerSub: {
+  statusTextContainer: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  statusTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: darkTheme.textPrimary,
+    lineHeight: 17,
+  },
+  statusSubtitle: {
     fontSize: 11.5,
     color: darkTheme.textSecondary,
     marginTop: 1,
+    lineHeight: 15,
   },
-  proDrawerBadge: {
-    backgroundColor: darkTheme.accent,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 10,
-  },
-  proDrawerBadgeActive: {
-    backgroundColor: 'rgba(95, 237, 197, 0.2)',
-  },
-  proDrawerBadgeText: {
-    color: darkTheme.accentText,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  proDrawerBadgeTextActive: {
-    color: darkTheme.accent,
+  statusChevron: {
+    fontSize: 18,
+    color: 'rgba(255, 255, 255, 0.35)',
+    marginLeft: 6,
+    fontWeight: '600',
   },
   drawerFooter: {
     paddingHorizontal: 12,
