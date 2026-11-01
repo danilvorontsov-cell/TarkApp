@@ -148,9 +148,9 @@ class TestOcrEdgeCases:
         clear_analysis_cache()
         device_id = "test-no-deduct-on-unreadable-photo-999"
 
-        # 1. Check initial license status: 5 free reviews
+        # 1. Check initial license status: 20 free reviews
         status_before = client.get("/api/v1/license/status", headers={"X-Device-ID": device_id}).json()
-        assert status_before["free_reviews_left"] == 5
+        assert status_before["free_reviews_left"] == 20
 
         async def mock_unacceptable_gemini(*args, **kwargs):
             profile = kwargs.get("profile")
@@ -179,9 +179,9 @@ class TestOcrEdgeCases:
         assert resp2.status_code == 200
         assert resp2.json().get("is_acceptable") is False
 
-        # 3. Verify free_reviews_left is STILL 5 (no attempt deducted!)
+        # 3. Verify free_reviews_left is STILL 20 (no attempt deducted!)
         status_after = client.get("/api/v1/license/status", headers={"X-Device-ID": device_id}).json()
-        assert status_after["free_reviews_left"] == 5
+        assert status_after["free_reviews_left"] == 20
 
         # 4. Verify cache was NOT poisoned with the emergency fallback
         profile = UserProfile(grade=3, tier=AgeTier.PRIMARY, nickname="Тест")

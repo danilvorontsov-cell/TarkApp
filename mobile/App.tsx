@@ -621,7 +621,7 @@ function MainApp() {
   const handleTakePhoto = async (mode: 'replace' | 'append' = 'replace') => {
     setAnalysisError(null);
     // Check if free review allowance ran out
-    if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 5) <= 0) {
+    if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 20) <= 0) {
       setModalBlockReason('reviews_limit_reached');
       setIsPaywallVisible(true);
       return;
@@ -680,7 +680,7 @@ function MainApp() {
   const handlePickImage = async (mode: 'replace' | 'append' = 'replace') => {
     setAnalysisError(null);
     // Check if free review allowance ran out
-    if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 5) <= 0) {
+    if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 20) <= 0) {
       setModalBlockReason('reviews_limit_reached');
       setIsPaywallVisible(true);
       return;
@@ -748,7 +748,7 @@ function MainApp() {
 
   const handleAddPagePrompt = () => {
     // Check if free review allowance ran out
-    if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 5) <= 0) {
+    if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 20) <= 0) {
       setModalBlockReason('reviews_limit_reached');
       setIsPaywallVisible(true);
       return;
@@ -1227,19 +1227,19 @@ function MainApp() {
               <TouchableOpacity
                 style={[
                   styles.reviewLimitBadge,
-                  (licenseStatus?.free_reviews_left ?? 5) === 0 && styles.reviewLimitBadgeExhausted,
+                  (licenseStatus?.free_reviews_left ?? 20) === 0 && styles.reviewLimitBadgeExhausted,
                 ]}
                 onPress={() => setIsPaywallVisible(true)}
                 activeOpacity={0.75}
-                accessibilityLabel={`Осталось ${licenseStatus?.free_reviews_left ?? 5} бесплатных разборов. Нажмите для выбора тарифа.`}
+                accessibilityLabel={`Осталось ${licenseStatus?.free_reviews_left ?? 20} бесплатных разборов. Нажмите для выбора тарифа.`}
               >
                 <Text
                   style={[
                     styles.reviewLimitBadgeText,
-                    (licenseStatus?.free_reviews_left ?? 5) === 0 && styles.reviewLimitBadgeTextExhausted,
+                    (licenseStatus?.free_reviews_left ?? 20) === 0 && styles.reviewLimitBadgeTextExhausted,
                   ]}
                 >
-                  🎁 Бесплатных разборов: {licenseStatus?.free_reviews_left ?? 5}/5
+                  🎁 Бесплатных разборов: {licenseStatus?.free_reviews_left ?? 20}/{licenseStatus?.max_free_reviews ?? 20}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -2264,7 +2264,7 @@ function MainApp() {
               ? licenseStatus.has_key
                 ? `Активен пакет: ${licenseStatus.package_name || 'PRO'} (осталось ${licenseStatus.days_left} дн.)`
                 : licenseStatus.is_active
-                ? `Бесплатный режим Free (${licenseStatus.free_reviews_left ?? 5}/5 разборов)`
+                ? `Бесплатный режим Free (${licenseStatus.free_reviews_left ?? 20}/${licenseStatus.max_free_reviews ?? 20} разборов в сутки)`
                 : 'Бесплатные попытки исчерпаны'
               : 'Режим Free'}
           </Text>
@@ -2585,8 +2585,8 @@ function MainApp() {
         onClose={() => setIsPaywallVisible(false)}
         onOpenKeyActivation={() => setIsKeyModalVisible(true)}
         canClose={true}
-        remainingFreeScans={licenseStatus?.free_reviews_left ?? 5}
-        totalFreeScans={licenseStatus?.max_free_reviews ?? 5}
+        remainingFreeScans={licenseStatus?.free_reviews_left ?? 20}
+        totalFreeScans={licenseStatus?.max_free_reviews ?? 20}
         hasPro={Boolean(licenseStatus?.has_key)}
       />
 

@@ -16,15 +16,16 @@ from app.models.license import Device, AccessKey
 logger = logging.getLogger("tarkapp.license")
 
 TRIAL_DURATION_DAYS: int = 14
-DEFAULT_FREE_REVIEWS: int = 5
+DEFAULT_FREE_REVIEWS: int = 20
 KEY_CHAR_SET: str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 
 def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
     """
     Checks or registers a device by device_id.
-    - If device is not in database, automatically grants a 14-day trial period and 5 free reviews.
+    - If device is not in database, automatically grants a 14-day trial period and 20 free reviews/day.
     - Compares trial_expires_at against server UTC time (cannot be spoofed by phone time changes).
+    - Automatically resets daily free review quota (20 reviews per day) when date changes.
     - Returns status dictionary: { allowed, is_active, has_key, free_reviews_left, max_free_reviews, days_left, expires_at, device_id, activated_key }.
     """
     clean_id = (device_id or "").strip()
@@ -32,6 +33,7 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
         clean_id = "unknown-device"
 
     now = datetime.utcnow()
+    today_str = now.strftime("%Y-%m-%d")
     device = db.query(Device).filter(Device.device_id == clean_id).first()
     is_dev = (
         settings.APP_ENV in ("development", "test")
@@ -39,7 +41,7 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
     )
 
     if not device:
-        # First seen: create new device with 14-day trial and 5 free reviews
+        # First seen: create new device with 14-day trial and 20 free reviews per day
         expires_at = now + timedelta(days=365 if is_dev else TRIAL_DURATION_DAYS)
         device = Device(
             device_id=clean_id,
@@ -48,13 +50,14 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
             has_active_access=True,
             activated_key="DEV-KEY-TEST" if is_dev else None,
             free_reviews_left=DEFAULT_FREE_REVIEWS,
+            last_review_date=today_str,
         )
         db.add(device)
         db.commit()
         db.refresh(device)
         logger.info(
             f"[LICENSE] Registered new device {clean_id} with 14-day trial until {expires_at.isoformat()}Z "
-            f"and {DEFAULT_FREE_REVIEWS} free reviews."
+            f"and {DEFAULT_FREE_REVIEWS} free reviews per day."
         )
 
     # For dev-test-device, always keep active
@@ -71,6 +74,17 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
     if device.has_active_access != is_allowed:
         device.has_active_access = is_allowed
         db.commit()
+
+    # Daily reset: if on trial and calendar date changed (or newly migrated), reset quota to 20
+    device_last_date = getattr(device, "last_review_date", None)
+    if not has_key and device_last_date != today_str:
+        device.free_reviews_left = DEFAULT_FREE_REVIEWS
+        device.last_review_date = today_str
+        db.commit()
+        db.refresh(device)
+        logger.info(
+            f"[LICENSE] Reset daily free reviews quota for device {clean_id} to {DEFAULT_FREE_REVIEWS} (date={today_str})"
+        )
 
     delta = device.trial_expires_at - now
     if delta.total_seconds() > 0:
@@ -149,12 +163,12 @@ def verify_review_allowance(device_id: str, db: Session) -> Dict[str, Any]:
 
     # 3. Trial mode: check remaining free reviews
     if status_data["free_reviews_left"] <= 0:
-        logger.warning(f"[LICENSE] Device {clean_id} reached 0 free reviews limit.")
+        logger.warning(f"[LICENSE] Device {clean_id} reached 0 free reviews daily limit ({DEFAULT_FREE_REVIEWS}/{DEFAULT_FREE_REVIEWS}).")
         raise HTTPException(
             status_code=http_status.HTTP_403_FORBIDDEN,
             detail={
                 "error": "REVIEWS_LIMIT_REACHED",
-                "message": "Бесплатные разборы закончились. Введите ключ доступа.",
+                "message": f"Бесплатные разборы на сегодня закончились ({DEFAULT_FREE_REVIEWS}/{DEFAULT_FREE_REVIEWS}). Введите ключ доступа или возвращайтесь завтра.",
             },
         )
 
@@ -284,6 +298,7 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
             has_active_access=True,
             activated_key=None,
             free_reviews_left=DEFAULT_FREE_REVIEWS,
+            last_review_date=now.strftime("%Y-%m-%d"),
         )
         db.add(device)
         db.commit()

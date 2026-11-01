@@ -66,7 +66,10 @@ def init_db():
             result = conn.execute(text("PRAGMA table_info(devices)")).fetchall()
             col_names = [row[1] for row in result]
             if "free_reviews_left" not in col_names and "device_id" in col_names:
-                conn.execute(text("ALTER TABLE devices ADD COLUMN free_reviews_left INTEGER DEFAULT 5 NOT NULL"))
+                conn.execute(text("ALTER TABLE devices ADD COLUMN free_reviews_left INTEGER DEFAULT 20 NOT NULL"))
+                conn.commit()
+            if "last_review_date" not in col_names and "device_id" in col_names:
+                conn.execute(text("ALTER TABLE devices ADD COLUMN last_review_date VARCHAR DEFAULT NULL"))
                 conn.commit()
         except Exception:
             pass

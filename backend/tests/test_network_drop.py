@@ -40,21 +40,21 @@ class TestNetworkDropAndDisconnection:
     ):
         dev_id = "test-drop-client-cancel-dev"
 
-        # Register device with 5 free reviews
+        # Register device with 20 free reviews
         device = db_session.query(Device).filter(Device.device_id == dev_id).first()
         if device:
-            device.free_reviews_left = 5
+            device.free_reviews_left = 20
             device.activated_key = None
             db_session.commit()
         else:
             license_service.check_device_access(dev_id, db_session)
             device = db_session.query(Device).filter(Device.device_id == dev_id).first()
-            device.free_reviews_left = 5
+            device.free_reviews_left = 20
             device.activated_key = None
             db_session.commit()
 
         initial_reviews = device.free_reviews_left
-        assert initial_reviews == 5
+        assert initial_reviews == 20
 
         # Simulate client abruptly disconnecting mid-flight (asyncio task cancellation)
         async def mock_disconnected_mid_flight(*args, **kwargs):
@@ -82,8 +82,8 @@ class TestNetworkDropAndDisconnection:
         # Check database: attempts must remain UNCHANGED (5 attempts remaining)
         db_session.expire_all()
         refreshed_device = db_session.query(Device).filter(Device.device_id == dev_id).first()
-        assert refreshed_device.free_reviews_left == 5, (
-            f"Expected free_reviews_left to remain 5 after network drop, got: {refreshed_device.free_reviews_left}"
+        assert refreshed_device.free_reviews_left == 20, (
+            f"Expected free_reviews_left to remain 20 after network drop, got: {refreshed_device.free_reviews_left}"
         )
 
     def test_server_error_500_does_not_deduct_attempts(
@@ -91,16 +91,16 @@ class TestNetworkDropAndDisconnection:
     ):
         dev_id = "test-drop-server-err-dev"
 
-        # Register device with 5 free reviews
+        # Register device with 20 free reviews
         device = db_session.query(Device).filter(Device.device_id == dev_id).first()
         if device:
-            device.free_reviews_left = 5
+            device.free_reviews_left = 20
             device.activated_key = None
             db_session.commit()
         else:
             license_service.check_device_access(dev_id, db_session)
             device = db_session.query(Device).filter(Device.device_id == dev_id).first()
-            device.free_reviews_left = 5
+            device.free_reviews_left = 20
             device.activated_key = None
             db_session.commit()
 
@@ -122,10 +122,10 @@ class TestNetworkDropAndDisconnection:
 
         assert response.status_code == 500
 
-        # Verify free_reviews_left is still 5
+        # Verify free_reviews_left is still 20
         db_session.expire_all()
         refreshed_device = db_session.query(Device).filter(Device.device_id == dev_id).first()
-        assert refreshed_device.free_reviews_left == 5
+        assert refreshed_device.free_reviews_left == 20
 
     def test_successful_delivery_deducts_exactly_one_attempt(
         self, db_session, sample_jpeg_bytes
@@ -134,13 +134,13 @@ class TestNetworkDropAndDisconnection:
 
         device = db_session.query(Device).filter(Device.device_id == dev_id).first()
         if device:
-            device.free_reviews_left = 5
+            device.free_reviews_left = 20
             device.activated_key = None
             db_session.commit()
         else:
             license_service.check_device_access(dev_id, db_session)
             device = db_session.query(Device).filter(Device.device_id == dev_id).first()
-            device.free_reviews_left = 5
+            device.free_reviews_left = 20
             device.activated_key = None
             db_session.commit()
 
@@ -156,7 +156,7 @@ class TestNetworkDropAndDisconnection:
 
         assert response.status_code == 200
 
-        # Verify free_reviews_left is now 4
+        # Verify free_reviews_left is now 19
         db_session.expire_all()
         refreshed_device = db_session.query(Device).filter(Device.device_id == dev_id).first()
-        assert refreshed_device.free_reviews_left == 4
+        assert refreshed_device.free_reviews_left == 19

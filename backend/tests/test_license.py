@@ -33,14 +33,14 @@ def test_first_seen_device_gets_14_day_trial(setup_db):
     assert res["allowed"] is True
     assert res["is_active"] is True
     assert res["has_key"] is False
-    assert res["free_reviews_left"] == 5
-    assert res["max_free_reviews"] == 5
+    assert res["free_reviews_left"] == 20
+    assert res["max_free_reviews"] == 20
     assert res["days_left"] == 14
 
     dev_in_db = db.query(Device).filter(Device.device_id == device_id).first()
     assert dev_in_db is not None
     assert dev_in_db.has_active_access is True
-    assert dev_in_db.free_reviews_left == 5
+    assert dev_in_db.free_reviews_left == 20
     assert dev_in_db.trial_expires_at > datetime.utcnow()
 
 
@@ -183,8 +183,8 @@ def test_status_endpoint_returns_review_counters(setup_db):
     data = response.json()
     assert data["has_key"] is False
     assert data["package_name"] is None
-    assert data["free_reviews_left"] == 5
-    assert data["max_free_reviews"] == 5
+    assert data["free_reviews_left"] == 20
+    assert data["max_free_reviews"] == 20
     assert data["is_active"] is True
 
 
@@ -197,23 +197,24 @@ def test_deduct_review_attempt_decreases_counter(setup_db):
 
     # Deduct 1 review
     left1 = license_service.deduct_review_attempt(device_id, db)
-    assert left1 == 4
+    assert left1 == 19
 
     left2 = license_service.deduct_review_attempt(device_id, db)
-    assert left2 == 3
+    assert left2 == 18
 
 
 def test_reviews_limit_reached_blocks_analysis(setup_db):
     db = setup_db
     device_id = "test-device-limit-reached"
 
-    # Pre-create device with 0 reviews left
+    # Pre-create device with 0 reviews left today
     dev = Device(
         device_id=device_id,
         first_seen_at=datetime.utcnow() - timedelta(days=1),
         trial_expires_at=datetime.utcnow() + timedelta(days=13),
         has_active_access=True,
         free_reviews_left=0,
+        last_review_date=datetime.utcnow().strftime("%Y-%m-%d"),
     )
     db.add(dev)
     db.commit()
@@ -273,6 +274,33 @@ def test_activated_key_grants_unlimited_reviews(setup_db):
     # And deducting should NOT decrement reviews for key holders
     left = license_service.deduct_review_attempt(device_id, db)
     assert left == 0  # unchanged
+
+
+def test_daily_reset_restores_20_free_reviews(setup_db):
+    db = setup_db
+    device_id = "test-device-daily-reset"
+    yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Device used all reviews yesterday
+    dev = Device(
+        device_id=device_id,
+        first_seen_at=datetime.utcnow() - timedelta(days=2),
+        trial_expires_at=datetime.utcnow() + timedelta(days=12),
+        has_active_access=True,
+        free_reviews_left=0,
+        last_review_date=yesterday_str,
+    )
+    db.add(dev)
+    db.commit()
+
+    # Checking access today should automatically reset quota to 20
+    status = license_service.check_device_access(device_id, db)
+    assert status["free_reviews_left"] == 20
+    assert status["max_free_reviews"] == 20
+
+    dev_in_db = db.query(Device).filter(Device.device_id == device_id).first()
+    assert dev_in_db.free_reviews_left == 20
+    assert dev_in_db.last_review_date == datetime.utcnow().strftime("%Y-%m-%d")
 
 
 def test_invoice_endpoint_validates_email_and_generates_pdf(setup_db, monkeypatch):

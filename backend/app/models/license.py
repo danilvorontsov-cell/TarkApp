@@ -19,7 +19,8 @@ class Device(Base):
     trial_expires_at = Column(DateTime, nullable=False)
     has_active_access = Column(Boolean, default=True)
     activated_key = Column(String, nullable=True)
-    free_reviews_left = Column(Integer, default=5, nullable=False)
+    free_reviews_left = Column(Integer, default=20, nullable=False)
+    last_review_date = Column(String, nullable=True)  # YYYY-MM-DD for daily limit reset
 
 
 class AccessKey(Base):
@@ -40,8 +41,8 @@ class AccessKey(Base):
 class LicenseStatusResponse(BaseModel):
     is_active: bool
     has_key: bool = False
-    free_reviews_left: int = 5
-    max_free_reviews: int = 5
+    free_reviews_left: int = 20
+    max_free_reviews: int = 20
     days_left: int
     expires_at: str
     device_id: Optional[str] = None
@@ -71,8 +72,8 @@ class KeyActivateResponse(BaseModel):
     message: str
     is_active: bool
     has_key: bool = True
-    free_reviews_left: int = 5
-    max_free_reviews: int = 5
+    free_reviews_left: int = 20
+    max_free_reviews: int = 20
     days_left: int
     expires_at: str
     package_name: Optional[str] = None
