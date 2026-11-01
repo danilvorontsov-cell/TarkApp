@@ -27,7 +27,12 @@ class Settings(BaseSettings):
     MAX_IMAGE_SIZE_MB: int = 10
     
     # Database settings (SQLite / SQLAlchemy)
-    DATABASE_URL: str = "sqlite:///./tarkapp.db"
+    # Automatically prefers ./data/tarkapp.db when volume-mounted data dir exists
+    DATABASE_URL: str = (
+        "sqlite:///./data/tarkapp.db"
+        if os.path.isdir("data") or os.path.isdir("/app/data")
+        else "sqlite:///./tarkapp.db"
+    )
 
     # Rate Limiting settings (slowapi)
     RATE_LIMITING_ENABLED: bool = True

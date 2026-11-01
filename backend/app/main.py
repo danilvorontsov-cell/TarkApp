@@ -14,7 +14,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.limiter import limiter
 from app.logger import setup_logging, app_logger, error_logger
-from app.database import init_db
+from app.database import init_db, SessionLocal
 from app.routers.analyze import router as analyze_router
 from app.routers.health import router as health_router
 from app.routers.voice import router as voice_router
@@ -35,6 +35,14 @@ async def lifespan(app: FastAPI):
     try:
         init_db()
         logger.info("Database initialized successfully.")
+        try:
+            with SessionLocal() as db_session:
+                from app.services.license_service import sync_keys_from_file
+                synced_count = sync_keys_from_file(db_session)
+                if synced_count > 0:
+                    logger.info(f"Auto-synced {synced_count} keys from generated_keys.txt.")
+        except Exception as seed_err:
+            logger.warning(f"Could not auto-sync keys from file: {seed_err}")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
 

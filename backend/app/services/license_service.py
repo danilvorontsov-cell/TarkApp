@@ -1,9 +1,12 @@
 import math
 import logging
+import re
 import secrets
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 from fastapi import HTTPException, status as http_status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -191,6 +194,68 @@ def deduct_review_attempt(device_id: str, db: Session) -> int:
     return device.free_reviews_left
 
 
+def normalize_key_code(code: str) -> str:
+    """
+    Normalizes key code:
+    - Strips whitespace, invisible unicode characters, and converts to uppercase
+    - Converts unicode hyphens/dashes to standard ASCII '-'
+    - Removes internal spaces around hyphens and stray spaces
+    - If key was entered without hyphens (e.g. TARKA7B2C9D4), formats as TARK-A7B2-C9D4
+    """
+    if not code:
+        return ""
+    s = str(code).strip().upper()
+    s = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]", "-", s)
+    s = re.sub(r"\s*-\s*", "-", s)
+    s = "".join(s.split())
+    if len(s) == 12 and "-" not in s and s.startswith("TARK"):
+        s = f"{s[:4]}-{s[4:8]}-{s[8:12]}"
+    return s
+
+
+def sync_keys_from_file(db: Session, file_path: Optional[str] = None) -> int:
+    """
+    Syncs access keys from generated_keys.txt into the database.
+    Ensures all keys present in the file exist in the access_keys table with is_used=False.
+    """
+    candidates = [
+        Path(file_path) if file_path else None,
+        Path("generated_keys.txt"),
+        Path(__file__).resolve().parent.parent.parent / "generated_keys.txt",
+        Path("/app/generated_keys.txt"),
+    ]
+    target_file = next((p for p in candidates if p and p.exists() and p.is_file()), None)
+    if not target_file:
+        return 0
+
+    added = 0
+    try:
+        content = target_file.read_text(encoding="utf-8")
+        for line in content.splitlines():
+            cleaned = normalize_key_code(line)
+            if not cleaned or cleaned.startswith("#") or len(cleaned) < 4:
+                continue
+            existing = db.query(AccessKey).filter(func.upper(AccessKey.key_code) == cleaned).first()
+            if not existing:
+                key_obj = AccessKey(
+                    key_code=cleaned,
+                    duration_days=30,
+                    is_used=False,
+                    used_by_device=None,
+                    created_at=datetime.utcnow(),
+                    used_at=None,
+                )
+                db.add(key_obj)
+                added += 1
+        if added > 0:
+            db.commit()
+            logger.info(f"[LICENSE] Seeded/synced {added} new keys from {target_file.name} into database.")
+    except Exception as e:
+        logger.warning(f"[LICENSE] Error syncing keys from {target_file}: {e}")
+        db.rollback()
+    return added
+
+
 def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
     """
     Activates an access promo key for a given device.
@@ -203,7 +268,7 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
     if not clean_dev_id:
         raise ValueError("Device ID не может быть пустым")
 
-    clean_key = (key_code or "").strip().upper()
+    clean_key = normalize_key_code(key_code)
     if not clean_key:
         raise ValueError("Код ключа не может быть пустым")
 
@@ -224,16 +289,73 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
         db.commit()
         db.refresh(device)
 
-    # Check access key
-    key_obj = db.query(AccessKey).filter(AccessKey.key_code == clean_key).first()
+    # Check access key (exact match or case-insensitive or dash-flexible)
+    key_obj = db.query(AccessKey).filter(func.upper(AccessKey.key_code) == clean_key).first()
     if not key_obj:
+        clean_raw = clean_key.replace("-", "")
+        for candidate in db.query(AccessKey).all():
+            if candidate.key_code.replace("-", "").upper() == clean_raw:
+                key_obj = candidate
+                break
+
+    # If key still not found, try syncing from generated_keys.txt in case keys were just deployed
+    if not key_obj:
+        sync_keys_from_file(db)
+        key_obj = db.query(AccessKey).filter(func.upper(AccessKey.key_code) == clean_key).first()
+        if not key_obj:
+            clean_raw = clean_key.replace("-", "")
+            for candidate in db.query(AccessKey).all():
+                if candidate.key_code.replace("-", "").upper() == clean_raw:
+                    key_obj = candidate
+                    break
+
+    if not key_obj:
+        logger.warning(f"[LICENSE] Activation failed: key '{clean_key}' not found in database for device '{clean_dev_id}'.")
         raise ValueError("Ключ доступа не найден. Проверьте правильность ввода.")
 
+    duration = key_obj.duration_days or 30
+    if duration >= 360:
+        package_name = "12 месяцев"
+    elif duration >= 240:
+        package_name = "Учебный год"
+    elif duration >= 120:
+        package_name = "Семестр"
+    elif duration >= 25:
+        package_name = "1 месяц"
+    else:
+        package_name = f"{duration} дн."
+
+    # If key was already activated by THIS device, confirm access gracefully without error
+    if key_obj.is_used and key_obj.used_by_device == device.device_id:
+        logger.info(f"[LICENSE] Key {clean_key} is already active for device {clean_dev_id}.")
+        device.has_active_access = True
+        device.activated_key = key_obj.key_code
+        db.commit()
+        db.refresh(device)
+
+        delta = device.trial_expires_at - now
+        days_left = max(1, math.ceil(delta.total_seconds() / 86400))
+        expires_str = device.trial_expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        return {
+            "success": True,
+            "message": f"Ключ уже привязан к этому устройству! Доступ активен ({days_left} дн.).",
+            "is_active": True,
+            "has_key": True,
+            "free_reviews_left": device.free_reviews_left,
+            "max_free_reviews": DEFAULT_FREE_REVIEWS,
+            "days_left": days_left,
+            "expires_at": expires_str,
+            "package_name": package_name,
+        }
+
     if key_obj.is_used:
+        logger.warning(
+            f"[LICENSE] Key {clean_key} already used by device '{key_obj.used_by_device}' (attempted by '{clean_dev_id}')"
+        )
         raise ValueError("Этот ключ доступа уже был активирован ранее.")
 
     # Extend trial/access
-    duration = key_obj.duration_days or 30
     if device.trial_expires_at > now:
         device.trial_expires_at = device.trial_expires_at + timedelta(days=duration)
     else:
@@ -242,7 +364,7 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
     device.has_active_access = True
     device.activated_key = key_obj.key_code
 
-    # Mark key as used
+    # Mark key as used and bind to current device
     key_obj.is_used = True
     key_obj.used_by_device = device.device_id
     key_obj.used_at = now
@@ -255,20 +377,9 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
     expires_str = device.trial_expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     logger.info(
-        f"[LICENSE] Activated key {clean_key} (+{duration}d) for device {clean_dev_id}. "
+        f"[LICENSE] Successfully activated key {clean_key} (+{duration}d) for device {clean_dev_id}. "
         f"New expiry: {expires_str}"
     )
-
-    if duration >= 360:
-        package_name = "12 месяцев"
-    elif duration >= 240:
-        package_name = "Учебный год"
-    elif duration >= 120:
-        package_name = "Семестр"
-    elif duration >= 25:
-        package_name = "1 месяц"
-    else:
-        package_name = f"{duration} дн."
 
     return {
         "success": True,

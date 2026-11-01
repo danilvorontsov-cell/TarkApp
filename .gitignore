@@ -13,6 +13,8 @@ mobile/.env
 backend/*.db
 backend/*.db-shm
 backend/*.db-wal
+backend/data/
+data/
 
 # Logs & Runtime Artifacts
 logs/

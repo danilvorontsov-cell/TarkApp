@@ -1,7 +1,8 @@
+import re
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 from sqlalchemy import Column, String, DateTime, Boolean, Integer, ForeignKey
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.database import Base
 
@@ -50,6 +51,19 @@ class LicenseStatusResponse(BaseModel):
 
 class KeyActivateRequest(BaseModel):
     key_code: str = Field(..., min_length=4, max_length=64, description="Access key code, e.g. TARK-XXXX-XXXX")
+
+    @field_validator("key_code", mode="before")
+    @classmethod
+    def clean_key_code(cls, v: Any) -> str:
+        if isinstance(v, str):
+            cleaned = v.strip().upper()
+            cleaned = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]", "-", cleaned)
+            cleaned = re.sub(r"\s*-\s*", "-", cleaned)
+            cleaned = "".join(cleaned.split())
+            if len(cleaned) == 12 and "-" not in cleaned and cleaned.startswith("TARK"):
+                cleaned = f"{cleaned[:4]}-{cleaned[4:8]}-{cleaned[8:12]}"
+            return cleaned
+        return v
 
 
 class KeyActivateResponse(BaseModel):

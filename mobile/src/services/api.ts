@@ -79,80 +79,103 @@ export class ApiError extends Error {
 // ==========================================
 
 let cachedDeviceId: string | null = null;
+let deviceIdPromise: Promise<string> | null = null;
 const SECURE_DEVICE_ID_KEY = 'tarkapp_device_id';
+const ASYNC_DEVICE_ID_KEY = '@tarkapp_device_id';
 
 export function _resetCachedDeviceId(): void {
   cachedDeviceId = null;
+  deviceIdPromise = null;
 }
 
 /**
  * Returns a persistent, tamper-resistant Device ID.
- * Uses expo-secure-store (iOS Keychain / Android Keystore) so that
- * free reviews (5 attempts) and license status cannot be abused by
- * uninstalling and reinstalling the app.
+ * Uses both AsyncStorage (unaffected by Android keystore changes during APK updates)
+ * and SecureStore (Keychain on iOS) with automatic bidirectional synchronization.
+ * This guarantees the Device ID survives app upgrades, reinstallation, and keystore rotations.
  */
 export async function getDeviceId(): Promise<string> {
   if (cachedDeviceId) {
     return cachedDeviceId;
   }
-
-  // 1. Try reading from hardware-backed SecureStore (survives app reinstallation on iOS)
-  try {
-    const secureId = await SecureStore.getItemAsync(SECURE_DEVICE_ID_KEY);
-    if (secureId && secureId.trim()) {
-      cachedDeviceId = secureId.trim();
-      return cachedDeviceId;
-    }
-  } catch (err) {
-    console.warn('[SecureStore] Failed to read device ID:', err);
+  if (deviceIdPromise) {
+    return deviceIdPromise;
   }
 
-  // 2. Migration fallback: check AsyncStorage if upgrading from older build
-  try {
-    const saved = await AsyncStorage.getItem('@tarkapp_device_id');
-    if (saved && saved.trim()) {
-      cachedDeviceId = saved.trim();
-      // Migrate forward to SecureStore
+  deviceIdPromise = (async () => {
+    let resolvedId: string | null = null;
+
+    // 1. Check AsyncStorage first (100% stable across Android APK updates)
+    try {
+      const asyncId = await AsyncStorage.getItem(ASYNC_DEVICE_ID_KEY);
+      if (asyncId && asyncId.trim()) {
+        resolvedId = asyncId.trim();
+      }
+    } catch (err) {
+      console.warn('[AsyncStorage] Failed to read device ID:', err);
+    }
+
+    // 2. Check SecureStore if not found in AsyncStorage (iOS Keychain survival across reinstall)
+    if (!resolvedId) {
       try {
-        await SecureStore.setItemAsync(SECURE_DEVICE_ID_KEY, cachedDeviceId, {
-          keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
-        });
-      } catch {}
-      return cachedDeviceId;
+        const secureId = await SecureStore.getItemAsync(SECURE_DEVICE_ID_KEY);
+        if (secureId && secureId.trim()) {
+          resolvedId = secureId.trim();
+        }
+      } catch (err) {
+        console.warn('[SecureStore] Failed to read device ID:', err);
+      }
     }
-  } catch {}
 
-  // 3. Hardware identifiers
-  let hardwareId: string | null = null;
-  try {
-    if (Platform.OS === 'android') {
-      hardwareId = Application.getAndroidId();
-    } else if (Platform.OS === 'ios') {
-      hardwareId = await Application.getIosIdForVendorAsync();
+    // 3. Hardware identifiers (first installation on new device)
+    if (!resolvedId) {
+      try {
+        if (Platform.OS === 'android') {
+          const androidId = Application.getAndroidId();
+          if (androidId && androidId.trim()) {
+            resolvedId = androidId.trim();
+          }
+        } else if (Platform.OS === 'ios') {
+          const iosId = await Application.getIosIdForVendorAsync();
+          if (iosId && iosId.trim()) {
+            resolvedId = iosId.trim();
+          }
+        }
+      } catch (err) {
+        console.warn('[HardwareId] Could not get hardware identifier:', err);
+      }
     }
-  } catch {}
 
-  // 4. Crypto-random fallback if hardware id is inaccessible
-  if (!hardwareId || !hardwareId.trim()) {
-    hardwareId = `dev_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
-  }
+    // 4. Crypto-random fallback if hardware id is inaccessible
+    if (!resolvedId || !resolvedId.trim()) {
+      resolvedId = `dev_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    }
 
-  cachedDeviceId = hardwareId.trim();
+    cachedDeviceId = resolvedId.trim();
 
-  // Persist to both SecureStore and AsyncStorage
+    // 5. Always ensure BOTH persistent storages hold the identical device ID
+    try {
+      await AsyncStorage.setItem(ASYNC_DEVICE_ID_KEY, cachedDeviceId);
+    } catch (err) {
+      console.warn('[AsyncStorage] Failed to persist device ID:', err);
+    }
+
+    try {
+      await SecureStore.setItemAsync(SECURE_DEVICE_ID_KEY, cachedDeviceId, {
+        keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+      });
+    } catch (err) {
+      console.warn('[SecureStore] Failed to persist device ID:', err);
+    }
+
+    return cachedDeviceId;
+  })();
+
   try {
-    await SecureStore.setItemAsync(SECURE_DEVICE_ID_KEY, cachedDeviceId, {
-      keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
-    });
-  } catch (err) {
-    console.warn('[SecureStore] Failed to save device ID:', err);
+    return await deviceIdPromise;
+  } finally {
+    deviceIdPromise = null;
   }
-
-  try {
-    await AsyncStorage.setItem('@tarkapp_device_id', cachedDeviceId);
-  } catch {}
-
-  return cachedDeviceId;
 }
 
 export type TrialExpiredCallback = () => void;
@@ -218,6 +241,12 @@ export async function activateAccessKey(
   baseUrl: string = API_BASE_URL
 ): Promise<KeyActivateResponse> {
   const deviceId = await getDeviceId();
+  const cleanedKey = (keyCode || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, '-')
+    .replace(/\s*-\s*/g, '-')
+    .replace(/\s+/g, '');
   const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/license/activate`;
   const response = await fetchWithTimeout(endpoint, {
     method: 'POST',
@@ -226,7 +255,7 @@ export async function activateAccessKey(
       Accept: 'application/json',
       'X-Device-ID': deviceId,
     },
-    body: JSON.stringify({ key_code: keyCode }),
+    body: JSON.stringify({ key_code: cleanedKey }),
   });
 
   if (!response.ok) {

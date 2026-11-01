@@ -35,7 +35,12 @@ export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const handleActivate = async () => {
-    const trimmed = keyCode.trim().toUpperCase();
+    const trimmed = (keyCode || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, '-')
+      .replace(/\s*-\s*/g, '-')
+      .replace(/\s+/g, '');
     if (!trimmed) {
       setErrorMessage('Пожалуйста, введите ключ доступа.');
       return;

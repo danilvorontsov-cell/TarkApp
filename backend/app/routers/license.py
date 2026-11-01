@@ -142,9 +142,21 @@ def activate_access_key(
             package_name=res.get("package_name"),
         )
     except ValueError as val_err:
+        logger.warning(
+            f"[LICENSE] Key activation rejected for device='{device_id}', key='{payload.key_code}': {val_err}"
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": "KEY_ACTIVATION_FAILED", "message": str(val_err)},
+        )
+    except Exception as exc:
+        logger.error(
+            f"[LICENSE] Unexpected activation error for device='{device_id}', key='{payload.key_code}': {exc}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "INTERNAL_ERROR", "message": "Внутренняя ошибка сервера при активации ключа."},
         )
 
 
