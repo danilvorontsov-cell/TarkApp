@@ -63,6 +63,7 @@ import { PaywallScreen } from './src/screens/PaywallScreen';
 import { ThemedAlert, ThemedAlertContainer } from './src/components/ThemedAlert';
 import { ProfileSetupModal } from './src/components/ProfileSetupModal';
 import { TaskVisualizer } from './src/components/TaskVisualizer';
+import { getSubscriptionInfo } from './src/utils/subscription';
 
 // Initialize Sentry stub/client once at entry
 initSentry();
@@ -218,7 +219,8 @@ function MainApp() {
   const isJunior = profile.tier === 'primary';
   const isFullAudioEnabled = tierPolicy.fullAudioEnabled;
   const isSentenceFrameEnabled = tierPolicy.sentenceFrameEnabled;
-  const isPro = Boolean(licenseStatus?.has_key && licenseStatus?.package_name);
+  const subInfo = getSubscriptionInfo(licenseStatus);
+  const isPro = subInfo.isPro;
 
   useEffect(() => {
     StorageService.getProfile().then((saved) => {
@@ -582,10 +584,16 @@ function MainApp() {
       if (analysisSessionRef.current !== currentSession) return;
 
       // Decrement free reviews counter immediately in local state ONLY when photo was acceptable
-      if (licenseStatus && !isPro && data.is_acceptable !== false) {
+      if (!isPro && data.is_acceptable !== false) {
         setLicenseStatus({
-          ...licenseStatus,
-          free_reviews_left: Math.max(0, (licenseStatus.free_reviews_left ?? 1) - 1),
+          ...(licenseStatus || {
+            is_active: true,
+            has_key: false,
+            days_left: subInfo.daysLeft,
+            expires_at: '',
+          }),
+          free_reviews_left: Math.max(0, subInfo.remainingReviews - 1),
+          max_free_reviews: subInfo.maxReviews,
         });
         // Silently sync latest status from server
         getLicenseStatus().then(setLicenseStatus).catch(() => {});
@@ -622,7 +630,7 @@ function MainApp() {
   const handleTakePhoto = async (mode: 'replace' | 'append' = 'replace') => {
     setAnalysisError(null);
     // Check if free review allowance ran out
-    if (!isPro && (licenseStatus?.free_reviews_left ?? 20) <= 0) {
+    if (!isPro && subInfo.remainingReviews <= 0) {
       setModalBlockReason('reviews_limit_reached');
       setIsPaywallVisible(true);
       return;
@@ -681,7 +689,7 @@ function MainApp() {
   const handlePickImage = async (mode: 'replace' | 'append' = 'replace') => {
     setAnalysisError(null);
     // Check if free review allowance ran out
-    if (!isPro && (licenseStatus?.free_reviews_left ?? 20) <= 0) {
+    if (!isPro && subInfo.remainingReviews <= 0) {
       setModalBlockReason('reviews_limit_reached');
       setIsPaywallVisible(true);
       return;
@@ -749,7 +757,7 @@ function MainApp() {
 
   const handleAddPagePrompt = () => {
     // Check if free review allowance ran out
-    if (!isPro && (licenseStatus?.free_reviews_left ?? 20) <= 0) {
+    if (!isPro && subInfo.remainingReviews <= 0) {
       setModalBlockReason('reviews_limit_reached');
       setIsPaywallVisible(true);
       return;
@@ -1217,9 +1225,7 @@ function MainApp() {
                 activeOpacity={0.8}
               >
                 <Text style={styles.subscriptionActiveBadgeText}>
-                  {licenseStatus.package_name
-                    ? `✓ ${licenseStatus.package_name} • Безлимитный доступ`
-                    : '✓ PRO • Безлимитный доступ'}
+                  {`✓ ${subInfo.packageName || 'PRO'} • Безлимитный доступ`}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -1228,19 +1234,19 @@ function MainApp() {
               <TouchableOpacity
                 style={[
                   styles.reviewLimitBadge,
-                  (licenseStatus?.free_reviews_left ?? 20) === 0 && styles.reviewLimitBadgeExhausted,
+                  subInfo.remainingReviews === 0 && styles.reviewLimitBadgeExhausted,
                 ]}
                 onPress={() => setIsPaywallVisible(true)}
                 activeOpacity={0.75}
-                accessibilityLabel={`Осталось ${licenseStatus?.free_reviews_left ?? 20} бесплатных разборов. Нажмите для выбора тарифа.`}
+                accessibilityLabel={`Осталось ${subInfo.remainingReviews} бесплатных разборов. Нажмите для выбора тарифа.`}
               >
                 <Text
                   style={[
                     styles.reviewLimitBadgeText,
-                    (licenseStatus?.free_reviews_left ?? 20) === 0 && styles.reviewLimitBadgeTextExhausted,
+                    subInfo.remainingReviews === 0 && styles.reviewLimitBadgeTextExhausted,
                   ]}
                 >
-                  🎁 Бесплатных разборов: {licenseStatus?.free_reviews_left ?? 20}/{licenseStatus?.max_free_reviews ?? 20}
+                  🎁 Бесплатных разборов: {subInfo.reviewCounterText}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -2265,8 +2271,8 @@ function MainApp() {
             <Text style={styles.settingTariffTitle}>Тариф и ключ доступа</Text>
             <Text style={styles.settingTariffSubtitle}>
               {isPro
-                ? (licenseStatus.days_left ? `TarkApp PRO активен (${licenseStatus.days_left} дн.)` : 'TarkApp PRO активен')
-                : `Пробный: осталось ${licenseStatus?.days_left ?? 14} дней`}
+                ? (subInfo.daysLeft ? `TarkApp PRO активен (${subInfo.daysLeft} дн.)` : 'TarkApp PRO активен')
+                : `Пробный: осталось ${subInfo.daysLeft} дн. • ${subInfo.reviewCounterText}`}
             </Text>
           </View>
           <Text style={styles.settingTariffChevron}>›</Text>
@@ -2284,13 +2290,9 @@ function MainApp() {
               licenseStatus && !licenseStatus.is_active && styles.licenseStatusExpired,
             ]}
           >
-            {licenseStatus
-              ? isPro
-                ? `Активен пакет: ${licenseStatus.package_name || 'PRO'} (осталось ${licenseStatus.days_left} дн.)`
-                : licenseStatus.is_active
-                ? `Бесплатный режим Free (${licenseStatus.free_reviews_left ?? 20}/${licenseStatus.max_free_reviews ?? 20} разборов в сутки)`
-                : 'Бесплатные попытки исчерпаны'
-              : 'Режим Free'}
+            {isPro
+              ? `Активен пакет: ${subInfo.packageName || 'PRO'} (осталось ${subInfo.daysLeft} дн.)`
+              : `Бесплатный режим Free (${subInfo.reviewCounterText} разборов в сутки)`}
           </Text>
           {licenseStatus?.expires_at && (
             <Text style={styles.licenseExpiryText}>
@@ -2610,8 +2612,8 @@ function MainApp() {
         onClose={() => setIsPaywallVisible(false)}
         onOpenKeyActivation={() => setIsKeyModalVisible(true)}
         canClose={true}
-        remainingFreeScans={licenseStatus?.free_reviews_left ?? 20}
-        totalFreeScans={licenseStatus?.max_free_reviews ?? 20}
+        remainingFreeScans={subInfo.remainingReviews}
+        totalFreeScans={subInfo.maxReviews}
         hasPro={isPro}
       />
 

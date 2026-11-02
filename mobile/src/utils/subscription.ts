@@ -1,0 +1,102 @@
+import { LicenseStatus } from '../services/api';
+
+export const DEFAULT_MAX_FREE_REVIEWS = 20;
+export const DEFAULT_TRIAL_DAYS = 14;
+
+export interface SubscriptionInfo {
+  isPro: boolean;
+  hasKey: boolean;
+  packageName: string | null;
+  remainingReviews: number;
+  maxReviews: number;
+  reviewCounterText: string; // e.g. "20/20" or "19/20"
+  fullReviewText: string;    // e.g. "20 из 20 на сегодня"
+  daysLeft: number;
+  statusLabel: string;
+}
+
+/**
+ * Single Source of Truth for subscription and review limits across all screens and widgets.
+ * Guaranteed to return 20/20 for fresh installs and free trial users.
+ */
+export function getSubscriptionInfo(status?: LicenseStatus | null): SubscriptionInfo {
+  const hasKey = Boolean(status?.has_key);
+  const packageName = status?.package_name || null;
+  // A user is PRO ONLY IF has_key is true and package_name is present
+  const isPro = Boolean(hasKey && packageName);
+
+  const maxReviews = DEFAULT_MAX_FREE_REVIEWS; // Strict single source of truth: 20
+  const remainingReviews = Math.max(
+    0,
+    Math.min(status?.free_reviews_left ?? DEFAULT_MAX_FREE_REVIEWS, maxReviews)
+  );
+
+  const daysLeft = status?.days_left ?? DEFAULT_TRIAL_DAYS;
+
+  const reviewCounterText = `${remainingReviews}/${maxReviews}`;
+  const fullReviewText = `${remainingReviews} из ${maxReviews} на сегодня`;
+
+  let statusLabel = 'Бесплатный режим';
+  if (isPro) {
+    statusLabel = packageName ? `TarkApp PRO (${packageName})` : 'TarkApp PRO активен';
+  }
+
+  return {
+    isPro,
+    hasKey,
+    packageName,
+    remainingReviews,
+    maxReviews,
+    reviewCounterText,
+    fullReviewText,
+    daysLeft,
+    statusLabel,
+  };
+}
+
+/**
+ * Sanitizes and auto-masks a license key / promo code input.
+ * - Auto-appends hyphen after 4th and 8th characters when typing.
+ * - Converts all characters to uppercase.
+ * - Normalizes unicode hyphens/dashes (—, –, −) to standard ASCII minus (-).
+ * - Strips whitespace and non-alphanumeric characters.
+ */
+export function applyKeyMask(currentText: string, prevText: string = ''): string {
+  if (!currentText) return '';
+
+  let sanitized = currentText
+    .toUpperCase()
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, '-')
+    .replace(/\s+/g, '');
+
+  const isDeleting = currentText.length < prevText.length;
+  const rawAlnum = sanitized.replace(/[^A-Z0-9]/g, '').slice(0, 16);
+
+  if (!rawAlnum) return '';
+
+  const chunks: string[] = [];
+  for (let i = 0; i < rawAlnum.length; i += 4) {
+    chunks.push(rawAlnum.slice(i, i + 4));
+  }
+
+  let formatted = chunks.join('-');
+
+  // If user typed a single character and just hit 4 or 8 characters, auto-append hyphen
+  if (!isDeleting && (currentText.length - prevText.length === 1) && (rawAlnum.length === 4 || rawAlnum.length === 8)) {
+    formatted += '-';
+  }
+
+  return formatted;
+}
+
+/**
+ * Normalizes a key code before submitting to API.
+ */
+export function sanitizeKeyCode(keyCode: string): string {
+  return (keyCode || '')
+    .toUpperCase()
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, '-')
+    .replace(/\s*-\s*/g, '-')
+    .replace(/\s+/g, '')
+    .trim();
+}

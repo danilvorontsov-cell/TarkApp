@@ -67,10 +67,10 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
   const [isRendered, setIsRendered] = React.useState(isOpen);
   const hasUser = Boolean(userNickname && userNickname.trim().length > 0);
   const displayName = hasUser ? userNickname.trim() : '';
-  const isPro = Boolean(licenseStatus ? (licenseStatus.has_key && licenseStatus.package_name) : hasPro);
-  const freeReviewsLeft = licenseStatus?.free_reviews_left ?? 20;
-  const maxFreeReviews = licenseStatus?.max_free_reviews ?? 20;
-  const daysLeft = licenseStatus?.days_left;
+
+
+
+
 
   useEffect(() => {
     if (isOpen) {
@@ -293,32 +293,6 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
           ) : null}
         </View>
 
-        {/* Compact Status Card */}
-        <TouchableOpacity
-          style={styles.statusCard}
-          onPress={() => {
-            onClose();
-            if (onOpenPaywall) onOpenPaywall();
-          }}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel={isPro ? 'TarkApp PRO активен' : 'Бесплатный режим'}
-        >
-          <View style={styles.statusIconCircle}>
-            <Text style={styles.statusIconText}>{isPro ? '⭐' : '🎁'}</Text>
-          </View>
-          <View style={styles.statusTextContainer}>
-            <Text style={styles.statusTitle}>
-              {isPro ? 'TarkApp PRO активен' : 'Бесплатный режим'}
-            </Text>
-            <Text style={styles.statusSubtitle} numberOfLines={1}>
-              {isPro
-                ? (daysLeft ? `Безлимитный доступ (${daysLeft} дн.)` : 'Безлимитный доступ')
-                : `Осталось разборов: ${freeReviewsLeft} из ${maxFreeReviews} на сегодня`}
-            </Text>
-          </View>
-          <Text style={styles.statusChevron}>›</Text>
-        </TouchableOpacity>
 
         {/* Thin Divider Line */}
         <View style={styles.divider} />
@@ -571,53 +545,6 @@ const styles = StyleSheet.create({
     backgroundColor: darkTheme.cardBorder,
     marginHorizontal: 18,
     marginVertical: 4,
-  },
-  statusCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: 12,
-    marginBottom: 8,
-    marginTop: 4,
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    backgroundColor: '#1E252D',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  statusIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  statusIconText: {
-    fontSize: 16,
-  },
-  statusTextContainer: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  statusTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: darkTheme.textPrimary,
-    lineHeight: 17,
-  },
-  statusSubtitle: {
-    fontSize: 11.5,
-    color: darkTheme.textSecondary,
-    marginTop: 1,
-    lineHeight: 15,
-  },
-  statusChevron: {
-    fontSize: 18,
-    color: 'rgba(255, 255, 255, 0.35)',
-    marginLeft: 6,
-    fontWeight: '600',
   },
   drawerFooter: {
     paddingHorizontal: 12,

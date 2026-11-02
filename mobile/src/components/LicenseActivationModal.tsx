@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { Theme, darkTheme } from '../theme/colors';
 import { activateAccessKey, LicenseStatus } from '../services/api';
+import { applyKeyMask, sanitizeKeyCode } from '../utils/subscription';
 
 interface LicenseActivationModalProps {
   visible: boolean;
@@ -34,13 +35,14 @@ export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  const handleKeyChange = (val: string) => {
+    const masked = applyKeyMask(val, keyCode);
+    setKeyCode(masked);
+    if (errorMessage) setErrorMessage(null);
+  };
+
   const handleActivate = async () => {
-    const trimmed = (keyCode || '')
-      .trim()
-      .toUpperCase()
-      .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, '-')
-      .replace(/\s*-\s*/g, '-')
-      .replace(/\s+/g, '');
+    const trimmed = sanitizeKeyCode(keyCode);
     if (!trimmed) {
       setErrorMessage('Пожалуйста, введите ключ доступа.');
       return;
@@ -138,10 +140,7 @@ export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
                   <TextInput
                     style={styles.input}
                     value={keyCode}
-                    onChangeText={(val) => {
-                      setKeyCode(val.toUpperCase());
-                      if (errorMessage) setErrorMessage(null);
-                    }}
+                    onChangeText={handleKeyChange}
                     placeholder="TARK-XXXX-XXXX"
                     placeholderTextColor={darkTheme.textMuted}
                     autoCapitalize="characters"
