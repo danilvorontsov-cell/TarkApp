@@ -71,6 +71,10 @@ def test_endpoint_status_returns_trial_info(setup_db):
     assert response.status_code == 200
     data = response.json()
     assert data["is_active"] is True
+    assert data["has_key"] is False
+    assert data["package_name"] is None
+    assert data["free_reviews_left"] == 20
+    assert data["max_free_reviews"] == 20
     assert data["days_left"] == 14
     assert "expires_at" in data
 

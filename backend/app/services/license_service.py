@@ -35,20 +35,16 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
     now = datetime.utcnow()
     today_str = now.strftime("%Y-%m-%d")
     device = db.query(Device).filter(Device.device_id == clean_id).first()
-    is_dev = (
-        settings.APP_ENV in ("development", "test")
-        and clean_id in ("dev-test-device", "default-dev-device")
-    )
 
     if not device:
         # First seen: create new device with 14-day trial and 20 free reviews per day
-        expires_at = now + timedelta(days=365 if is_dev else TRIAL_DURATION_DAYS)
+        expires_at = now + timedelta(days=TRIAL_DURATION_DAYS)
         device = Device(
             device_id=clean_id,
             first_seen_at=now,
             trial_expires_at=expires_at,
             has_active_access=True,
-            activated_key="DEV-KEY-TEST" if is_dev else None,
+            activated_key=None,
             free_reviews_left=DEFAULT_FREE_REVIEWS,
             last_review_date=today_str,
         )
@@ -60,15 +56,8 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
             f"and {DEFAULT_FREE_REVIEWS} free reviews per day."
         )
 
-    # For dev-test-device, always keep active
-    if is_dev and not device.activated_key:
-        device.activated_key = "DEV-KEY-TEST"
-        device.has_active_access = True
-        device.trial_expires_at = now + timedelta(days=365)
-        db.commit()
-
-    is_allowed = is_dev or (device.trial_expires_at > now)
-    has_key = is_dev or bool(device.activated_key and device.activated_key.strip() and is_allowed)
+    is_allowed = bool(device.trial_expires_at > now)
+    has_key = bool(device.activated_key and device.activated_key.strip() and is_allowed)
 
     # Keep has_active_access in sync
     if device.has_active_access != is_allowed:
@@ -93,37 +82,37 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
         days_left = 0
 
     package_name = None
-    if has_key:
-        if device.activated_key:
-            key_code = device.activated_key.strip().upper()
-            if key_code == "DEV-KEY-TEST":
-                package_name = "PRO"
-            else:
-                key_obj = db.query(AccessKey).filter(AccessKey.key_code == device.activated_key).first()
-                if key_obj:
-                    dur = key_obj.duration_days or 30
-                    if dur >= 360:
-                        package_name = "12 месяцев"
-                    elif dur >= 240:
-                        package_name = "Учебный год"
-                    elif dur >= 120:
-                        package_name = "Семестр"
-                    elif dur >= 25:
-                        package_name = "1 месяц"
-                    else:
-                        package_name = f"{dur} дн."
-                elif "YEAR" in key_code or "9M" in key_code:
-                    package_name = "Учебный год"
-                elif "SEM" in key_code or "5M" in key_code:
-                    package_name = "Семестр"
-                elif "MONTH" in key_code or "1M" in key_code:
-                    package_name = "1 месяц"
-                elif "FULL" in key_code or "12M" in key_code:
-                    package_name = "12 месяцев"
-                else:
-                    package_name = "PRO"
-        else:
+    if has_key and device.activated_key:
+        key_code = device.activated_key.strip().upper()
+        if key_code == "DEV-KEY-TEST":
             package_name = "PRO"
+        else:
+            key_obj = db.query(AccessKey).filter(AccessKey.key_code == device.activated_key).first()
+            if key_obj:
+                dur = key_obj.duration_days or 30
+                if dur >= 360:
+                    package_name = "12 месяцев"
+                elif dur >= 240:
+                    package_name = "Учебный год"
+                elif dur >= 120:
+                    package_name = "Семестр"
+                elif dur >= 25:
+                    package_name = "1 месяц"
+                else:
+                    package_name = f"{dur} дн."
+            elif "YEAR" in key_code or "9M" in key_code:
+                package_name = "Учебный год"
+            elif "SEM" in key_code or "5M" in key_code:
+                package_name = "Семестр"
+            elif "MONTH" in key_code or "1M" in key_code:
+                package_name = "1 месяц"
+            elif "FULL" in key_code or "12M" in key_code:
+                package_name = "12 месяцев"
+            else:
+                package_name = "PRO"
+    else:
+        # Guarantee None for trial devices without an active key
+        package_name = None
 
     return {
         "allowed": is_allowed,
@@ -134,8 +123,8 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
         "days_left": days_left,
         "expires_at": device.trial_expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "device_id": device.device_id,
-        "activated_key": device.activated_key,
-        "package_name": package_name,
+        "activated_key": device.activated_key if has_key else None,
+        "package_name": package_name if has_key else None,
     }
 
 

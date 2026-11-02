@@ -93,16 +93,17 @@ def get_license_status(
                 detail={"error": "DEVICE_ID_REQUIRED", "message": "Заголовок X-Device-ID обязателен"},
             )
     status_data = license_service.check_device_access(device_id, db)
+    has_key = bool(status_data.get("has_key", False))
     return LicenseStatusResponse(
         is_active=status_data["allowed"],
-        has_key=status_data.get("has_key", False),
+        has_key=has_key,
         free_reviews_left=status_data.get("free_reviews_left", 20),
         max_free_reviews=status_data.get("max_free_reviews", 20),
         days_left=status_data["days_left"],
         expires_at=status_data["expires_at"],
         device_id=status_data["device_id"],
-        activated_key=status_data["activated_key"],
-        package_name=status_data.get("package_name"),
+        activated_key=status_data["activated_key"] if has_key else None,
+        package_name=status_data.get("package_name") if has_key else None,
     )
 
 

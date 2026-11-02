@@ -218,6 +218,7 @@ function MainApp() {
   const isJunior = profile.tier === 'primary';
   const isFullAudioEnabled = tierPolicy.fullAudioEnabled;
   const isSentenceFrameEnabled = tierPolicy.sentenceFrameEnabled;
+  const isPro = Boolean(licenseStatus?.has_key && licenseStatus?.package_name);
 
   useEffect(() => {
     StorageService.getProfile().then((saved) => {
@@ -581,7 +582,7 @@ function MainApp() {
       if (analysisSessionRef.current !== currentSession) return;
 
       // Decrement free reviews counter immediately in local state ONLY when photo was acceptable
-      if (licenseStatus && !licenseStatus.has_key && data.is_acceptable !== false) {
+      if (licenseStatus && !isPro && data.is_acceptable !== false) {
         setLicenseStatus({
           ...licenseStatus,
           free_reviews_left: Math.max(0, (licenseStatus.free_reviews_left ?? 1) - 1),
@@ -621,7 +622,7 @@ function MainApp() {
   const handleTakePhoto = async (mode: 'replace' | 'append' = 'replace') => {
     setAnalysisError(null);
     // Check if free review allowance ran out
-    if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 20) <= 0) {
+    if (!isPro && (licenseStatus?.free_reviews_left ?? 20) <= 0) {
       setModalBlockReason('reviews_limit_reached');
       setIsPaywallVisible(true);
       return;
@@ -680,7 +681,7 @@ function MainApp() {
   const handlePickImage = async (mode: 'replace' | 'append' = 'replace') => {
     setAnalysisError(null);
     // Check if free review allowance ran out
-    if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 20) <= 0) {
+    if (!isPro && (licenseStatus?.free_reviews_left ?? 20) <= 0) {
       setModalBlockReason('reviews_limit_reached');
       setIsPaywallVisible(true);
       return;
@@ -748,7 +749,7 @@ function MainApp() {
 
   const handleAddPagePrompt = () => {
     // Check if free review allowance ran out
-    if (!licenseStatus?.has_key && (licenseStatus?.free_reviews_left ?? 20) <= 0) {
+    if (!isPro && (licenseStatus?.free_reviews_left ?? 20) <= 0) {
       setModalBlockReason('reviews_limit_reached');
       setIsPaywallVisible(true);
       return;
@@ -1208,7 +1209,7 @@ function MainApp() {
       {capturedImages.length === 0 && (
         <View style={styles.actionsContainer}>
           {/* Trial Review Limit / Active Subscription Badge */}
-          {licenseStatus?.has_key ? (
+          {isPro ? (
             <View style={styles.reviewLimitBadgeRow}>
               <TouchableOpacity
                 style={styles.subscriptionActiveBadge}
@@ -2258,12 +2259,12 @@ function MainApp() {
           accessibilityLabel="Тариф и ключ доступа"
         >
           <View style={styles.settingTariffIconWrap}>
-            <Text style={styles.settingTariffIcon}>💳</Text>
+            <Text style={styles.settingTariffIcon}>{isPro ? '⭐' : '💳'}</Text>
           </View>
           <View style={styles.settingTariffContent}>
             <Text style={styles.settingTariffTitle}>Тариф и ключ доступа</Text>
             <Text style={styles.settingTariffSubtitle}>
-              {licenseStatus?.has_key
+              {isPro
                 ? (licenseStatus.days_left ? `TarkApp PRO активен (${licenseStatus.days_left} дн.)` : 'TarkApp PRO активен')
                 : `Пробный: осталось ${licenseStatus?.days_left ?? 14} дней`}
             </Text>
@@ -2284,7 +2285,7 @@ function MainApp() {
             ]}
           >
             {licenseStatus
-              ? licenseStatus.has_key
+              ? isPro
                 ? `Активен пакет: ${licenseStatus.package_name || 'PRO'} (осталось ${licenseStatus.days_left} дн.)`
                 : licenseStatus.is_active
                 ? `Бесплатный режим Free (${licenseStatus.free_reviews_left ?? 20}/${licenseStatus.max_free_reviews ?? 20} разборов в сутки)`
@@ -2405,11 +2406,11 @@ function MainApp() {
           <TouchableOpacity
             style={[
               styles.headerProBadge,
-              licenseStatus?.has_key && styles.headerProBadgeActive,
+              isPro && styles.headerProBadgeActive,
             ]}
             onPress={() => setIsPaywallVisible(true)}
             accessibilityLabel={
-              licenseStatus?.has_key
+              isPro
                 ? `Подписка активна: ${licenseStatus.package_name || 'PRO'}`
                 : 'Тариф: Free. Нажмите для выбора тарифа'
             }
@@ -2420,10 +2421,10 @@ function MainApp() {
             <Text
               style={[
                 styles.headerProBadgeText,
-                licenseStatus?.has_key && styles.headerProBadgeTextActive,
+                isPro && styles.headerProBadgeTextActive,
               ]}
             >
-              {licenseStatus?.has_key
+              {isPro
                 ? (licenseStatus.package_name ? `👑 ${licenseStatus.package_name}` : '👑 PRO')
                 : 'Free'}
             </Text>
@@ -2582,7 +2583,7 @@ function MainApp() {
         vocabCount={savedVocab.length}
         onLogout={handleLogout}
         onOpenPaywall={() => setIsPaywallVisible(true)}
-        hasPro={Boolean(licenseStatus?.has_key)}
+        hasPro={isPro}
         licenseStatus={licenseStatus}
         onOpenProfileSetup={() => setIsProfileSetupModalVisible(true)}
         onOpenDemoLesson={() => {
@@ -2611,7 +2612,7 @@ function MainApp() {
         canClose={true}
         remainingFreeScans={licenseStatus?.free_reviews_left ?? 20}
         totalFreeScans={licenseStatus?.max_free_reviews ?? 20}
-        hasPro={Boolean(licenseStatus?.has_key)}
+        hasPro={isPro}
       />
 
       {/* License Promo Key Activation Modal (Manual Entry) */}
