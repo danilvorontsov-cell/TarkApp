@@ -46,6 +46,12 @@ import {
   getLicenseStatus,
   setOnTrialExpiredListener,
   LicenseStatus,
+  setAuthToken,
+  getAuthToken,
+  setOnAuthRequiredListener,
+  buildAuthToken,
+  getDeviceId,
+  clearAuthSession,
 } from './src/services/api';
 import { optimizePageImage, optimizePageImages } from './src/services/imageOptimizer';
 import { PhraseBuilder } from './src/components/PhraseBuilder';
@@ -195,6 +201,7 @@ function MainApp() {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [isPaywallVisible, setIsPaywallVisible] = useState<boolean>(false);
   const [isProfileSetupModalVisible, setIsProfileSetupModalVisible] = useState<boolean>(false);
+  const [authToken, setAuthTokenState] = useState<string | null>(null);
 
   const edgePanResponder = useRef(
     PanResponder.create({
@@ -233,6 +240,19 @@ function MainApp() {
       const isRegistered = Boolean(saved.nickname && saved.nickname.trim().length > 0);
       if (!isRegistered) {
         setIsProfileSetupModalVisible(true);
+      } else {
+        StorageService.getAuthToken().then(async (tok) => {
+          if (tok) {
+            setAuthTokenState(tok);
+            setAuthToken(tok);
+          } else {
+            const devId = await getDeviceId();
+            const token = buildAuthToken(devId, saved.nickname);
+            await StorageService.saveAuthToken(token);
+            setAuthToken(token);
+            setAuthTokenState(token);
+          }
+        });
       }
 
       StorageService.getHistory().then((h) => {
@@ -292,6 +312,26 @@ function MainApp() {
       setIsPaywallVisible(true);
     });
 
+    // Register 401 Unauthorized listener (AuthGuard)
+    setOnAuthRequiredListener(() => {
+      setAuthTokenState(null);
+      clearAuthSession();
+      StorageService.removeAuthToken();
+      setProfile((prev) => ({ ...prev, nickname: '', avatarUri: undefined }));
+      setAnalysis(null);
+      setSessionLessons([]);
+      setCapturedImages([]);
+      setCapturedImageUri(null);
+      ThemedAlert.alert(
+        'Требуется вход',
+        'Войдите в профиль, чтобы использовать разборы.',
+        [
+          { text: 'Отмена', style: 'cancel' },
+          { text: 'Войти', onPress: () => setIsProfileSetupModalVisible(true) },
+        ]
+      );
+    });
+
     const unsubAudio = AudioQueueManager.subscribe((state) => {
       setPlayingId(state.playingId);
       setPlaybackState(state.playbackState);
@@ -309,6 +349,7 @@ function MainApp() {
       unsubAudio();
       stopTts();
       setOnTrialExpiredListener(null);
+      setOnAuthRequiredListener(null);
     };
   }, []);
 
@@ -362,6 +403,23 @@ function MainApp() {
     setTab2Mode(mode);
   };
 
+  const checkAuthGate = (): boolean => {
+    const hasName = Boolean(profile.nickname && profile.nickname.trim().length > 0);
+    const hasToken = Boolean(authToken || getAuthToken());
+    if (!hasName || !hasToken) {
+      ThemedAlert.alert(
+        'Требуется вход',
+        'Войдите в профиль, чтобы использовать разборы.',
+        [
+          { text: 'Отмена', style: 'cancel' },
+          { text: 'Войти', onPress: () => setIsProfileSetupModalVisible(true) },
+        ]
+      );
+      return false;
+    }
+    return true;
+  };
+
   const handleLogout = () => {
     setIsDrawerOpen(false);
     ThemedAlert.alert(
@@ -380,7 +438,11 @@ function MainApp() {
             AudioQueueManager.stop();
             AudioQueueManager.clearQueue();
 
-            // 3. Clear profile
+            // 3. Clear auth token & profile
+            await StorageService.removeAuthToken();
+            clearAuthSession();
+            setAuthTokenState(null);
+
             const cleared: UserProfile = {
               ...profile,
               nickname: '',
@@ -414,6 +476,13 @@ function MainApp() {
       setInterestsText(updated.interests.join(', '));
     }
     await StorageService.saveProfile(updated);
+    if (updated.nickname && updated.nickname.trim().length > 0) {
+      const devId = await getDeviceId();
+      const token = buildAuthToken(devId, updated.nickname);
+      await StorageService.saveAuthToken(token);
+      setAuthToken(token);
+      setAuthTokenState(token);
+    }
     ThemedAlert.alert(
       'Добро пожаловать!',
       `Профиль активирован для: ${updated.nickname}. Все настройки сохранены!`,
@@ -433,6 +502,11 @@ function MainApp() {
     const updated: UserProfile = { ...profile, nickname: trimmed };
     setProfile(updated);
     await StorageService.saveProfile(updated);
+    const devId = await getDeviceId();
+    const token = buildAuthToken(devId, trimmed);
+    await StorageService.saveAuthToken(token);
+    setAuthToken(token);
+    setAuthTokenState(token);
     ThemedAlert.alert(
       'Добро пожаловать!',
       `Профиль активирован для: ${trimmed}. Все настройки и уроки сохранены!`,
@@ -545,6 +619,7 @@ function MainApp() {
 
   const processImagesAnalysis = async (imagesList: CapturedPageItem[]) => {
     if (!imagesList || imagesList.length === 0) return;
+    if (!checkAuthGate()) return;
     const currentSession = ++analysisSessionRef.current;
     setLoading(true);
     setAnalysisError(null);
@@ -606,6 +681,31 @@ function MainApp() {
     } catch (err: any) {
       if (analysisSessionRef.current !== currentSession) return;
       if (
+        err?.status === 401 ||
+        err?.code === 'UNAUTHORIZED' ||
+        err?.message?.includes('Войдите в профиль')
+      ) {
+        setAuthTokenState(null);
+        clearAuthSession();
+        StorageService.removeAuthToken();
+        const cleared: UserProfile = { ...profile, nickname: '', avatarUri: undefined };
+        setProfile(cleared);
+        StorageService.saveProfile(cleared);
+        setAnalysis(null);
+        setSessionLessons([]);
+        setCapturedImages([]);
+        setCapturedImageUri(null);
+        ThemedAlert.alert(
+          'Требуется вход',
+          'Войдите в профиль, чтобы использовать разборы.',
+          [
+            { text: 'Отмена', style: 'cancel' },
+            { text: 'Войти', onPress: () => setIsProfileSetupModalVisible(true) },
+          ]
+        );
+        return;
+      }
+      if (
         err?.code === 'REVIEWS_LIMIT_REACHED' ||
         err?.message?.includes('Бесплатные разборы закончились')
       ) {
@@ -629,6 +729,7 @@ function MainApp() {
 
   const handleTakePhoto = async (mode: 'replace' | 'append' = 'replace') => {
     setAnalysisError(null);
+    if (!checkAuthGate()) return;
     // Check if free review allowance ran out
     if (!isPro && subInfo.remainingReviews <= 0) {
       setModalBlockReason('reviews_limit_reached');
@@ -688,6 +789,7 @@ function MainApp() {
 
   const handlePickImage = async (mode: 'replace' | 'append' = 'replace') => {
     setAnalysisError(null);
+    if (!checkAuthGate()) return;
     // Check if free review allowance ran out
     if (!isPro && subInfo.remainingReviews <= 0) {
       setModalBlockReason('reviews_limit_reached');
@@ -756,6 +858,7 @@ function MainApp() {
   };
 
   const handleAddPagePrompt = () => {
+    if (!checkAuthGate()) return;
     // Check if free review allowance ran out
     if (!isPro && subInfo.remainingReviews <= 0) {
       setModalBlockReason('reviews_limit_reached');

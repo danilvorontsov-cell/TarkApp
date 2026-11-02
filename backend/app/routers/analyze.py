@@ -24,6 +24,7 @@ from app.services.analysis_cache import (
     store_cached_analysis,
 )
 from app.routers.license import verify_device_access, verify_review_access
+from app.auth import get_current_user, CurrentUser
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ def _extract_device_id(raw_val: object) -> str:
     "/analyze-page",
     response_model=PageAnalysisResponse,
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(verify_review_access)],
+    dependencies=[Depends(verify_review_access), Depends(get_current_user)],
     summary="Анализ страницы эстонского учебника и адаптация под ученика",
     description=(
         "Принимает одну или несколько фотографий страниц учебника/тетради (Opiq, Koolibri, Avita) "
@@ -76,6 +77,7 @@ async def analyze_page(
     ),
     nickname: Optional[str] = Form(default="Друг", description="Имя ученика для персонализации"),
     x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
+    current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> PageAnalysisResponse:
     target_files: List[UploadFile] = []
@@ -124,7 +126,7 @@ async def analyze_page(
         grade=grade,
         tier=resolved_tier,
         interests=raw_interests,
-        nickname=nickname or "Друг",
+        nickname=nickname if nickname and nickname != "Друг" else (current_user.nickname or "Друг"),
     )
 
     dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")
@@ -160,7 +162,7 @@ async def analyze_page(
     "/analyze-page/json",
     response_model=PageAnalysisResponse,
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(verify_review_access)],
+    dependencies=[Depends(verify_review_access), Depends(get_current_user)],
     summary="Анализ страницы через Base64 JSON payload",
     description="Альтернативный эндпоинт для клиентов, передающих base64 строку вместо multipart/form-data. Поддерживает одиночные и множественные страницы.",
 )
@@ -169,6 +171,7 @@ async def analyze_page_json(
     payload: AnalyzePageJsonRequest,
     request: Request = None,
     x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
+    current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> PageAnalysisResponse:
     max_size_bytes = settings.MAX_IMAGE_SIZE_MB * 1024 * 1024
@@ -232,7 +235,7 @@ async def analyze_page_json(
         grade=payload.grade,
         tier=resolved_tier,
         interests=raw_interests,
-        nickname=payload.nickname or "Друг",
+        nickname=payload.nickname if payload.nickname and payload.nickname != "Друг" else (current_user.nickname or "Друг"),
     )
 
     dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")

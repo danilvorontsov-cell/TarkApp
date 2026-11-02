@@ -195,6 +195,46 @@ export function notifyTrialExpired(): void {
   }
 }
 
+// ==========================================
+// Authentication & Session Management
+// ==========================================
+
+let cachedAuthToken: string | null = null;
+export type AuthRequiredCallback = () => void;
+let onAuthRequiredListener: AuthRequiredCallback | null = null;
+
+export function setOnAuthRequiredListener(callback: AuthRequiredCallback | null): void {
+  onAuthRequiredListener = callback;
+}
+
+export function notifyAuthRequired(): void {
+  if (onAuthRequiredListener) {
+    try {
+      onAuthRequiredListener();
+    } catch (e) {
+      console.warn('Error in auth required listener:', e);
+    }
+  }
+}
+
+export function setAuthToken(token: string | null): void {
+  cachedAuthToken = token ? token.trim() : null;
+}
+
+export function getAuthToken(): string | null {
+  return cachedAuthToken;
+}
+
+export function clearAuthSession(): void {
+  cachedAuthToken = null;
+}
+
+export function buildAuthToken(deviceId: string, nickname: string): string {
+  const cleanDevice = (deviceId || '').trim();
+  const cleanNick = (nickname || '').trim() || 'Ученик';
+  return `${cleanDevice}:${cleanNick}`;
+}
+
 export interface LicenseStatus {
   is_active: boolean;
   has_key?: boolean;
@@ -472,6 +512,17 @@ async function parseErrorResponse(response: Response): Promise<ApiError> {
     // Non-JSON response
   }
 
+  // Intercept HTTP 401 Unauthorized (AuthGuard)
+  if (
+    response.status === 401 ||
+    errorCode === 'UNAUTHORIZED' ||
+    friendlyMessage.includes('Войдите в профиль')
+  ) {
+    errorCode = errorCode || 'UNAUTHORIZED';
+    friendlyMessage = 'Войдите в профиль, чтобы использовать разборы';
+    notifyAuthRequired();
+  }
+
   // Intercept HTTP 403 with TRIAL_EXPIRED or REVIEWS_LIMIT_REACHED
   if (
     response.status === 403 &&
@@ -557,13 +608,20 @@ export async function analyzePage(
     formData.append('interests', (profile.interests || []).join(', '));
     formData.append('nickname', profile.nickname || 'Друг');
 
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      'X-Device-ID': deviceId,
+    };
+    const token = getAuthToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+      headers['X-Auth-Token'] = token;
+    }
+
     const response = await fetchWithTimeout(endpoint, {
       method: 'POST',
       body: formData,
-      headers: {
-        Accept: 'application/json',
-        'X-Device-ID': deviceId,
-      },
+      headers,
     });
 
     if (!response.ok) {
@@ -613,13 +671,20 @@ export async function analyzePagesJson(
       nickname: profile.nickname,
     };
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'X-Device-ID': deviceId,
+    };
+    const token = getAuthToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+      headers['X-Auth-Token'] = token;
+    }
+
     const response = await fetchWithTimeout(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'X-Device-ID': deviceId,
-      },
+      headers,
       body: JSON.stringify(bodyPayload),
     });
 

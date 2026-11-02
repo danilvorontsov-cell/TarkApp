@@ -5,6 +5,7 @@ const STORAGE_KEYS = {
   PROFILE: '@tarkapp_user_profile',
   VOCABULARY: '@tarkapp_saved_vocabulary',
   HISTORY: '@tarkapp_saved_history',
+  AUTH_TOKEN: '@tarkapp_auth_token',
 };
 
 const DEFAULT_PROFILE: UserProfile = {
@@ -154,12 +155,41 @@ export const StorageService = {
     memoryStore[STORAGE_KEYS.PROFILE] = JSON.stringify(DEFAULT_PROFILE);
     memoryStore[STORAGE_KEYS.VOCABULARY] = JSON.stringify([]);
     memoryStore[STORAGE_KEYS.HISTORY] = JSON.stringify([]);
+    delete memoryStore[STORAGE_KEYS.AUTH_TOKEN];
     try {
       await Promise.all([
         AsyncStorage.removeItem(STORAGE_KEYS.PROFILE),
         AsyncStorage.removeItem(STORAGE_KEYS.VOCABULARY),
         AsyncStorage.removeItem(STORAGE_KEYS.HISTORY),
+        AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN),
       ]);
+    } catch {}
+  },
+
+  async getAuthToken(): Promise<string | null> {
+    try {
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      if (token && token.trim()) {
+        memoryStore[STORAGE_KEYS.AUTH_TOKEN] = token.trim();
+        return token.trim();
+      }
+    } catch {}
+    return memoryStore[STORAGE_KEYS.AUTH_TOKEN] || null;
+  },
+
+  async saveAuthToken(token: string): Promise<void> {
+    const clean = (token || '').trim();
+    if (!clean) return;
+    memoryStore[STORAGE_KEYS.AUTH_TOKEN] = clean;
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, clean);
+    } catch {}
+  },
+
+  async removeAuthToken(): Promise<void> {
+    delete memoryStore[STORAGE_KEYS.AUTH_TOKEN];
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
     } catch {}
   },
 
