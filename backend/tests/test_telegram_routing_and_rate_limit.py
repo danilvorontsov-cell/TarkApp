@@ -8,6 +8,7 @@ from app.services.telegram_alert import (
     send_telegram_message,
     send_telegram_alert,
     send_telegram_feedback,
+    send_telegram_invoice_notification,
     clear_alert_history,
     compute_error_hash,
     _ALERT_HISTORY,
@@ -15,6 +16,7 @@ from app.services.telegram_alert import (
 from app.services.telegram_alerts import (
     send_telegram_message as send_telegram_message_alias,
     send_telegram_alert as send_telegram_alert_alias,
+    send_telegram_invoice_notification as send_telegram_invoice_notification_alias,
 )
 
 
@@ -226,3 +228,38 @@ async def test_rate_limit_expires_after_30_minutes():
 def test_telegram_alerts_module_alias():
     assert send_telegram_message_alias is send_telegram_message
     assert send_telegram_alert_alias is send_telegram_alert
+    assert send_telegram_invoice_notification_alias is send_telegram_invoice_notification
+
+
+@pytest.mark.anyio
+async def test_send_telegram_invoice_notification_formatting():
+    """Verifies that new invoice request alerts are formatted with clear titles and fields."""
+    with patch.object(settings, "TELEGRAM_BOT_TOKEN", "mock_token"), \
+         patch.object(settings, "TELEGRAM_CHAT_ID", "-10012345"), \
+         patch.object(settings, "TELEGRAM_TOPIC_FEATURES", 14):
+
+        with patch("app.services.telegram_alert.send_telegram_message", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = True
+
+            res = await send_telegram_invoice_notification(
+                invoice_number="INV-2026-1001",
+                viitenumber="202610010",
+                plan_title="Учебный год",
+                amount_eur="71.90",
+                customer_email="danil.zuravov@gmail.com",
+                device_id="test-dev-device-99",
+            )
+
+            assert res is True
+            assert mock_send.called
+            _, kwargs = mock_send.call_args
+            assert kwargs.get("message_thread_id") == 14
+            msg = kwargs.get("text", "")
+
+            # Verify exact required titles and fields
+            assert "🧾 <b>Новый запрос счёта (Arve)</b>" in msg
+            assert "• <b>Номер инвойса:</b> <code>INV-2026-1001</code>" in msg
+            assert "• <b>Тариф:</b> Учебный год (71.90 €)" in msg
+            assert "• <b>Viitenumber для сверки:</b> <code>202610010</code>" in msg
+            assert "• <b>Email плательщика:</b> danil.zuravov@gmail.com" in msg
+            assert "• <b>ID устройства:</b> <code>test-dev-device-99</code>" in msg

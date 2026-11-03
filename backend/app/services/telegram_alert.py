@@ -21,6 +21,20 @@ _ALERT_HISTORY: Dict[str, float] = {}
 # Debounce suppression window: 30 minutes
 _ALERT_DEBOUNCE_SECONDS: float = 30 * 60
 
+ADMIN_INLINE_KEYBOARD: Dict[str, Any] = {
+    "inline_keyboard": [
+        [
+            {"text": "📊 Статистика системы", "callback_data": "admin:stats"}
+        ],
+        [
+            {"text": "🔑 Сгенерировать ключ на 1 мес", "callback_data": "admin:gen:1:30"}
+        ],
+        [
+            {"text": "🎓 Сгенерировать ключ на Учебный год", "callback_data": "admin:gen:1:270"}
+        ],
+    ]
+}
+
 
 def clear_alert_history() -> None:
     """Clears error alert cache (used in tests and maintenance)."""
@@ -47,10 +61,12 @@ async def send_telegram_message(
     parse_mode: Optional[str] = None,
     message_thread_id: Optional[int] = None,
     chat_id: Optional[Union[str, int]] = None,
+    reply_markup: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
-    Sends a message to Telegram using Bot API sendMessage with optional topic routing (message_thread_id)
-    and optional custom target chat_id. Silently skips if TELEGRAM_BOT_TOKEN or target chat ID are not configured.
+    Sends a message to Telegram using Bot API sendMessage with optional topic routing (message_thread_id),
+    custom target chat_id, and optional interactive reply_markup (inline keyboard).
+    Silently skips if TELEGRAM_BOT_TOKEN or target chat ID are not configured.
     """
     token = settings.TELEGRAM_BOT_TOKEN
     target_chat = str(chat_id).strip() if chat_id is not None else (settings.telegram_chat_id or "").strip()
@@ -83,6 +99,9 @@ async def send_telegram_message(
         except (ValueError, TypeError):
             pass
 
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
             resp = await client.post(telegram_url, json=payload)
@@ -100,6 +119,117 @@ async def send_telegram_message(
     except Exception as e:
         logger.warning(f"Failed to deliver Telegram message: {e}")
         return False
+
+
+async def answer_telegram_callback_query(
+    callback_query_id: str,
+    text: Optional[str] = None,
+    show_alert: bool = False,
+) -> bool:
+    """
+    Acknowledges incoming callback query to remove loading spinner on inline button.
+    """
+    token = settings.TELEGRAM_BOT_TOKEN
+    if not token or not callback_query_id:
+        return False
+
+    clean_token = str(token).strip()
+    url = f"https://api.telegram.org/bot{clean_token}/answerCallbackQuery"
+    payload: Dict[str, Any] = {"callback_query_id": callback_query_id}
+    if text:
+        payload["text"] = text
+        payload["show_alert"] = show_alert
+
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            resp = await client.post(url, json=payload)
+            return resp.status_code == 200
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query {callback_query_id}: {e}")
+        return False
+
+
+async def register_telegram_bot_commands() -> bool:
+    """
+    Registers command list in Telegram via Bot API setMyCommands:
+    * /commands — показать все доступные команды и быстрые кнопки
+    * /stats — статистика пользователей и активных лицензий
+    * /gen — инструкция по генерации ключей доступа
+    * /help — помощь по работе с ботом
+    """
+    token = settings.TELEGRAM_BOT_TOKEN
+    if not token or any(p in str(token) for p in ("твой_токен", "your_token", "xxx", "None")):
+        return False
+
+    clean_token = str(token).strip()
+    url = f"https://api.telegram.org/bot{clean_token}/setMyCommands"
+    payload = {
+        "commands": [
+            {"command": "commands", "description": "Показать все доступные команды и быстрые кнопки"},
+            {"command": "stats", "description": "Статистика пользователей и активных лицензий"},
+            {"command": "gen", "description": "Инструкция по генерации ключей доступа"},
+            {"command": "help", "description": "Помощь по работе с ботом"},
+        ]
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200 and resp.json().get("ok"):
+                logger.info("[TELEGRAM] Bot command menu successfully registered via setMyCommands.")
+                return True
+            else:
+                logger.warning(f"[TELEGRAM] setMyCommands returned {resp.status_code}: {resp.text}")
+                return False
+    except Exception as e:
+        logger.warning(f"[TELEGRAM] Failed to call setMyCommands: {e}")
+        return False
+
+
+async def send_telegram_invoice_notification(
+    invoice_number: str,
+    viitenumber: str,
+    plan_title: str,
+    amount_eur: str,
+    customer_email: str,
+    device_id: str,
+    message_thread_id: Optional[int] = None,
+) -> bool:
+    """
+    Sends transparent notification to Telegram when a customer requests a bank transfer invoice:
+    🧾 Новый запрос счёта (Arve)
+    • Номер инвойса: INV-2026-XXXX
+    • Тариф: Учебный год (71.90 €)
+    • Viitenumber для сверки: XXXXXXX
+    • Email плательщика: user@example.com
+    • ID устройства: xxxxxxxx
+    """
+    target_thread = (
+        message_thread_id
+        if message_thread_id is not None
+        else settings.TELEGRAM_TOPIC_FEATURES
+    )
+
+    clean_inv = html.escape(str(invoice_number or "").strip())
+    clean_viite = html.escape(str(viitenumber or "").strip())
+    clean_plan = html.escape(str(plan_title or "").strip())
+    clean_amount = html.escape(str(amount_eur or "").strip())
+    clean_email = html.escape(str(customer_email or "").strip()) or "Не указан"
+    clean_dev = html.escape(str(device_id or "").strip()) or "Unknown"
+
+    text = (
+        f"🧾 <b>Новый запрос счёта (Arve)</b>\n\n"
+        f"• <b>Номер инвойса:</b> <code>{clean_inv}</code>\n"
+        f"• <b>Тариф:</b> {clean_plan} ({clean_amount} €)\n"
+        f"• <b>Viitenumber для сверки:</b> <code>{clean_viite}</code>\n"
+        f"• <b>Email плательщика:</b> {clean_email}\n"
+        f"• <b>ID устройства:</b> <code>{clean_dev}</code>"
+    )
+
+    return await send_telegram_message(
+        text=text,
+        parse_mode="HTML",
+        message_thread_id=target_thread,
+    )
 
 
 async def send_telegram_alert(
@@ -290,8 +420,34 @@ async def handle_admin_telegram_command(
     command = tokens[0].split("@")[0].lower()
     args = tokens[1:]
 
-    # 3. Handle /gen <count> <days>
+    # 3. Handle /gen <count> <days> or /gen without args
     if command == "/gen":
+        if not args:
+            reply_msg = (
+                f"🔑 <b>Инструкция по генерации ключей доступа</b>\n\n"
+                f"Формат команды: <code>/gen &lt;кол-во&gt; &lt;дни&gt;</code>\n\n"
+                f"💡 <b>Примеры:</b>\n"
+                f"• <code>/gen 1 30</code> — 1 ключ на 1 месяц (30 дней)\n"
+                f"• <code>/gen 3 150</code> — 3 ключа на семестр (150 дней)\n"
+                f"• <code>/gen 5 270</code> — 5 ключей на учебный год (270 дней)\n"
+                f"• <code>/gen 1 365</code> — 1 ключ на полный год (365 дней)\n\n"
+                f"<i>Либо воспользуйтесь быстрыми кнопками ниже:</i>"
+            )
+            if target_chat:
+                await send_telegram_message(
+                    text=reply_msg,
+                    parse_mode="HTML",
+                    message_thread_id=message_thread_id,
+                    chat_id=target_chat,
+                    reply_markup=ADMIN_INLINE_KEYBOARD,
+                )
+            return {
+                "handled": True,
+                "authorized": True,
+                "command": "gen_help",
+                "reply": reply_msg,
+            }
+
         count = 10
         days = 30
 
@@ -325,6 +481,7 @@ async def handle_admin_telegram_command(
                 parse_mode="HTML",
                 message_thread_id=message_thread_id,
                 chat_id=target_chat,
+                reply_markup=ADMIN_INLINE_KEYBOARD,
             )
 
         return {
@@ -356,6 +513,7 @@ async def handle_admin_telegram_command(
                 parse_mode="HTML",
                 message_thread_id=message_thread_id,
                 chat_id=target_chat,
+                reply_markup=ADMIN_INLINE_KEYBOARD,
             )
 
         return {
@@ -366,14 +524,21 @@ async def handle_admin_telegram_command(
             "reply": reply_msg,
         }
 
-    # 5. Handle /help or /start
-    elif command in ("/start", "/help"):
+    # 5. Handle /commands, /help or /start
+    elif command in ("/commands", "/help", "/start"):
         reply_msg = (
             f"🛠 <b>Административная панель TarkApp</b>\n\n"
-            f"Доступные команды:\n"
-            f"• <code>/gen &lt;кол-во&gt; &lt;дни&gt;</code> — сгенерировать новые ключи доступа (напр. <code>/gen 10 30</code>)\n"
-            f"• <code>/stats</code> — статистика зарегистрированных устройств и статусов ключей\n"
-            f"• <code>/help</code> — показать эту справку"
+            f"📋 <b>Доступные команды:</b>\n"
+            f"• <code>/commands</code> — показать все доступные команды и быстрые кнопки\n"
+            f"• <code>/stats</code> — статистика пользователей и активных лицензий\n"
+            f"• <code>/gen &lt;кол-во&gt; &lt;дни&gt;</code> — генерация ключей доступа\n"
+            f"• <code>/help</code> — помощь по работе с ботом\n\n"
+            f"💡 <b>Примеры генерации ключей:</b>\n"
+            f"• <code>/gen 1 30</code> — 1 ключ на 1 месяц (30 дней)\n"
+            f"• <code>/gen 3 150</code> — 3 ключа на семестр (150 дней)\n"
+            f"• <code>/gen 5 270</code> — 5 ключей на учебный год (270 дней)\n"
+            f"• <code>/gen 1 365</code> — 1 ключ на полный год с каникулами (365 дней)\n\n"
+            f"<i>💡 Нажмите кнопку ниже для быстрого действия:</i>"
         )
 
         if target_chat:
@@ -382,12 +547,13 @@ async def handle_admin_telegram_command(
                 parse_mode="HTML",
                 message_thread_id=message_thread_id,
                 chat_id=target_chat,
+                reply_markup=ADMIN_INLINE_KEYBOARD,
             )
 
         return {
             "handled": True,
             "authorized": True,
-            "command": "help",
+            "command": "commands" if command == "/commands" else "help",
             "reply": reply_msg,
         }
 
@@ -395,7 +561,7 @@ async def handle_admin_telegram_command(
     else:
         reply_msg = (
             f"❓ Команда <code>{html.escape(command)}</code> не распознана.\n"
-            f"Используйте <code>/help</code> для списка доступных команд."
+            f"Используйте <code>/commands</code> или <code>/help</code> для списка доступных команд."
         )
         if target_chat:
             await send_telegram_message(
@@ -403,6 +569,7 @@ async def handle_admin_telegram_command(
                 parse_mode="HTML",
                 message_thread_id=message_thread_id,
                 chat_id=target_chat,
+                reply_markup=ADMIN_INLINE_KEYBOARD,
             )
         return {
             "handled": True,
@@ -417,9 +584,57 @@ async def process_telegram_update(
     db: Optional[Session] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Inspects an incoming Telegram update payload and dispatches commands.
+    Inspects an incoming Telegram update payload and dispatches commands or callback queries.
     Used by webhook endpoints and background polling loops.
     """
+    # 1. Handle Inline Keyboard Callback Queries
+    callback_query = update.get("callback_query")
+    if callback_query:
+        cb_id = callback_query.get("id")
+        if cb_id:
+            try:
+                await answer_telegram_callback_query(cb_id)
+            except Exception as cb_err:
+                logger.warning(f"[TELEGRAM] Failed answering callback query: {cb_err}")
+
+        user = callback_query.get("from") or {}
+        user_id = user.get("id")
+        msg = callback_query.get("message") or {}
+        chat = msg.get("chat") or {}
+        chat_id = chat.get("id")
+        thread_id = msg.get("message_thread_id")
+        cb_data = str(callback_query.get("data") or "").strip()
+
+        if cb_data == "admin:stats":
+            return await handle_admin_telegram_command(
+                text="/stats",
+                user_id=user_id,
+                chat_id=chat_id,
+                message_thread_id=thread_id,
+                db=db,
+            )
+        elif cb_data.startswith("admin:gen:"):
+            parts = cb_data.split(":")
+            cnt = parts[2] if len(parts) > 2 else "1"
+            days = parts[3] if len(parts) > 3 else "30"
+            return await handle_admin_telegram_command(
+                text=f"/gen {cnt} {days}",
+                user_id=user_id,
+                chat_id=chat_id,
+                message_thread_id=thread_id,
+                db=db,
+            )
+        elif cb_data in ("admin:commands", "admin:help"):
+            return await handle_admin_telegram_command(
+                text="/commands",
+                user_id=user_id,
+                chat_id=chat_id,
+                message_thread_id=thread_id,
+                db=db,
+            )
+        return {"handled": False, "callback_data": cb_data}
+
+    # 2. Handle Text Commands
     message = update.get("message") or update.get("edited_message")
     if not message:
         return None
@@ -456,6 +671,7 @@ async def start_telegram_polling() -> None:
         return
 
     logger.info("[TELEGRAM] Starting Telegram admin command polling worker...")
+    await register_telegram_bot_commands()
     offset = 0
     clean_token = str(token).strip()
     url = f"https://api.telegram.org/bot{clean_token}/getUpdates"

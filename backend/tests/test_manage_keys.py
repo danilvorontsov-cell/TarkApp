@@ -17,6 +17,9 @@ from app.services.telegram_alert import (
     handle_admin_telegram_command,
     process_telegram_update,
     is_admin_user,
+    ADMIN_INLINE_KEYBOARD,
+    register_telegram_bot_commands,
+    answer_telegram_callback_query,
 )
 import scripts.manage_keys as cli_module
 
@@ -295,3 +298,142 @@ def test_telegram_webhook_route():
     assert response.status_code == 200
     data = response.json()
     assert data["ok"] is True
+
+
+@pytest.mark.anyio
+async def test_telegram_admin_commands_command_and_inline_keyboard(db_session):
+    """Verifies that /commands returns interactive menu with examples and inline keyboard."""
+    orig_admin = settings.ADMIN_TELEGRAM_ID
+    settings.ADMIN_TELEGRAM_ID = "777888999"
+    try:
+        with patch("app.services.telegram_alert.send_telegram_message", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = True
+
+            result = await handle_admin_telegram_command(
+                text="/commands",
+                user_id="777888999",
+                chat_id="admin-chat-1",
+                db=db_session,
+            )
+            assert result["handled"] is True
+            assert result["authorized"] is True
+            assert result["command"] == "commands"
+            assert "/stats" in result["reply"]
+            assert "/gen 1 30" in result["reply"]
+            assert "/gen 5 270" in result["reply"]
+
+            mock_send.assert_awaited_once()
+            call_kwargs = mock_send.call_args.kwargs
+            assert call_kwargs.get("reply_markup") == ADMIN_INLINE_KEYBOARD
+    finally:
+        settings.ADMIN_TELEGRAM_ID = orig_admin
+
+
+@pytest.mark.anyio
+async def test_telegram_admin_gen_without_args_returns_instructions(db_session):
+    """Verifies that calling /gen with no arguments returns instructions with examples and buttons."""
+    orig_admin = settings.ADMIN_TELEGRAM_ID
+    settings.ADMIN_TELEGRAM_ID = "777888999"
+    try:
+        with patch("app.services.telegram_alert.send_telegram_message", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = True
+
+            result = await handle_admin_telegram_command(
+                text="/gen",
+                user_id="777888999",
+                chat_id="admin-chat-1",
+                db=db_session,
+            )
+            assert result["handled"] is True
+            assert result["authorized"] is True
+            assert result["command"] == "gen_help"
+            assert "Инструкция по генерации ключей доступа" in result["reply"]
+            assert "/gen 1 30" in result["reply"]
+            assert "/gen 5 270" in result["reply"]
+            mock_send.assert_awaited_once()
+            call_kwargs = mock_send.call_args.kwargs
+            assert call_kwargs.get("reply_markup") == ADMIN_INLINE_KEYBOARD
+    finally:
+        settings.ADMIN_TELEGRAM_ID = orig_admin
+
+
+@pytest.mark.anyio
+async def test_process_telegram_callback_queries(db_session):
+    """Verifies that inline button clicks (callback_query) are acknowledged and dispatched."""
+    orig_admin = settings.ADMIN_TELEGRAM_ID
+    settings.ADMIN_TELEGRAM_ID = "777888999"
+    try:
+        with patch("app.services.telegram_alert.answer_telegram_callback_query", new_callable=AsyncMock) as mock_ans, \
+             patch("app.services.telegram_alert.send_telegram_message", new_callable=AsyncMock) as mock_send:
+            mock_ans.return_value = True
+            mock_send.return_value = True
+
+            # 1. Click stats button
+            cb_stats = {
+                "update_id": 5001,
+                "callback_query": {
+                    "id": "cb_12345",
+                    "from": {"id": 777888999, "is_bot": False},
+                    "message": {"chat": {"id": 777888999}, "message_id": 10},
+                    "data": "admin:stats",
+                },
+            }
+            res_stats = await process_telegram_update(cb_stats, db=db_session)
+            assert res_stats["command"] == "stats"
+            mock_ans.assert_awaited_with("cb_12345")
+
+            # 2. Click generate 1 month button (admin:gen:1:30)
+            cb_gen1 = {
+                "update_id": 5002,
+                "callback_query": {
+                    "id": "cb_67890",
+                    "from": {"id": 777888999, "is_bot": False},
+                    "message": {"chat": {"id": 777888999}, "message_id": 11},
+                    "data": "admin:gen:1:30",
+                },
+            }
+            res_gen1 = await process_telegram_update(cb_gen1, db=db_session)
+            assert res_gen1["command"] == "gen"
+            assert res_gen1["count"] == 1
+            assert res_gen1["days"] == 30
+
+            # 3. Click generate school year button (admin:gen:1:270)
+            cb_gen_year = {
+                "update_id": 5003,
+                "callback_query": {
+                    "id": "cb_99999",
+                    "from": {"id": 777888999, "is_bot": False},
+                    "message": {"chat": {"id": 777888999}, "message_id": 12},
+                    "data": "admin:gen:1:270",
+                },
+            }
+            res_gen_year = await process_telegram_update(cb_gen_year, db=db_session)
+            assert res_gen_year["command"] == "gen"
+            assert res_gen_year["count"] == 1
+            assert res_gen_year["days"] == 270
+    finally:
+        settings.ADMIN_TELEGRAM_ID = orig_admin
+
+
+@pytest.mark.anyio
+async def test_register_telegram_bot_commands():
+    """Verifies that register_telegram_bot_commands sends setMyCommands payload to Bot API."""
+    from httpx import Response
+    with patch.object(settings, "TELEGRAM_BOT_TOKEN", "mock_bot_token"):
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = Response(200, json={"ok": True, "result": True})
+
+            success = await register_telegram_bot_commands()
+            assert success is True
+            assert mock_post.called
+
+            call_kwargs = mock_post.call_args.kwargs
+            payload = call_kwargs.get("json", {})
+            commands = payload.get("commands", [])
+            cmd_names = [c["command"] for c in commands]
+
+            assert "commands" in cmd_names
+            assert "stats" in cmd_names
+            assert "gen" in cmd_names
+            assert "help" in cmd_names
+

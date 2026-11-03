@@ -22,6 +22,9 @@ def mock_telegram_polling(monkeypatch):
     monkeypatch.setattr(telegram_alert, "start_telegram_polling", fake_coro)
     monkeypatch.setattr(telegram_alert, "send_telegram_alert", fake_coro)
     monkeypatch.setattr(telegram_alert, "send_telegram_feedback", fake_coro)
+    monkeypatch.setattr(telegram_alert, "send_telegram_invoice_notification", fake_coro)
+    monkeypatch.setattr(telegram_alert, "register_telegram_bot_commands", fake_coro)
+    monkeypatch.setattr(telegram_alert, "answer_telegram_callback_query", fake_coro)
     if hasattr(app_main, "start_telegram_polling"):
         monkeypatch.setattr(app_main, "start_telegram_polling", fake_coro)
 

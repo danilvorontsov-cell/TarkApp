@@ -57,6 +57,8 @@ async def lifespan(app: FastAPI):
         and settings.APP_ENV != "test"
     ):
         try:
+            from app.services.telegram_alert import register_telegram_bot_commands
+            asyncio.create_task(register_telegram_bot_commands())
             polling_task = asyncio.create_task(start_telegram_polling())
         except Exception as e:
             logger.warning(f"Could not start Telegram polling: {e}")

@@ -34,7 +34,7 @@ from app.services.email_service import (
     BANK_IBAN,
     BANK_SWIFT,
 )
-from app.services.telegram_alert import send_telegram_feedback
+from app.services.telegram_alert import send_telegram_feedback, send_telegram_invoice_notification
 from app.utils.viitenumber import generate_estonian_reference_number
 
 logger = logging.getLogger("tarkapp.license")
@@ -292,18 +292,13 @@ async def request_invoice_email(
     # Also notify admin in Telegram asynchronously
     try:
         asyncio.create_task(
-            send_telegram_feedback(
-                {
-                    "category": "feature",
-                    "message": (
-                        f"📄 ЗАПРОС СЧЁТА НА ПОДПИСКУ PRO\n"
-                        f"Счёт: {invoice_number} | Viitenumber: {viitenumber}\n"
-                        f"Тариф: {title_ru} — {amount} €\n"
-                        f"Email: {clean_email}\n"
-                        f"Device ID: {device_id}"
-                    ),
-                    "contact": clean_email,
-                },
+            send_telegram_invoice_notification(
+                invoice_number=invoice_number,
+                viitenumber=viitenumber,
+                plan_title=title_ru,
+                amount_eur=amount,
+                customer_email=clean_email,
+                device_id=device_id,
                 message_thread_id=settings.TELEGRAM_TOPIC_FEATURES,
             )
         )
