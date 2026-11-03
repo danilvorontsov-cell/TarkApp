@@ -12,4 +12,4 @@ services:
     volumes:
       - ./backend/data:/app/data
       - ./backend/logs:/app/logs
-      - ./backend/static/audio/cache:/app/static/audio/cache
+      - ./backend/static:/app/static
