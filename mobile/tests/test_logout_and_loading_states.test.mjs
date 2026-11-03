@@ -271,7 +271,7 @@ test('Scenario 10: PaywallScreen invoice endpoint and Graphite & Mint email inpu
   assert.match(apiContent, /\/api\/v1\/license\/invoice/);
 
   // Verify PaywallScreen calls requestInvoiceEmail
-  assert.match(paywallContent, /requestInvoiceEmail\(trimmedEmail,\s*selectedPlan\)/);
+  assert.match(paywallContent, /requestInvoiceEmail\(trimmedEmail,\s*(selectedPlan|selectedPlanId)\)/);
 
   // Verify emailTextInput uses #1E252B background, 1px #5FEDC5 border, and #FFFFFF text
   assert.match(
