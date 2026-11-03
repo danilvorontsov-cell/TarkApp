@@ -20,6 +20,7 @@ class Device(Base):
     has_active_access = Column(Boolean, default=True)
     activated_key = Column(String, nullable=True)
     free_reviews_left = Column(Integer, default=20, nullable=False)
+    max_free_reviews = Column(Integer, default=20, nullable=False)
     last_review_date = Column(String, nullable=True)  # YYYY-MM-DD for daily limit reset
 
 

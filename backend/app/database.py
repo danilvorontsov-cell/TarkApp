@@ -68,8 +68,16 @@ def init_db():
             if "free_reviews_left" not in col_names and "device_id" in col_names:
                 conn.execute(text("ALTER TABLE devices ADD COLUMN free_reviews_left INTEGER DEFAULT 20 NOT NULL"))
                 conn.commit()
+            if "max_free_reviews" not in col_names and "device_id" in col_names:
+                conn.execute(text("ALTER TABLE devices ADD COLUMN max_free_reviews INTEGER DEFAULT 20 NOT NULL"))
+                conn.commit()
             if "last_review_date" not in col_names and "device_id" in col_names:
                 conn.execute(text("ALTER TABLE devices ADD COLUMN last_review_date VARCHAR DEFAULT NULL"))
+                conn.commit()
+
+            # Ensure all existing devices have max_free_reviews = 20
+            if "device_id" in col_names:
+                conn.execute(text("UPDATE devices SET max_free_reviews = 20 WHERE max_free_reviews IS NULL OR max_free_reviews < 20"))
                 conn.commit()
         except Exception:
             pass

@@ -25,10 +25,11 @@ export function getSubscriptionInfo(status?: LicenseStatus | null): Subscription
   // A user is PRO ONLY IF has_key is true and package_name is present
   const isPro = Boolean(hasKey && packageName);
 
-  const maxReviews = DEFAULT_MAX_FREE_REVIEWS; // Strict single source of truth: 20
+  // Dynamic server denominator with 20 fallback
+  const maxReviews = status?.max_free_reviews ?? DEFAULT_MAX_FREE_REVIEWS;
   const remainingReviews = Math.max(
     0,
-    Math.min(status?.free_reviews_left ?? DEFAULT_MAX_FREE_REVIEWS, maxReviews)
+    status?.free_reviews_left ?? DEFAULT_MAX_FREE_REVIEWS
   );
 
   const daysLeft = status?.days_left ?? DEFAULT_TRIAL_DAYS;

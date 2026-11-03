@@ -46,6 +46,7 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
             has_active_access=True,
             activated_key=None,
             free_reviews_left=DEFAULT_FREE_REVIEWS,
+            max_free_reviews=DEFAULT_FREE_REVIEWS,
             last_review_date=today_str,
         )
         db.add(device)
@@ -66,14 +67,22 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
 
     # Daily reset: if on trial and calendar date changed (or newly migrated), reset quota to 20
     device_last_date = getattr(device, "last_review_date", None)
-    if not has_key and device_last_date != today_str:
+    device_max_reviews = getattr(device, "max_free_reviews", None)
+    needs_max_sync = device_max_reviews is None or device_max_reviews < DEFAULT_FREE_REVIEWS
+
+    if not has_key and (device_last_date != today_str or needs_max_sync):
         device.free_reviews_left = DEFAULT_FREE_REVIEWS
+        device.max_free_reviews = DEFAULT_FREE_REVIEWS
         device.last_review_date = today_str
         db.commit()
         db.refresh(device)
         logger.info(
-            f"[LICENSE] Reset daily free reviews quota for device {clean_id} to {DEFAULT_FREE_REVIEWS} (date={today_str})"
+            f"[LICENSE] Reset daily free reviews quota for device {clean_id} to {DEFAULT_FREE_REVIEWS}/{DEFAULT_FREE_REVIEWS} (date={today_str})"
         )
+    elif needs_max_sync:
+        device.max_free_reviews = DEFAULT_FREE_REVIEWS
+        db.commit()
+        db.refresh(device)
 
     delta = device.trial_expires_at - now
     if delta.total_seconds() > 0:
@@ -119,7 +128,7 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
         "is_active": is_allowed,
         "has_key": has_key,
         "free_reviews_left": device.free_reviews_left,
-        "max_free_reviews": DEFAULT_FREE_REVIEWS,
+        "max_free_reviews": getattr(device, "max_free_reviews", DEFAULT_FREE_REVIEWS) or DEFAULT_FREE_REVIEWS,
         "days_left": days_left,
         "expires_at": device.trial_expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "device_id": device.device_id,
@@ -287,6 +296,7 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
             has_active_access=True,
             activated_key=None,
             free_reviews_left=DEFAULT_FREE_REVIEWS,
+            max_free_reviews=DEFAULT_FREE_REVIEWS,
             last_review_date=now.strftime("%Y-%m-%d"),
         )
         db.add(device)
@@ -391,7 +401,7 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
         "is_active": True,
         "has_key": True,
         "free_reviews_left": device.free_reviews_left,
-        "max_free_reviews": DEFAULT_FREE_REVIEWS,
+        "max_free_reviews": getattr(device, "max_free_reviews", DEFAULT_FREE_REVIEWS) or DEFAULT_FREE_REVIEWS,
         "days_left": days_left,
         "expires_at": expires_str,
         "package_name": package_name,
