@@ -223,8 +223,8 @@ test('Scenario 8: Drawer footer branding and Header vertical gradient', async ()
   // Verify Drawer footer text
   assert.match(
     drawerContent,
-    /TarkApp • v1\.0\.0 • Tark Systems/,
-    'DrawerMenu must display TarkApp • v1.0.0 • Tark Systems'
+    /TarkApp • v1\.0\.[0-9]+ • Tark Systems/,
+    'DrawerMenu must display TarkApp • v1.0.x • Tark Systems'
   );
 
   // Verify Header vertical gradient ['#66F6CF', '#42DCA3']

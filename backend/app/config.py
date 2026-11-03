@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     APP_NAME: str = "TarkApp Backend"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = "1.0.1"
     APP_ENV: str = "development"
     PORT: int = 8000
     HOST: str = "0.0.0.0"
