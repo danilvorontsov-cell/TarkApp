@@ -1,6 +1,6 @@
 import os
 from typing import List, Optional, Any
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     # Model defaults to gemini-3.8-flash with environment override support
     GEMINI_MODEL: str = "gemini-3.8-flash"
+    GEMINI_MODEL_NAME: Optional[str] = None
     
     # Azure Speech Service settings
     AZURE_SPEECH_KEY: Optional[str] = None
@@ -59,6 +60,14 @@ class Settings(BaseSettings):
 
     RESEND_API_KEY: Optional[str] = None
     RESEND_FROM: str = "TarkApp <onboarding@resend.dev>"
+
+    @model_validator(mode="after")
+    def sync_gemini_model_names(self) -> "Settings":
+        if self.GEMINI_MODEL_NAME:
+            self.GEMINI_MODEL = self.GEMINI_MODEL_NAME
+        else:
+            self.GEMINI_MODEL_NAME = self.GEMINI_MODEL
+        return self
 
     @field_validator(
         "TELEGRAM_TOPIC_BUGS",
