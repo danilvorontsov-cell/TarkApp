@@ -1,5 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { UserProfile, VocabularyItem, SavedLessonCard, getTierFromGrade } from '../types';
+import {
+  UserProfile,
+  VocabularyItem,
+  SavedLessonCard,
+  getTierFromGrade,
+  getDefaultInterestsForTier,
+  isDefaultInterestsList,
+} from '../types';
 
 const STORAGE_KEYS = {
   PROFILE: '@tarkapp_user_profile',
@@ -11,7 +18,8 @@ const STORAGE_KEYS = {
 const DEFAULT_PROFILE: UserProfile = {
   grade: 3,
   tier: 'primary',
-  interests: ['Minecraft', 'LEGO', 'Roblox'],
+  interests: getDefaultInterestsForTier('primary'),
+  hasCustomInterests: false,
   nickname: '',
 };
 
@@ -34,15 +42,21 @@ export const StorageService = {
       if (data) {
         memoryStore[STORAGE_KEYS.PROFILE] = data;
         const parsed = JSON.parse(data) as any;
-        parsed.tier = parsed.tier || getTierFromGrade(parsed.grade);
+        const tier = parsed.tier || getTierFromGrade(parsed.grade);
+        parsed.tier = tier;
         if (!parsed.interests || !Array.isArray(parsed.interests)) {
           parsed.interests = parsed.theme_interest
             ? [parsed.theme_interest]
-            : ['Minecraft', 'LEGO', 'Roblox'];
+            : getDefaultInterestsForTier(tier);
+          parsed.hasCustomInterests = false;
         } else {
           parsed.interests = parsed.interests.map((item: string) =>
             typeof item === 'string' ? item.replace(/спотр/gi, 'спорт') : item
           );
+          // Self-heal: If student is in middle/high/gymnasium, but has childish primary defaults saved
+          if (tier !== 'primary' && !parsed.hasCustomInterests && isDefaultInterestsList(parsed.interests)) {
+            parsed.interests = getDefaultInterestsForTier(tier);
+          }
         }
         return parsed as UserProfile;
       }

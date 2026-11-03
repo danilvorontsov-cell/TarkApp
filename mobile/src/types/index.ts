@@ -15,6 +15,7 @@ export interface UserProfile {
   grade: number; // 1 - 12
   tier: SchoolTier;
   interests: string[]; // Free-form list of student's hobbies and interests
+  hasCustomInterests?: boolean; // Whether interests were manually entered/edited by user
   nickname: string;
   avatarUri?: string;
 }
@@ -134,3 +135,68 @@ export const AGE_SUGGESTIONS: Record<SchoolTier, string[]> = {
     'Языки и культуры',
   ],
 };
+
+// Default selected interests per school tier (used when switching grade without custom user edits)
+export const DEFAULT_INTERESTS_BY_TIER: Record<SchoolTier, string[]> = {
+  primary: ['Minecraft', 'LEGO', 'Roblox'],
+  middle: ['Футбол', 'Видеоигры', 'Музыка и треки'],
+  high: ['Видеоигры', 'Музыка и треки', 'Гаджеты и технологии'],
+  gymnasium: ['IT и программирование', 'Кино и сериалы', 'Музыка и концерты'],
+};
+
+export function getDefaultInterestsForTier(tier: SchoolTier): string[] {
+  return [...(DEFAULT_INTERESTS_BY_TIER[tier] || DEFAULT_INTERESTS_BY_TIER.primary)];
+}
+
+export function getDefaultInterestsForGrade(grade: number): string[] {
+  const tier = getTierFromGrade(grade);
+  return getDefaultInterestsForTier(tier);
+}
+
+// Childish primary school interests that should never be automatically carried to high school / gymnasium
+export const PRIMARY_CHILDISH_INTERESTS = new Set([
+  'minecraft',
+  'lego',
+  'roblox',
+  'brawl stars',
+  'котики и собачки',
+  'динозавры',
+  'мультфильмы',
+  'сладости и мороженое',
+  'покемоны',
+  'магия и волшебство',
+]);
+
+/**
+ * Checks if a given list of interests matches any known default tier list or legacy primary defaults.
+ */
+export function isDefaultInterestsList(interests: string[] | undefined): boolean {
+  if (!interests || interests.length === 0) return true;
+  const normalized = interests.map((i) => i.trim().toLowerCase()).sort().join(',');
+  for (const t of Object.keys(DEFAULT_INTERESTS_BY_TIER) as SchoolTier[]) {
+    const tierDefaults = DEFAULT_INTERESTS_BY_TIER[t]
+      .map((i) => i.trim().toLowerCase())
+      .sort()
+      .join(',');
+    if (normalized === tierDefaults) return true;
+  }
+  // Legacy default check: ['minecraft', 'lego', 'roblox'] in any order
+  const legacyPrimary = ['minecraft', 'lego', 'roblox'].sort().join(',');
+  if (normalized === legacyPrimary) return true;
+  return false;
+}
+
+export function getInterestsPlaceholder(tier: SchoolTier): string {
+  switch (tier) {
+    case 'primary':
+      return 'Minecraft, LEGO, футбол, котики...';
+    case 'middle':
+      return 'Футбол, видеоигры, музыка, скейт...';
+    case 'high':
+      return 'Игры, музыка, гаджеты, аниме, спорт...';
+    case 'gymnasium':
+      return 'IT, нейросети, музыка, кино, стартапы...';
+    default:
+      return 'Футбол, музыка, игры...';
+  }
+}

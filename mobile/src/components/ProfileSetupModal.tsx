@@ -13,7 +13,15 @@ import {
   ScrollView,
   Image,
 } from 'react-native';
-import { UserProfile, SchoolTier, getTierFromGrade, getTierPolicy } from '../types';
+import {
+  UserProfile,
+  SchoolTier,
+  getTierFromGrade,
+  getTierPolicy,
+  getDefaultInterestsForTier,
+  isDefaultInterestsList,
+  PRIMARY_CHILDISH_INTERESTS,
+} from '../types';
 import { Theme, darkTheme } from '../theme/colors';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -51,12 +59,33 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
 
   const handleSave = () => {
     const trimmed = name.trim() || 'Ученик';
+    const oldTier = currentProfile.tier || getTierFromGrade(currentProfile.grade);
     const newTier = getTierFromGrade(selectedGrade);
+    const isTierChanged = oldTier !== newTier;
+
+    let newInterests = currentProfile.interests || [];
+    let isCustom = currentProfile.hasCustomInterests;
+
+    if (!isCustom || isDefaultInterestsList(newInterests) || (isTierChanged && isDefaultInterestsList(newInterests))) {
+      newInterests = getDefaultInterestsForTier(newTier);
+      isCustom = false;
+    } else if (isTierChanged && (newTier === 'high' || newTier === 'gymnasium')) {
+      newInterests = newInterests.filter(
+        (i) => !PRIMARY_CHILDISH_INTERESTS.has(i.trim().toLowerCase())
+      );
+      if (newInterests.length === 0) {
+        newInterests = getDefaultInterestsForTier(newTier);
+        isCustom = false;
+      }
+    }
+
     const updated: UserProfile = {
       ...currentProfile,
       nickname: trimmed,
       grade: selectedGrade,
       tier: newTier,
+      interests: newInterests,
+      hasCustomInterests: isCustom,
     };
     onClose();
     setTimeout(() => {
@@ -67,9 +96,22 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
   const handleDismiss = () => {
     // If nickname is completely empty on dismiss, ensure at least default 'Ученик' is set
     if (!currentProfile.nickname?.trim()) {
+      const oldTier = currentProfile.tier || getTierFromGrade(currentProfile.grade);
+      const newTier = getTierFromGrade(selectedGrade);
+      const isTierChanged = oldTier !== newTier;
+      let newInterests = currentProfile.interests || [];
+      let isCustom = currentProfile.hasCustomInterests;
+      if (!isCustom || isDefaultInterestsList(newInterests) || (isTierChanged && isDefaultInterestsList(newInterests))) {
+        newInterests = getDefaultInterestsForTier(newTier);
+        isCustom = false;
+      }
       const updated: UserProfile = {
         ...currentProfile,
         nickname: 'Ученик',
+        grade: selectedGrade,
+        tier: newTier,
+        interests: newInterests,
+        hasCustomInterests: isCustom,
       };
       setTimeout(() => {
         onSaveProfile(updated);

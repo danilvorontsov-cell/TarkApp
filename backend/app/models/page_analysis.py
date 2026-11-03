@@ -131,9 +131,21 @@ class UserProfile(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def populate_tier_if_missing(self) -> "UserProfile":
+    def populate_tier_and_sanitize_interests(self) -> "UserProfile":
         if self.tier is None:
             self.tier = AgeTier.from_grade(self.grade)
+
+        # Defense-in-depth: If grade >= 4 (middle, high, gymnasium) received the legacy primary default trio
+        # ['Minecraft', 'LEGO', 'Roblox'] due to an un-synced client, replace with age-appropriate tier defaults.
+        if self.tier != AgeTier.PRIMARY and self.interests:
+            norm_set = {i.strip().lower() for i in self.interests}
+            if norm_set == {"minecraft", "lego", "roblox"}:
+                self.interests = AGE_TIER_DEFAULT_INTERESTS.get(self.tier, [])[:3]
+            elif self.tier in (AgeTier.HIGH, AgeTier.GYMNASIUM):
+                # High school and gymnasium should never receive pure childish toy interests
+                cleaned = [i for i in self.interests if i.strip().lower() not in {"lego", "roblox"}]
+                self.interests = cleaned if cleaned else AGE_TIER_DEFAULT_INTERESTS.get(self.tier, [])[:3]
+
         return self
 
 

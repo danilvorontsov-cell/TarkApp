@@ -32,6 +32,11 @@ import {
   SavedLessonCard,
   VocabularyItem,
   AGE_SUGGESTIONS,
+  DEFAULT_INTERESTS_BY_TIER,
+  getDefaultInterestsForTier,
+  isDefaultInterestsList,
+  PRIMARY_CHILDISH_INTERESTS,
+  getInterestsPlaceholder,
 } from './src/types';
 import { StorageService } from './src/services/storage';
 import { playTts, stopTts } from './src/services/audioPlayer';
@@ -173,11 +178,14 @@ function MainApp() {
   const [profile, setProfile] = useState<UserProfile>({
     grade: 3,
     tier: 'primary',
-    interests: ['Minecraft', 'LEGO', 'Roblox'],
+    interests: getDefaultInterestsForTier('primary'),
+    hasCustomInterests: false,
     nickname: '',
   });
 
-  const [interestsText, setInterestsText] = useState('Minecraft, LEGO, Roblox');
+  const [interestsText, setInterestsText] = useState(
+    getDefaultInterestsForTier('primary').join(', ')
+  );
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
   const [capturedImages, setCapturedImages] = useState<CapturedPageItem[]>([]);
@@ -474,6 +482,8 @@ function MainApp() {
     setProfile(updated);
     if (updated.interests && updated.interests.length > 0) {
       setInterestsText(updated.interests.join(', '));
+    } else {
+      setInterestsText('');
     }
     await StorageService.saveProfile(updated);
     if (updated.nickname && updated.nickname.trim().length > 0) {
@@ -515,8 +525,39 @@ function MainApp() {
   };
 
   const updateGrade = (grade: number) => {
+    const oldTier = profile.tier || getTierFromGrade(profile.grade);
     const newTier = getTierFromGrade(grade);
-    const updated = { ...profile, grade, tier: newTier };
+    const isTierChanged = oldTier !== newTier;
+
+    let newInterests = profile.interests || [];
+    let isCustom = profile.hasCustomInterests;
+
+    // If user has not typed custom interests, or if interests match default list,
+    // or when crossing age categories without custom edits:
+    if (!isCustom || isDefaultInterestsList(newInterests) || (isTierChanged && isDefaultInterestsList(newInterests))) {
+      newInterests = getDefaultInterestsForTier(newTier);
+      isCustom = false;
+    } else if (isTierChanged && (newTier === 'high' || newTier === 'gymnasium')) {
+      // Purge childish toys when transitioning to high school / gymnasium
+      newInterests = newInterests.filter(
+        (i) => !PRIMARY_CHILDISH_INTERESTS.has(i.trim().toLowerCase())
+      );
+      if (newInterests.length === 0) {
+        newInterests = getDefaultInterestsForTier(newTier);
+        isCustom = false;
+      }
+    }
+
+    const newInterestsText = newInterests.join(', ');
+    setInterestsText(newInterestsText);
+
+    const updated: UserProfile = {
+      ...profile,
+      grade,
+      tier: newTier,
+      interests: newInterests,
+      hasCustomInterests: isCustom,
+    };
     setProfile(updated);
     StorageService.saveProfile(updated);
   };
@@ -529,7 +570,11 @@ function MainApp() {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    const updated = { ...profile, interests: parsed };
+    const updated = {
+      ...profile,
+      interests: parsed,
+      hasCustomInterests: true,
+    };
     setProfile(updated);
     StorageService.saveProfile(updated);
   };
@@ -549,7 +594,11 @@ function MainApp() {
     }
     const newText = newList.join(', ');
     setInterestsText(newText);
-    const updated = { ...profile, interests: newList };
+    const updated = {
+      ...profile,
+      interests: newList,
+      hasCustomInterests: true,
+    };
     setProfile(updated);
     StorageService.saveProfile(updated);
   };
@@ -2290,7 +2339,7 @@ function MainApp() {
             style={[styles.textInput, styles.interestsInput, isJunior && styles.textInputJunior]}
             value={interestsText}
             onChangeText={handleInterestsChange}
-            placeholder="Minecraft, LEGO, футбол, котики..."
+            placeholder={getInterestsPlaceholder(profile.tier)}
             placeholderTextColor={Theme.colors.textMuted}
             multiline
           />
