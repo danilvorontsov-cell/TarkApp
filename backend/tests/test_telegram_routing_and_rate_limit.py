@@ -1,3 +1,4 @@
+import json
 import time
 from unittest.mock import patch, AsyncMock, MagicMock
 import pytest
@@ -49,7 +50,12 @@ async def test_send_telegram_message_with_topic():
             assert result is True
             assert mock_post.called
             call_kwargs = mock_post.call_args.kwargs
-            json_payload = call_kwargs.get("json", {})
+            assert call_kwargs.get("headers", {}).get("Content-Type") == "application/json; charset=utf-8"
+            if "content" in call_kwargs:
+                import json
+                json_payload = json.loads(call_kwargs["content"].decode("utf-8"))
+            else:
+                json_payload = call_kwargs.get("json", {})
 
             assert json_payload["chat_id"] == "-1001234567890"
             assert json_payload["text"] == "Test message in topic"
@@ -71,9 +77,40 @@ async def test_send_telegram_message_without_topic():
 
             assert result is True
             assert mock_post.called
-            json_payload = mock_post.call_args.kwargs.get("json", {})
+            call_kwargs = mock_post.call_args.kwargs
+            assert call_kwargs.get("headers", {}).get("Content-Type") == "application/json; charset=utf-8"
+            if "content" in call_kwargs:
+                import json
+                json_payload = json.loads(call_kwargs["content"].decode("utf-8"))
+            else:
+                json_payload = call_kwargs.get("json", {})
             assert json_payload["chat_id"] == "-1001234567890"
             assert "message_thread_id" not in json_payload
+
+
+@pytest.mark.anyio
+async def test_send_telegram_message_utf8_encoding_and_headers():
+    with patch.object(settings, "TELEGRAM_BOT_TOKEN", "mock_bot_token"), \
+         patch.object(settings, "TELEGRAM_CHAT_ID", "-1001234567890"):
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = Response(200, json={"ok": True})
+
+            test_text = "🚀 Тестовое сообщение с русским текстом: 🧾 Инвойс и смайлики 👍"
+            result = await send_telegram_message(
+                text=test_text,
+                parse_mode="HTML",
+            )
+
+            assert result is True
+            assert mock_post.called
+            call_kwargs = mock_post.call_args.kwargs
+            assert call_kwargs.get("headers", {}).get("Content-Type") == "application/json; charset=utf-8"
+            raw_content = call_kwargs.get("content")
+            assert isinstance(raw_content, bytes)
+            # Ensure it is valid UTF-8 and contains the actual unicode characters
+            decoded = json.loads(raw_content.decode("utf-8"))
+            assert decoded["text"] == test_text
 
 
 @pytest.mark.anyio

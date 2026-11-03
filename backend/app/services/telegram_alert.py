@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import html
+import json
 import logging
 import time
 import traceback
@@ -102,9 +103,12 @@ async def send_telegram_message(
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
 
+    headers = {"Content-Type": "application/json; charset=utf-8"}
+    content_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
-            resp = await client.post(telegram_url, json=payload)
+            resp = await client.post(telegram_url, content=content_bytes, headers=headers)
             if resp.status_code == 200:
                 logger.info(
                     f"Telegram message delivered successfully "
@@ -140,9 +144,12 @@ async def answer_telegram_callback_query(
         payload["text"] = text
         payload["show_alert"] = show_alert
 
+    headers = {"Content-Type": "application/json; charset=utf-8"}
+    content_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
-            resp = await client.post(url, json=payload)
+            resp = await client.post(url, content=content_bytes, headers=headers)
             return resp.status_code == 200
     except Exception as e:
         logger.warning(f"Failed to answer callback query {callback_query_id}: {e}")
@@ -171,9 +178,11 @@ async def register_telegram_bot_commands() -> bool:
             {"command": "help", "description": "Помощь по работе с ботом"},
         ]
     }
+    headers = {"Content-Type": "application/json; charset=utf-8"}
+    content_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(url, json=payload)
+            resp = await client.post(url, content=content_bytes, headers=headers)
             if resp.status_code == 200 and resp.json().get("ok"):
                 logger.info("[TELEGRAM] Bot command menu successfully registered via setMyCommands.")
                 return True
