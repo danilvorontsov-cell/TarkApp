@@ -299,7 +299,7 @@ async def request_invoice_email(
                 amount_eur=amount,
                 customer_email=clean_email,
                 device_id=device_id,
-                message_thread_id=settings.TELEGRAM_TOPIC_FEATURES,
+                message_thread_id=settings.TELEGRAM_TOPIC_INVOICES,
             )
         )
     except Exception as tel_err:

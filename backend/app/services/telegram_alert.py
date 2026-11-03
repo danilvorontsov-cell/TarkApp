@@ -206,7 +206,7 @@ async def send_telegram_invoice_notification(
     target_thread = (
         message_thread_id
         if message_thread_id is not None
-        else settings.TELEGRAM_TOPIC_FEATURES
+        else (settings.TELEGRAM_TOPIC_INVOICES or settings.TELEGRAM_TOPIC_FEATURES)
     )
 
     clean_inv = html.escape(str(invoice_number or "").strip())

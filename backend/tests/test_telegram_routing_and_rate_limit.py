@@ -233,9 +233,10 @@ def test_telegram_alerts_module_alias():
 
 @pytest.mark.anyio
 async def test_send_telegram_invoice_notification_formatting():
-    """Verifies that new invoice request alerts are formatted with clear titles and fields."""
+    """Verifies that new invoice request alerts are formatted with clear titles and fields and routed to invoices topic."""
     with patch.object(settings, "TELEGRAM_BOT_TOKEN", "mock_token"), \
          patch.object(settings, "TELEGRAM_CHAT_ID", "-10012345"), \
+         patch.object(settings, "TELEGRAM_TOPIC_INVOICES", 9), \
          patch.object(settings, "TELEGRAM_TOPIC_FEATURES", 14):
 
         with patch("app.services.telegram_alert.send_telegram_message", new_callable=AsyncMock) as mock_send:
@@ -253,7 +254,7 @@ async def test_send_telegram_invoice_notification_formatting():
             assert res is True
             assert mock_send.called
             _, kwargs = mock_send.call_args
-            assert kwargs.get("message_thread_id") == 14
+            assert kwargs.get("message_thread_id") == 9
             msg = kwargs.get("text", "")
 
             # Verify exact required titles and fields

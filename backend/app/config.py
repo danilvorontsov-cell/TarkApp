@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     TELEGRAM_TOPIC_BUGS: Optional[int] = None
     TELEGRAM_TOPIC_FEATURES: Optional[int] = None
     TELEGRAM_TOPIC_ALERTS: Optional[int] = None
+    TELEGRAM_TOPIC_INVOICES: Optional[int] = None
 
     # Telegram Bot Admin (Optional - for /gen and /stats commands)
     ADMIN_TELEGRAM_ID: Optional[str] = None
@@ -73,6 +74,7 @@ class Settings(BaseSettings):
         "TELEGRAM_TOPIC_BUGS",
         "TELEGRAM_TOPIC_FEATURES",
         "TELEGRAM_TOPIC_ALERTS",
+        "TELEGRAM_TOPIC_INVOICES",
         mode="before",
     )
     @classmethod
