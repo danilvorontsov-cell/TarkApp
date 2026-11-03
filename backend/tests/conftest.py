@@ -39,6 +39,19 @@ def mock_azure_speech_synthesizer(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def mock_gemini_service():
+    """Ensures deterministic fast unit tests using pedagogical mock generator unless explicitly testing live client."""
+    from app.services.gemini_service import gemini_tutor_service
+    original_key = gemini_tutor_service.api_key
+    original_client = gemini_tutor_service._client
+    gemini_tutor_service.api_key = "mock"
+    gemini_tutor_service._client = None
+    yield
+    gemini_tutor_service.api_key = original_key
+    gemini_tutor_service._client = original_client
+
+
+@pytest.fixture(autouse=True)
 def default_auth_override():
     """Provides a default authenticated CurrentUser for all endpoints using get_current_user."""
     app.dependency_overrides[get_current_user] = lambda: CurrentUser(
