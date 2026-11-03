@@ -53,7 +53,14 @@ async def test_telegram_message_length_truncation():
             
             await send_telegram_message(giant_text)
             assert mock_post.called
-            sent_payload = mock_post.call_args.kwargs.get("json", {})
+            kwargs = mock_post.call_args.kwargs
+            if "json" in kwargs:
+                sent_payload = kwargs["json"]
+            elif "content" in kwargs:
+                raw_c = kwargs["content"]
+                sent_payload = json.loads(raw_c.decode("utf-8") if isinstance(raw_c, bytes) else raw_c)
+            else:
+                sent_payload = {}
             sent_text = sent_payload.get("text", "")
             assert len(sent_text) <= 4000
             assert "[truncated]" in sent_text
