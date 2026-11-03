@@ -26,6 +26,14 @@ from app.prompts.tutor_prompt import (
 logger = logging.getLogger(__name__)
 
 
+class GeminiServiceError(Exception):
+    """Raised when an upstream Gemini API call fails due to quota, auth, or network issues."""
+    def __init__(self, message: str, status_code: int = 503, is_quota_error: bool = False):
+        super().__init__(message)
+        self.status_code = status_code
+        self.is_quota_error = is_quota_error
+
+
 class GeminiTutorService:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or settings.GEMINI_API_KEY
@@ -118,21 +126,62 @@ class GeminiTutorService:
                 return result
 
             except APIError as e:
-                logger.error(f"Gemini API error (attempt {attempt + 1}): {e}", exc_info=True)
+                err_msg = str(e)
+                code = getattr(e, "code", None)
+                is_quota = (
+                    code == 402
+                    or "402" in err_msg
+                    or "RESOURCE_EXHAUSTED" in err_msg
+                    or "prepayment credits" in err_msg.lower()
+                    or "quota" in err_msg.lower()
+                )
+                logger.error(
+                    f"Gemini API error (attempt {attempt + 1}, quota_depleted={is_quota}): {e}",
+                    exc_info=True,
+                )
                 last_err = e
+                # Fatal client errors (credits exhausted, invalid API key, forbidden) must NOT be retried or masked as blurry photos!
+                if is_quota:
+                    raise GeminiServiceError(
+                        "Исчерпаны предоплаченные кредиты Google AI Studio (402 RESOURCE_EXHAUSTED). Требуется пополнить баланс на https://ai.studio/projects или обновить GEMINI_API_KEY.",
+                        status_code=503,
+                        is_quota_error=True,
+                    ) from e
+                if code in (401, 403):
+                    raise GeminiServiceError(
+                        f"Ошибка авторизации Gemini API ({code}): проверьте валидность GEMINI_API_KEY.",
+                        status_code=503,
+                        is_quota_error=False,
+                    ) from e
                 if attempt == 0:
                     continue
-                return self._generate_emergency_fallback(profile)
+                # If retry also fails, re-raise as GeminiServiceError instead of masking as blurry photo
+                raise GeminiServiceError(
+                    f"Сервис Gemini API временно недоступен: {err_msg}",
+                    status_code=503,
+                    is_quota_error=False,
+                ) from e
 
-            except (ValueError, json.JSONDecodeError, Exception) as e:
+            except (ValueError, json.JSONDecodeError) as e:
                 logger.warning(f"Error parsing Gemini response (attempt {attempt + 1}): {e}")
                 last_err = e
                 if attempt == 0:
                     continue
-                logger.error(f"Both attempts failed in analyze_page: {last_err}. Using emergency fallback.")
+                logger.error(f"Both attempts failed to parse Gemini JSON: {last_err}. Using emergency fallback.")
                 return self._generate_emergency_fallback(profile)
 
-        return self._generate_emergency_fallback(profile)
+            except Exception as e:
+                logger.error(f"Unexpected error in analyze_page (attempt {attempt + 1}): {e}", exc_info=True)
+                last_err = e
+                if attempt == 0:
+                    continue
+                raise
+
+        raise GeminiServiceError(
+            f"Не удалось выполнить анализ страницы: {last_err}",
+            status_code=503,
+            is_quota_error=False,
+        )
 
     def _generate_emergency_fallback(self, profile: UserProfile) -> PageAnalysisResponse:
         """Safe emergency fallback when Gemini returns malformed response or API breaks."""

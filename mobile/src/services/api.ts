@@ -474,6 +474,13 @@ export function formatFriendlyErrorMessage(error: any): string {
       );
     }
     if (error.status === 502 || error.status === 503 || error.status === 504) {
+      if (
+        error.message &&
+        !error.message.includes('Server returned status') &&
+        !error.message.includes('Сбой сервера')
+      ) {
+        return error.message;
+      }
       return 'Сервер TarkApp временно перегружен или обновляется. Пожалуйста, повторите попытку через минуту.';
     }
     if (error.status === 413) {

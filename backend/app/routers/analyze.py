@@ -1,4 +1,6 @@
+import asyncio
 import base64
+import html
 import logging
 from typing import Optional, Union, List, Tuple
 
@@ -16,7 +18,8 @@ from app.models.page_analysis import (
     PageAnalysisResponse,
     UserProfile,
 )
-from app.services.gemini_service import gemini_tutor_service
+from app.services.gemini_service import gemini_tutor_service, GeminiServiceError
+from app.services.telegram_alert import send_telegram_message
 from app.services import license_service
 from app.services.analysis_cache import (
     compute_analysis_cache_key,
@@ -46,6 +49,33 @@ def _extract_device_id(raw_val: object) -> str:
     if isinstance(raw_val, str):
         return raw_val.strip()
     return ""
+
+
+async def _dispatch_gemini_alert(e: GeminiServiceError, endpoint: str) -> None:
+    """Dispatches high-priority Telegram alert when Gemini API fails."""
+    if settings.TELEGRAM_BOT_TOKEN and settings.telegram_chat_id:
+        try:
+            alert_text = (
+                f"🚨 <b>Сбой нейросети Gemini AI!</b>\n"
+                f"📍 Эндпоинт: <code>{endpoint}</code>\n"
+                f"⚠️ Тип: <b>{'ИСТОЩЕНИЕ КРЕДИТОВ / БАЛАНСА (402 RESOURCE_EXHAUSTED)' if e.is_quota_error else 'Ошибка сервиса AI'}</b>\n"
+                f"💬 Ошибка: <code>{html.escape(str(e))[:300]}</code>\n\n"
+                f"💡 <b>Действие:</b>\n"
+                + (
+                    "Пополните баланс на <a href='https://ai.studio/projects'>ai.studio/projects</a> или обновите <code>GEMINI_API_KEY</code> в <code>backend/.env</code>."
+                    if e.is_quota_error
+                    else "Проверьте логи бэкенда и статус Google AI."
+                )
+            )
+            asyncio.create_task(
+                send_telegram_message(
+                    text=alert_text,
+                    parse_mode="HTML",
+                    message_thread_id=settings.TELEGRAM_TOPIC_ALERTS,
+                )
+            )
+        except Exception as tel_err:
+            logger.warning(f"Could not dispatch telegram alert for Gemini error: {tel_err}")
 
 
 @router.post(
@@ -150,6 +180,17 @@ async def analyze_page(
             if dev_id and isinstance(db, Session):
                 license_service.deduct_review_attempt(dev_id, db)
         return result
+    except GeminiServiceError as e:
+        logger.error(f"GeminiServiceError analyzing page: {e}")
+        await _dispatch_gemini_alert(e, "POST /api/v1/analyze-page")
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=(
+                "Сервис AI-разбора временно недоступен: исчерпан баланс токенов нейросети (Google AI Studio). Администратор уже оповещён."
+                if e.is_quota_error
+                else f"Сервис AI-разбора временно недоступен: {str(e)}"
+            ),
+        )
     except Exception as e:
         logger.error(f"Error analyzing page: {e}", exc_info=True)
         raise HTTPException(
@@ -259,6 +300,17 @@ async def analyze_page_json(
             if dev_id and isinstance(db, Session):
                 license_service.deduct_review_attempt(dev_id, db)
         return result
+    except GeminiServiceError as e:
+        logger.error(f"GeminiServiceError analyzing page via JSON: {e}")
+        await _dispatch_gemini_alert(e, "POST /api/v1/analyze-page/json")
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=(
+                "Сервис AI-разбора временно недоступен: исчерпан баланс токенов нейросети (Google AI Studio). Администратор уже оповещён."
+                if e.is_quota_error
+                else f"Сервис AI-разбора временно недоступен: {str(e)}"
+            ),
+        )
     except Exception as e:
         logger.error(f"Error analyzing page via JSON: {e}", exc_info=True)
         raise HTTPException(

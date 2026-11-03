@@ -187,3 +187,58 @@ class TestOcrEdgeCases:
         profile = UserProfile(grade=3, tier=AgeTier.PRIMARY, nickname="Тест")
         cache_key = compute_analysis_cache_key([img_bytes], profile)
         assert get_cached_analysis(cache_key) is None
+
+    @pytest.mark.anyio
+    async def test_gemini_api_402_resource_exhausted_raises_gemini_service_error(self):
+        """Verifies that 402 RESOURCE_EXHAUSTED raises GeminiServiceError and is NOT masked as blurry photo."""
+        from app.services.gemini_service import GeminiTutorService, GeminiServiceError
+        from app.models.page_analysis import UserProfile, AgeTier
+        from unittest.mock import AsyncMock, MagicMock
+        from google.genai.errors import APIError
+
+        service = GeminiTutorService(api_key="test_dummy_key_12345")
+        mock_client = MagicMock()
+        mock_aio_models = MagicMock()
+        # Simulate Google APIError 402 RESOURCE_EXHAUSTED
+        api_err = APIError(402, "RESOURCE_EXHAUSTED: Your prepayment credits are depleted.")
+        mock_aio_models.generate_content = AsyncMock(side_effect=api_err)
+        mock_client.aio.models = mock_aio_models
+        service._client = mock_client
+
+        profile = UserProfile(grade=4, tier=AgeTier.PRIMARY, nickname="Даниил")
+        dummy_img = create_blurry_black_image()
+
+        with pytest.raises(GeminiServiceError) as exc_info:
+            await service.analyze_page(images=[(dummy_img, "image/jpeg")], profile=profile)
+
+        assert exc_info.value.is_quota_error is True
+        assert exc_info.value.status_code == 503
+        assert "Исчерпаны предоплаченные кредиты" in str(exc_info.value)
+
+    @pytest.mark.anyio
+    async def test_gemini_api_500_server_error_retries_and_raises_service_error(self):
+        """Verifies that 500 Gemini API server errors retry and raise GeminiServiceError."""
+        from app.services.gemini_service import GeminiTutorService, GeminiServiceError
+        from app.models.page_analysis import UserProfile, AgeTier
+        from unittest.mock import AsyncMock, MagicMock
+        from google.genai.errors import APIError
+
+        service = GeminiTutorService(api_key="test_dummy_key_12345")
+        mock_client = MagicMock()
+        mock_aio_models = MagicMock()
+        api_err = APIError(500, "Internal error in Gemini cluster.")
+        mock_aio_models.generate_content = AsyncMock(side_effect=api_err)
+        mock_client.aio.models = mock_aio_models
+        service._client = mock_client
+
+        profile = UserProfile(grade=4, tier=AgeTier.PRIMARY, nickname="Даниил")
+        dummy_img = create_blurry_black_image()
+
+        with pytest.raises(GeminiServiceError) as exc_info:
+            await service.analyze_page(images=[(dummy_img, "image/jpeg")], profile=profile)
+
+        assert exc_info.value.is_quota_error is False
+        assert exc_info.value.status_code == 503
+        # Should have attempted twice
+        assert mock_aio_models.generate_content.call_count == 2
+

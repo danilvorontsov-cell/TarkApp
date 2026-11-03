@@ -290,12 +290,20 @@ async def send_telegram_alert(
         raw_exc_msg if len(raw_exc_msg) <= 1200 else raw_exc_msg[:1200] + "... [truncated]"
     )
 
+    action_hint = ""
+    if "402" in raw_exc_msg or "RESOURCE_EXHAUSTED" in raw_exc_msg or "prepayment credits" in raw_exc_msg.lower() or "баланс" in raw_exc_msg.lower():
+        action_hint = (
+            "\n\n💡 <b>ДЕЙСТВИЕ:</b> Исчерпаны предоплаченные кредиты Google AI Studio (402)!\n"
+            "Пополните баланс на <a href='https://ai.studio/projects'>ai.studio/projects</a> или обновите <code>GEMINI_API_KEY</code> в <code>backend/.env</code>."
+        )
+
     message_text = (
         f"🚨 <b>[TarkApp Critical Alert]</b>\n\n"
         f"🌐 <b>Эндпоинт:</b> <code>{html.escape(endpoint)}</code>\n"
         f"❌ <b>Ошибка:</b> <code>{html.escape(exc_type)}: {html.escape(exc_message)}</code>\n"
         f"⏱ <b>Время:</b> {now_str}\n"
         f"🔑 <b>Hash:</b> <code>{error_hash[:12]}</code>"
+        f"{action_hint}"
     )
 
     # 5. Send message
