@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional, Any, List
 from sqlalchemy import Column, String, DateTime, Boolean, Integer, ForeignKey
 from pydantic import BaseModel, Field, field_validator
 
@@ -91,4 +91,27 @@ class InvoiceResponse(BaseModel):
     invoice_number: str
     transport: str = "none"
     message: str
+
+
+class PlanItem(BaseModel):
+    id: str
+    title: str
+    price: str
+    price_per_month: str
+    duration_months: int
+    badge: Optional[str] = None
+    is_popular: bool = False
+    description: Optional[str] = None
+    subtext: Optional[str] = None
+
+
+class BankDetails(BaseModel):
+    recipient_name: str
+    iban: str
+    swift_bic: str
+
+
+class PlansCatalogResponse(BaseModel):
+    plans: List[PlanItem]
+    bank_details: BankDetails
 

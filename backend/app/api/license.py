@@ -8,6 +8,7 @@ from app.routers.license import (
     verify_review_access,
     get_license_status,
     activate_access_key,
+    get_plans_catalog,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "verify_review_access",
     "get_license_status",
     "activate_access_key",
+    "get_plans_catalog",
 ]

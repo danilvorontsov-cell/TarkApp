@@ -2726,6 +2726,8 @@ function MainApp() {
         onClose={() => setIsKeyModalVisible(false)}
         onActivated={handleKeyActivated}
         isBlocking={false}
+        maxReviews={subInfo.maxReviews}
+        daysLeft={subInfo.daysLeft}
       />
 
       {/* Global Blocking Modal for Expired Trial or Limit Reached */}
@@ -2735,6 +2737,8 @@ function MainApp() {
         onActivated={handleKeyActivated}
         isBlocking={true}
         reason={modalBlockReason}
+        maxReviews={subInfo.maxReviews}
+        daysLeft={subInfo.daysLeft}
       />
 
       {/* Fullscreen Blocking Loading Overlay during Photo Analysis */}

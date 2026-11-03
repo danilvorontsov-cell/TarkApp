@@ -13,7 +13,12 @@ import {
 } from 'react-native';
 import { Theme, darkTheme } from '../theme/colors';
 import { activateAccessKey, LicenseStatus } from '../services/api';
-import { applyKeyMask, sanitizeKeyCode } from '../utils/subscription';
+import {
+  applyKeyMask,
+  sanitizeKeyCode,
+  DEFAULT_MAX_FREE_REVIEWS,
+  DEFAULT_TRIAL_DAYS,
+} from '../utils/subscription';
 
 interface LicenseActivationModalProps {
   visible: boolean;
@@ -21,6 +26,8 @@ interface LicenseActivationModalProps {
   onActivated: (status: LicenseStatus) => void;
   isBlocking?: boolean;
   reason?: 'trial_expired' | 'reviews_limit_reached' | null;
+  maxReviews?: number;
+  daysLeft?: number;
 }
 
 export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
@@ -29,6 +36,8 @@ export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
   onActivated,
   isBlocking = false,
   reason = null,
+  maxReviews = DEFAULT_MAX_FREE_REVIEWS,
+  daysLeft = DEFAULT_TRIAL_DAYS,
 }) => {
   const [keyCode, setKeyCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -95,9 +104,9 @@ export const LicenseActivationModal: React.FC<LicenseActivationModalProps> = ({
 
   const modalSubtitle =
     reason === 'reviews_limit_reached'
-      ? 'Вы использовали все 20 бесплатных разборов страниц на сегодня. Введите ключ доступа для безлимитной помощи с уроками.'
+      ? `Вы использовали все ${maxReviews} бесплатных разборов страниц на сегодня. Введите ключ доступа для безлимитной помощи с уроками.`
       : isBlocking
-      ? '14 дней бесплатного пробного периода истекли. Введите промокод или ключ бета-тестера для возобновления доступа.'
+      ? `${daysLeft} дней бесплатного пробного периода истекли. Введите промокод или ключ бета-тестера для возобновления доступа.`
       : 'Введите ключ доступа для продления периода работы TarkApp.';
 
   return (

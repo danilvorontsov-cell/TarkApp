@@ -337,6 +337,46 @@ export async function requestInvoiceEmail(
   return (await response.json()) as InvoiceRequestResponse;
 }
 
+export interface PlanItem {
+  id: string;
+  title: string;
+  price: string;
+  price_per_month: string;
+  duration_months: number;
+  badge?: string | null;
+  is_popular?: boolean;
+  description?: string | null;
+  subtext?: string | null;
+}
+
+export interface BankDetails {
+  recipient_name: string;
+  iban: string;
+  swift_bic: string;
+}
+
+export interface PlansCatalogResponse {
+  plans: PlanItem[];
+  bank_details: BankDetails;
+}
+
+export async function getPlansCatalog(
+  baseUrl: string = API_BASE_URL
+): Promise<PlansCatalogResponse> {
+  const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/license/plans`;
+  const response = await fetchWithTimeout(endpoint, {
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw await parseErrorResponse(response);
+  }
+
+  return (await response.json()) as PlansCatalogResponse;
+}
+
 export interface MoreExamplesRequest {
   task_title: string;
   theme_explanation?: string;

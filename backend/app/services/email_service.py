@@ -41,6 +41,11 @@ PLAN_CATALOG: Dict[str, Dict[str, str]] = {
     },
 }
 
+PLAN_ALIASES: Dict[str, str] = {
+    "month_1": "month",
+    "school_year": "year",
+}
+
 COMPANY_NAME = "TarkApp OÜ"
 COMPANY_REG = "16987456"
 BANK_NAME = "AS LHV Pank"
@@ -286,7 +291,8 @@ async def send_invoice_to_customer(
     (Resend API or SMTP). Never raises an unhandled 500 error.
     """
     clean_email = email.strip()
-    plan = PLAN_CATALOG.get(plan_id, PLAN_CATALOG["year"])
+    resolved_plan_id = PLAN_ALIASES.get(plan_id, plan_id)
+    plan = PLAN_CATALOG.get(resolved_plan_id, PLAN_CATALOG["year"])
 
     now = datetime.now(timezone.utc)
     issue_date = now.strftime("%d.%m.%Y")

@@ -13,9 +13,19 @@ from app.models.license import (
     KeyActivateResponse,
     InvoiceRequest,
     InvoiceResponse,
+    PlanItem,
+    BankDetails,
+    PlansCatalogResponse,
 )
 from app.services import license_service
-from app.services.email_service import send_invoice_to_customer, PLAN_CATALOG
+from app.services.email_service import (
+    send_invoice_to_customer,
+    PLAN_CATALOG,
+    PLAN_ALIASES,
+    COMPANY_NAME,
+    BANK_IBAN,
+    BANK_SWIFT,
+)
 from app.services.telegram_alert import send_telegram_feedback
 
 logger = logging.getLogger("tarkapp.license")
@@ -107,6 +117,68 @@ def get_license_status(
     )
 
 
+@router.get(
+    "/plans",
+    response_model=PlansCatalogResponse,
+    summary="Каталог тарифов и банковские реквизиты",
+    description="Возвращает актуальный список тарифов подписки и банковские реквизиты (Server-Driven UI).",
+)
+@safe_limit("60/minute")
+def get_plans_catalog(request: Request) -> PlansCatalogResponse:
+    plans = [
+        PlanItem(
+            id="month_1",
+            title="Попробовать 1 месяц",
+            price="9.99",
+            price_per_month="9.99",
+            duration_months=1,
+            badge=None,
+            is_popular=False,
+            description="Для разовой помощи или подготовки к четверти",
+            subtext="Продление каждый месяц, отмена в любой момент",
+        ),
+        PlanItem(
+            id="semester",
+            title="Оформить семестр",
+            price="44.90",
+            price_per_month="8.99",
+            duration_months=5,
+            badge="-10%",
+            is_popular=False,
+            description="Уверенная учёба на один семестр (5 месяцев)",
+            subtext="~8.99 € / мес (разовая оплата)",
+        ),
+        PlanItem(
+            id="school_year",
+            title="Учебный год",
+            price="71.90",
+            price_per_month="7.99",
+            duration_months=9,
+            badge="Хит",
+            is_popular=True,
+            description="Сентябрь — Май (все 9 учебных месяцев)",
+            subtext="~7.99 € / мес (разовый платёж на все 9 месяцев учёбы)",
+        ),
+        PlanItem(
+            id="full_year",
+            title="Год с каникулами",
+            price="89.90",
+            price_per_month="7.49",
+            duration_months=12,
+            badge="Выгодно",
+            is_popular=False,
+            description="Учебный год + 3 месяца лета для закрепления языка",
+            subtext="~7.49 € / мес (9 мес учёбы + 3 мес лета)",
+        ),
+    ]
+    bank_details = BankDetails(
+        recipient_name=COMPANY_NAME,
+        iban=BANK_IBAN,
+        swift_bic=BANK_SWIFT,
+    )
+    return PlansCatalogResponse(plans=plans, bank_details=bank_details)
+
+
 @router.post(
     "/activate",
     response_model=KeyActivateResponse,
@@ -182,7 +254,8 @@ async def request_invoice_email(
 
     device_id = (x_device_id or "").strip() or "unknown-device"
     plan_id = (payload.plan or "year").strip()
-    plan_info = PLAN_CATALOG.get(plan_id, PLAN_CATALOG["year"])
+    resolved_plan_id = PLAN_ALIASES.get(plan_id, plan_id)
+    plan_info = PLAN_CATALOG.get(resolved_plan_id, PLAN_CATALOG["year"])
 
     # Also notify admin in Telegram asynchronously
     try:

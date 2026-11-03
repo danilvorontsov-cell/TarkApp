@@ -1,7 +1,60 @@
-import { LicenseStatus } from '../services/api';
+import { LicenseStatus, PlanItem, BankDetails } from '../services/api';
 
 export const DEFAULT_MAX_FREE_REVIEWS = 20;
 export const DEFAULT_TRIAL_DAYS = 14;
+
+export const DEFAULT_BANK_DETAILS: BankDetails = {
+  recipient_name: 'TarkApp OÜ (Reg: 16987456)',
+  iban: 'EE129900001234567890',
+  swift_bic: 'LHVBEE22',
+};
+
+export const DEFAULT_PLANS: PlanItem[] = [
+  {
+    id: 'month_1',
+    title: 'Попробовать 1 месяц',
+    price: '9.99',
+    price_per_month: '9.99',
+    duration_months: 1,
+    badge: null,
+    is_popular: false,
+    description: 'Для разовой помощи или подготовки к четверти',
+    subtext: 'Продление каждый месяц, отмена в любой момент',
+  },
+  {
+    id: 'semester',
+    title: 'Оформить семестр',
+    price: '44.90',
+    price_per_month: '8.99',
+    duration_months: 5,
+    badge: '-10%',
+    is_popular: false,
+    description: 'Уверенная учёба на один семестр (5 месяцев)',
+    subtext: '~8.99 € / мес (разовая оплата)',
+  },
+  {
+    id: 'school_year',
+    title: 'Учебный год',
+    price: '71.90',
+    price_per_month: '7.99',
+    duration_months: 9,
+    badge: 'Хит',
+    is_popular: true,
+    description: 'Сентябрь — Май (все 9 учебных месяцев)',
+    subtext: '~7.99 € / мес (разовый платёж на все 9 месяцев учёбы)',
+  },
+  {
+    id: 'full_year',
+    title: 'Год с каникулами',
+    price: '89.90',
+    price_per_month: '7.49',
+    duration_months: 12,
+    badge: 'Выгодно',
+    is_popular: false,
+    description: 'Учебный год + 3 месяца лета для закрепления языка',
+    subtext: '~7.49 € / мес (9 мес учёбы + 3 мес лета)',
+  },
+];
 
 export interface SubscriptionInfo {
   isPro: boolean;
