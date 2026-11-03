@@ -344,7 +344,53 @@ def test_invoice_endpoint_validates_email_and_generates_pdf(setup_db, monkeypatc
     assert resp.status_code == 200
     data = resp.json()
     assert data["email_sent"] is False
-    assert data["invoice_number"].startswith("TARK-")
-    assert "SMTP" in data["message"]
+    assert data["invoice_number"].startswith("INV-")
+    assert "viitenumber" in data
+    assert len(data["viitenumber"]) >= 2
+    assert data["amount"] == "9.99"
+    assert data["currency"] == "EUR"
+    assert data["recipient"] == "TarkApp OÜ"
+    assert data["iban"] == "EE129900001234567890"
+    assert "pdf_download_url" in data
+
+    # 4. Download PDF
+    inv_num = data["invoice_number"]
+    pdf_resp = client.get(f"/api/v1/license/invoice/{inv_num}.pdf")
+    assert pdf_resp.status_code == 200
+    assert pdf_resp.headers["content-type"] == "application/pdf"
+    assert pdf_resp.content.startswith(b"%PDF-1.4")
+    assert data["viitenumber"].encode("latin-1") in pdf_resp.content
+
+    # 5. Confirm invoice payment and verify days granted
+    conf_resp = client.post(
+        "/api/v1/license/invoice/confirm",
+        json={"invoice_number": inv_num},
+    )
+    assert conf_resp.status_code == 200
+    conf_data = conf_resp.json()
+    assert conf_data["success"] is True
+    assert conf_data["is_active"] is True
+    assert conf_data["days_left"] >= 30
+
+
+def test_plan_durations_matrix(setup_db):
+    """Verifies exact days granted for each subscription plan."""
+    from app.services.license_service import grant_plan_access, PLAN_DURATIONS
+
+    assert PLAN_DURATIONS["month_1"] == 30
+    assert PLAN_DURATIONS["semester"] == 150
+    assert PLAN_DURATIONS["school_year"] == 270
+    assert PLAN_DURATIONS["full_year"] == 365
+
+    db = setup_db
+    # Test semester
+    sem_res = grant_plan_access("test-plan-dev-1", "semester", db)
+    assert sem_res["duration_days"] == 150
+    assert sem_res["days_left"] >= 150
+
+    # Test school year
+    year_res = grant_plan_access("test-plan-dev-2", "school_year", db)
+    assert year_res["duration_days"] == 270
+    assert year_res["days_left"] >= 270
 
 

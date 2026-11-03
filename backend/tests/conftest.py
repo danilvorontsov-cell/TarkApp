@@ -1,11 +1,29 @@
 import pytest
+from app.config import settings
+
+settings.APP_ENV = "test"
+
 from app.main import app
 from app.database import init_db
-from app.services import tts_service
+from app.services import tts_service, telegram_alert
+import app.main as app_main
 from app.auth import get_current_user, CurrentUser
 
 # Initialize database tables for all test runs
 init_db()
+
+
+@pytest.fixture(autouse=True)
+def mock_telegram_polling(monkeypatch):
+    """Mocks background Telegram long-polling and alert dispatching to prevent hanging in tests."""
+    async def fake_coro(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(telegram_alert, "start_telegram_polling", fake_coro)
+    monkeypatch.setattr(telegram_alert, "send_telegram_alert", fake_coro)
+    monkeypatch.setattr(telegram_alert, "send_telegram_feedback", fake_coro)
+    if hasattr(app_main, "start_telegram_polling"):
+        monkeypatch.setattr(app_main, "start_telegram_polling", fake_coro)
 
 
 @pytest.fixture(autouse=True)

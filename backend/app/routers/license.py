@@ -1,24 +1,32 @@
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
 from app.limiter import safe_limit
 from app.models.license import (
+    Device,
+    Invoice,
     LicenseStatusResponse,
     KeyActivateRequest,
     KeyActivateResponse,
     InvoiceRequest,
     InvoiceResponse,
+    InvoiceConfirmRequest,
+    InvoiceConfirmResponse,
     PlanItem,
     BankDetails,
     PlansCatalogResponse,
 )
 from app.services import license_service
 from app.services.email_service import (
+    build_invoice_pdf,
     send_invoice_to_customer,
     PLAN_CATALOG,
     PLAN_ALIASES,
@@ -27,6 +35,7 @@ from app.services.email_service import (
     BANK_SWIFT,
 )
 from app.services.telegram_alert import send_telegram_feedback
+from app.utils.viitenumber import generate_estonian_reference_number
 
 logger = logging.getLogger("tarkapp.license")
 
@@ -244,18 +253,41 @@ async def request_invoice_email(
     request: Request,
     payload: InvoiceRequest,
     x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
+    db: Session = Depends(get_db),
 ) -> InvoiceResponse:
     clean_email = (payload.email or "").strip()
-    if "@" not in clean_email or "." not in clean_email.split("@")[-1]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": "INVALID_EMAIL", "message": "Пожалуйста, укажите корректный адрес электронной почты."},
-        )
+    if clean_email:
+        if "@" not in clean_email or "." not in clean_email.split("@")[-1]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "INVALID_EMAIL", "message": "Пожалуйста, укажите корректный адрес электронной почты."},
+            )
 
-    device_id = (x_device_id or "").strip() or "unknown-device"
-    plan_id = (payload.plan or "year").strip()
-    resolved_plan_id = PLAN_ALIASES.get(plan_id, plan_id)
-    plan_info = PLAN_CATALOG.get(resolved_plan_id, PLAN_CATALOG["year"])
+    device_id = (payload.device_id or x_device_id or "").strip() or "unknown-device"
+    if not clean_email:
+        clean_email = f"app-{device_id[:8]}@tarkapp.ee"
+
+    raw_plan = (payload.plan_id or payload.plan or "school_year").strip()
+    resolved_plan = PLAN_ALIASES.get(raw_plan, raw_plan)
+    plan_info = PLAN_CATALOG.get(resolved_plan, PLAN_CATALOG["year"])
+
+    now = datetime.now(timezone.utc)
+    year_str = now.strftime("%Y")
+    inv_count = db.query(func.count(Invoice.id)).scalar() or 0
+    inv_seq = 1001 + inv_count
+    invoice_number = f"INV-{year_str}-{inv_seq:04d}"
+    base_ref = f"{year_str}{inv_seq:04d}"
+    viitenumber = generate_estonian_reference_number(base_ref)
+
+    while db.query(Invoice).filter(Invoice.invoice_number == invoice_number).first():
+        inv_seq += 1
+        invoice_number = f"INV-{year_str}-{inv_seq:04d}"
+        base_ref = f"{year_str}{inv_seq:04d}"
+        viitenumber = generate_estonian_reference_number(base_ref)
+
+    amount = plan_info.get("amount", "71.90")
+    title_ru = plan_info.get("title_ru", "PRO")
+    explanation = f"TarkApp litsents: {title_ru} ({invoice_number})"
 
     # Also notify admin in Telegram asynchronously
     try:
@@ -265,7 +297,8 @@ async def request_invoice_email(
                     "category": "feature",
                     "message": (
                         f"📄 ЗАПРОС СЧЁТА НА ПОДПИСКУ PRO\n"
-                        f"Тариф: {plan_info['title_ru']} — {plan_info['amount']} €\n"
+                        f"Счёт: {invoice_number} | Viitenumber: {viitenumber}\n"
+                        f"Тариф: {title_ru} — {amount} €\n"
                         f"Email: {clean_email}\n"
                         f"Device ID: {device_id}"
                     ),
@@ -277,17 +310,171 @@ async def request_invoice_email(
     except Exception as tel_err:
         logger.warning(f"Could not schedule Telegram invoice notification: {tel_err}")
 
-    result = await send_invoice_to_customer(
-        email=clean_email,
-        plan_id=plan_id,
+    if payload.email and payload.email.strip():
+        result = await send_invoice_to_customer(
+            email=clean_email,
+            plan_id=resolved_plan,
+            device_id=device_id,
+            invoice_number=invoice_number,
+            viitenumber=viitenumber,
+        )
+    else:
+        issue_date = now.strftime("%d.%m.%Y")
+        due_date = (now + timedelta(days=7)).strftime("%d.%m.%Y")
+        pdf_bytes = build_invoice_pdf(
+            invoice_number=invoice_number,
+            customer_email=clean_email,
+            plan_title_en=plan_info.get("title_en", "TarkApp PRO"),
+            amount_eur=amount,
+            selgitus=plan_info.get("selgitus", "TarkApp PRO"),
+            issue_date=issue_date,
+            due_date=due_date,
+            viitenumber=viitenumber,
+        )
+        result = {
+            "success": True,
+            "email_sent": False,
+            "invoice_number": invoice_number,
+            "viitenumber": viitenumber,
+            "transport": "none",
+            "pdf_bytes": pdf_bytes,
+            "message": f"Счёт {invoice_number} сформирован.",
+        }
+
+    invoices_dir = Path("static/invoices")
+    invoices_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = invoices_dir / f"{invoice_number}.pdf"
+    pdf_bytes = result.get("pdf_bytes")
+    if pdf_bytes:
+        try:
+            pdf_path.write_bytes(pdf_bytes)
+        except Exception as err:
+            logger.error(f"Error saving PDF to disk: {err}")
+
+    inv_record = Invoice(
+        invoice_number=invoice_number,
+        viitenumber=viitenumber,
         device_id=device_id,
+        customer_email=clean_email,
+        payer_name=payload.payer_name,
+        plan_id=resolved_plan,
+        amount=amount,
+        currency="EUR",
+        is_paid=False,
+        pdf_path=str(pdf_path),
+        created_at=datetime.utcnow(),
     )
+    db.add(inv_record)
+    db.commit()
+    db.refresh(inv_record)
+
+    pdf_download_url = f"/api/v1/license/invoice/{invoice_number}.pdf"
 
     return InvoiceResponse(
-        success=result["success"],
-        email_sent=result["email_sent"],
-        invoice_number=result["invoice_number"],
+        invoice_number=invoice_number,
+        viitenumber=viitenumber,
+        amount=amount,
+        currency="EUR",
+        recipient=COMPANY_NAME,
+        iban=BANK_IBAN,
+        swift_bic=BANK_SWIFT,
+        explanation=explanation,
+        pdf_download_url=pdf_download_url,
+        success=result.get("success", True),
+        email_sent=result.get("email_sent", False),
         transport=result.get("transport", "none"),
-        message=result["message"],
+        message=result.get("message", f"Счёт {invoice_number} сформирован."),
     )
+
+
+@router.get(
+    "/invoice/{invoice_number}.pdf",
+    summary="Скачивание официального PDF-счёта",
+    description="Возвращает бинарный PDF-файл сформированного инвойса.",
+)
+def download_invoice_pdf(
+    invoice_number: str,
+    db: Session = Depends(get_db),
+):
+    clean_number = invoice_number.strip()
+    if clean_number.endswith(".pdf"):
+        clean_number = clean_number[:-4]
+
+    inv = db.query(Invoice).filter(Invoice.invoice_number == clean_number).first()
+    file_path = Path("static/invoices") / f"{clean_number}.pdf"
+
+    if file_path.exists():
+        pdf_bytes = file_path.read_bytes()
+    elif inv:
+        resolved_plan = PLAN_ALIASES.get(inv.plan_id, inv.plan_id)
+        plan_info = PLAN_CATALOG.get(resolved_plan, PLAN_CATALOG["year"])
+        issue_date = inv.created_at.strftime("%d.%m.%Y") if inv.created_at else datetime.utcnow().strftime("%d.%m.%Y")
+        due_date = ((inv.created_at or datetime.utcnow()) + timedelta(days=7)).strftime("%d.%m.%Y")
+        pdf_bytes = build_invoice_pdf(
+            invoice_number=inv.invoice_number,
+            customer_email=inv.customer_email,
+            plan_title_en=plan_info["title_en"],
+            amount_eur=inv.amount,
+            selgitus=plan_info["selgitus"],
+            issue_date=issue_date,
+            due_date=due_date,
+            viitenumber=inv.viitenumber,
+        )
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_bytes(pdf_bytes)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "INVOICE_NOT_FOUND", "message": f"Счёт {clean_number} не найден"},
+        )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{clean_number}.pdf"',
+            "Cache-Control": "public, max-age=3600",
+        },
+    )
+
+
+@router.post(
+    "/invoice/confirm",
+    response_model=InvoiceConfirmResponse,
+    summary="Подтверждение оплаты инвойса",
+    description="Отмечает счёт как оплаченный по номеру счёта или viitenumber и активирует подписку для устройства.",
+)
+def confirm_invoice(
+    payload: InvoiceConfirmRequest,
+    db: Session = Depends(get_db),
+) -> InvoiceConfirmResponse:
+    target = (payload.invoice_number or payload.viitenumber or "").strip()
+    if not target:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "TARGET_REQUIRED", "message": "Необходимо указать invoice_number или viitenumber"},
+        )
+    try:
+        res = license_service.confirm_invoice_payment(target, db)
+        return InvoiceConfirmResponse(
+            success=True,
+            message=res["message"],
+            invoice_number=res["invoice_number"],
+            viitenumber=res["viitenumber"],
+            is_active=res["is_active"],
+            days_left=res["days_left"],
+            expires_at=res["expires_at"],
+            package_name=res.get("package_name"),
+        )
+    except ValueError as val_err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "INVOICE_NOT_FOUND", "message": str(val_err)},
+        )
+    except Exception as exc:
+        logger.error(f"[LICENSE] Error confirming invoice payment '{target}': {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "INTERNAL_ERROR", "message": "Ошибка подтверждения оплаты инвойса"},
+        )
 

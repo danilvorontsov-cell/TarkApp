@@ -11,13 +11,31 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import SessionLocal
-from app.models.license import Device, AccessKey
+from app.models.license import Device, AccessKey, Invoice
 
 logger = logging.getLogger("tarkapp.license")
 
 TRIAL_DURATION_DAYS: int = 14
 DEFAULT_FREE_REVIEWS: int = 20
 KEY_CHAR_SET: str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+PLAN_DURATIONS: Dict[str, int] = {
+    "month_1": 30,
+    "month": 30,
+    "semester": 150,
+    "school_year": 270,
+    "year": 270,
+    "full_year": 365,
+}
+
+PLAN_TITLES: Dict[str, str] = {
+    "month_1": "1 месяц",
+    "month": "1 месяц",
+    "semester": "Семестр (5 месяцев)",
+    "school_year": "Учебный год (9 месяцев)",
+    "year": "Учебный год (9 месяцев)",
+    "full_year": "Год с каникулами (12 месяцев)",
+}
 
 
 def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
@@ -405,6 +423,124 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
         "days_left": days_left,
         "expires_at": expires_str,
         "package_name": package_name,
+    }
+
+
+def grant_plan_access(
+    device_id: str,
+    plan_id: str,
+    db: Session,
+    reference_info: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Grants or extends device subscription based on PLAN_DURATIONS matrix:
+    - "month_1": 30 days
+    - "semester": 150 days (5 months)
+    - "school_year": 270 days (9 months)
+    - "full_year": 365 days (12 months)
+    Adds duration to existing trial_expires_at if currently active, or from now.
+    """
+    clean_dev_id = (device_id or "").strip()
+    if not clean_dev_id:
+        raise ValueError("Device ID не может быть пустым")
+
+    resolved_plan_id = (plan_id or "school_year").strip().lower()
+    duration = PLAN_DURATIONS.get(resolved_plan_id, 30)
+    package_name = PLAN_TITLES.get(resolved_plan_id, "PRO")
+
+    now = datetime.utcnow()
+    device = db.query(Device).filter(Device.device_id == clean_dev_id).first()
+    if not device:
+        expires_at = now + timedelta(days=duration)
+        device = Device(
+            device_id=clean_dev_id,
+            first_seen_at=now,
+            trial_expires_at=expires_at,
+            has_active_access=True,
+            activated_key=reference_info or f"PLAN-{resolved_plan_id.upper()}",
+            free_reviews_left=DEFAULT_FREE_REVIEWS,
+            max_free_reviews=DEFAULT_FREE_REVIEWS,
+            last_review_date=now.strftime("%Y-%m-%d"),
+        )
+        db.add(device)
+    else:
+        if device.trial_expires_at > now:
+            device.trial_expires_at = device.trial_expires_at + timedelta(days=duration)
+        else:
+            device.trial_expires_at = now + timedelta(days=duration)
+        device.has_active_access = True
+        device.activated_key = reference_info or device.activated_key or f"PLAN-{resolved_plan_id.upper()}"
+
+    db.commit()
+    db.refresh(device)
+
+    delta = device.trial_expires_at - now
+    days_left = max(1, math.ceil(delta.total_seconds() / 86400))
+    expires_str = device.trial_expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    logger.info(
+        f"[LICENSE] Granted {package_name} (+{duration}d) for device {clean_dev_id}. "
+        f"New expiry: {expires_str}"
+    )
+
+    return {
+        "success": True,
+        "is_active": True,
+        "has_key": True,
+        "days_left": days_left,
+        "expires_at": expires_str,
+        "package_name": package_name,
+        "duration_days": duration,
+    }
+
+
+def confirm_invoice_payment(
+    invoice_number_or_viitenumber: str,
+    db: Session,
+) -> Dict[str, Any]:
+    """
+    Confirms an invoice payment: marks invoice as paid and grants subscription access.
+    Matches either by invoice_number (e.g. INV-2026-1001) or viitenumber (e.g. 202610011).
+    """
+    query_str = (invoice_number_or_viitenumber or "").strip()
+    if not query_str:
+        raise ValueError("Номер счёта или viitenumber обязателен")
+
+    inv = (
+        db.query(Invoice)
+        .filter(
+            (Invoice.invoice_number == query_str)
+            | (Invoice.viitenumber == query_str)
+            | (func.upper(Invoice.invoice_number) == query_str.upper())
+        )
+        .first()
+    )
+
+    if not inv:
+        raise ValueError(f"Инвойс с номером/viitenumber '{query_str}' не найден")
+
+    now = datetime.utcnow()
+    inv.is_paid = True
+    inv.paid_at = now
+    db.commit()
+
+    device_id = inv.device_id or "paid-device"
+    grant_res = grant_plan_access(
+        device_id=device_id,
+        plan_id=inv.plan_id,
+        db=db,
+        reference_info=f"INVOICE:{inv.invoice_number}",
+    )
+
+    return {
+        "success": True,
+        "message": f"Оплата инвойса {inv.invoice_number} (Viitenumber: {inv.viitenumber}) подтверждена. Доступ активирован на {grant_res['duration_days']} дн.",
+        "invoice_number": inv.invoice_number,
+        "viitenumber": inv.viitenumber,
+        "is_active": grant_res["is_active"],
+        "days_left": grant_res["days_left"],
+        "expires_at": grant_res["expires_at"],
+        "package_name": grant_res["package_name"],
     }
 
 

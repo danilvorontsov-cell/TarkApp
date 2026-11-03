@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import sys
 import time
 import traceback
 import uuid
@@ -47,7 +49,13 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize database: {e}")
 
     polling_task = None
-    if settings.TELEGRAM_BOT_TOKEN and settings.ADMIN_TELEGRAM_ID:
+    if (
+        settings.TELEGRAM_BOT_TOKEN
+        and settings.ADMIN_TELEGRAM_ID
+        and "pytest" not in sys.modules
+        and not os.environ.get("PYTEST_CURRENT_TEST")
+        and settings.APP_ENV != "test"
+    ):
         try:
             polling_task = asyncio.create_task(start_telegram_polling())
         except Exception as e:

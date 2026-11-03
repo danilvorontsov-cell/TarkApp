@@ -7,7 +7,7 @@ import ssl
 import uuid
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 import httpx
 
 from app.config import settings
@@ -67,9 +67,11 @@ def build_invoice_pdf(
     selgitus: str,
     issue_date: str,
     due_date: str,
+    viitenumber: str = "",
 ) -> bytes:
     """
     Generates a clean, valid single-page PDF 1.4 invoice in pure Python without external C libraries.
+    Includes Estonian 7-3-1 Viitenumber when provided.
     """
     lines = [
         ("F2", 20, 50, 770, "TarkApp OU - INVOICE / ARVE"),
@@ -86,15 +88,21 @@ def build_invoice_pdf(
         ("F2", 12, 50, 540, "Description / Kirjeldus"),
         ("F1", 11, 50, 520, f"1x {plan_title_en}"),
         ("F2", 14, 50, 490, f"TOTAL TO PAY / KUULUB TASUMISELE: {amount_eur} EUR"),
-        ("F1", 11, 50, 465, "------------------------------------------------------------------------"),
+        ("F1", 11, 465, 465, "------------------------------------------------------------------------"),
         ("F2", 12, 50, 442, "Payment Details / Makse rekvisiidid (SEPA / Estonia):"),
         ("F1", 11, 50, 422, f"Recipient / Saaja: TarkApp OU"),
         ("F1", 11, 50, 405, f"Bank / Pank: {BANK_NAME}"),
         ("F2", 11, 50, 388, f"IBAN: {BANK_IBAN}"),
         ("F1", 11, 50, 371, f"SWIFT / BIC: {BANK_SWIFT}"),
-        ("F2", 11, 50, 354, f"Payment Reference / Selgitus: {selgitus} ({invoice_number})"),
-        ("F1", 10, 50, 315, "Thank you for choosing TarkApp! / Taname, et valisite TarkAppi!"),
     ]
+
+    if viitenumber:
+        lines.append(("F2", 11, 50, 354, f"Reference No / Viitenumber: {viitenumber}"))
+        lines.append(("F1", 11, 50, 337, f"Payment Explanation / Selgitus: {selgitus}"))
+        lines.append(("F1", 10, 50, 305, "Thank you for choosing TarkApp! / Taname, et valisite TarkAppi!"))
+    else:
+        lines.append(("F2", 11, 50, 354, f"Payment Reference / Selgitus: {selgitus} ({invoice_number})"))
+        lines.append(("F1", 10, 50, 315, "Thank you for choosing TarkApp! / Taname, et valisite TarkAppi!"))
 
     stream_cmds = ["BT"]
     for font_key, size, x, y, text in lines:
@@ -145,8 +153,18 @@ def build_invoice_html(
     selgitus: str,
     issue_date: str,
     due_date: str,
+    viitenumber: str = "",
 ) -> str:
     """Builds a styled HTML email for the invoice."""
+    viite_row = ""
+    if viitenumber:
+        viite_row = f"""
+          <tr>
+            <td style="padding: 8px 12px; color: #94A3B8;">Номер ссылки (Viitenumber):</td>
+            <td style="padding: 8px 12px; font-weight: 800; color: #42DCA3; font-family: monospace; font-size: 15px;">{html.escape(viitenumber)}</td>
+          </tr>
+        """
+
     return f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; background-color: #12161A; color: #F8FAFC; border-radius: 16px; overflow: hidden; border: 1px solid #2C363F;">
       <div style="background: linear-gradient(180deg, #66F6CF 0%, #42DCA3 100%); padding: 24px 28px; color: #064E3B;">
@@ -178,6 +196,7 @@ def build_invoice_html(
             <td style="padding: 8px 12px; color: #94A3B8;">SWIFT / BIC:</td>
             <td style="padding: 8px 12px; font-weight: 600;">{BANK_SWIFT}</td>
           </tr>
+          {viite_row}
           <tr>
             <td style="padding: 8px 12px; color: #94A3B8;">Пояснение (Selgitus):</td>
             <td style="padding: 8px 12px; font-weight: 700;">{html.escape(selgitus)} ({html.escape(invoice_number)})</td>
@@ -285,6 +304,8 @@ async def send_invoice_to_customer(
     email: str,
     plan_id: str,
     device_id: str = "",
+    invoice_number: Optional[str] = None,
+    viitenumber: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Generates an official PDF + HTML invoice and dispatches it via configured email transport
@@ -294,10 +315,15 @@ async def send_invoice_to_customer(
     resolved_plan_id = PLAN_ALIASES.get(plan_id, plan_id)
     plan = PLAN_CATALOG.get(resolved_plan_id, PLAN_CATALOG["year"])
 
+    from app.utils.viitenumber import generate_estonian_reference_number
+
     now = datetime.now(timezone.utc)
     issue_date = now.strftime("%d.%m.%Y")
     due_date = (now + timedelta(days=7)).strftime("%d.%m.%Y")
-    invoice_number = f"TARK-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
+    if not invoice_number:
+        invoice_number = f"INV-{now.strftime('%Y')}-{uuid.uuid4().hex[:4].upper()}"
+    if not viitenumber:
+        viitenumber = generate_estonian_reference_number(invoice_number)
     pdf_filename = f"Invoice_{invoice_number}.pdf"
 
     pdf_bytes = build_invoice_pdf(
@@ -308,6 +334,7 @@ async def send_invoice_to_customer(
         selgitus=plan["selgitus"],
         issue_date=issue_date,
         due_date=due_date,
+        viitenumber=viitenumber,
     )
 
     html_body = build_invoice_html(
@@ -318,7 +345,10 @@ async def send_invoice_to_customer(
         selgitus=plan["selgitus"],
         issue_date=issue_date,
         due_date=due_date,
+        viitenumber=viitenumber,
     )
+
+    viite_plain = f"Номер ссылки (Viitenumber): {viitenumber}\n" if viitenumber else ""
 
     plain_body = (
         f"TarkApp OÜ — Счёт на оплату № {invoice_number}\n"
@@ -327,6 +357,7 @@ async def send_invoice_to_customer(
         f"Получатель: {COMPANY_NAME} (Reg: {COMPANY_REG})\n"
         f"IBAN (LHV Pank): {BANK_IBAN}\n"
         f"SWIFT/BIC: {BANK_SWIFT}\n"
+        f"{viite_plain}"
         f"Пояснение к платежу (Selgitus): {plan['selgitus']} ({invoice_number})\n"
     )
 
@@ -352,7 +383,10 @@ async def send_invoice_to_customer(
                 "success": True,
                 "email_sent": True,
                 "invoice_number": invoice_number,
+                "viitenumber": viitenumber,
                 "transport": "resend",
+                "pdf_bytes": pdf_bytes,
+                "pdf_filename": pdf_filename,
                 "message": f"Счёт № {invoice_number} (PDF) успешно отправлен на {clean_email}. Проверьте папку «Входящие» или «Спам».",
             }
         except Exception as e:
@@ -361,7 +395,10 @@ async def send_invoice_to_customer(
                 "success": False,
                 "email_sent": False,
                 "invoice_number": invoice_number,
+                "viitenumber": viitenumber,
                 "transport": "resend",
+                "pdf_bytes": pdf_bytes,
+                "pdf_filename": pdf_filename,
                 "message": f"Не удалось отправить письмо через Resend API ({e}). Проверьте ключ RESEND_API_KEY в backend/.env.",
             }
 
@@ -386,7 +423,10 @@ async def send_invoice_to_customer(
                 "success": True,
                 "email_sent": True,
                 "invoice_number": invoice_number,
+                "viitenumber": viitenumber,
                 "transport": "smtp",
+                "pdf_bytes": pdf_bytes,
+                "pdf_filename": pdf_filename,
                 "message": f"Счёт № {invoice_number} (PDF) успешно отправлен на {clean_email}. Проверьте папку «Входящие» или «Спам».",
             }
         except Exception as e:
@@ -395,7 +435,10 @@ async def send_invoice_to_customer(
                 "success": False,
                 "email_sent": False,
                 "invoice_number": invoice_number,
+                "viitenumber": viitenumber,
                 "transport": "smtp",
+                "pdf_bytes": pdf_bytes,
+                "pdf_filename": pdf_filename,
                 "message": f"Ошибка почтового сервера SMTP ({e}). Проверьте настройки SMTP_USER / SMTP_PASSWORD в backend/.env.",
             }
 
@@ -408,7 +451,10 @@ async def send_invoice_to_customer(
         "success": False,
         "email_sent": False,
         "invoice_number": invoice_number,
+        "viitenumber": viitenumber,
         "transport": "none",
+        "pdf_bytes": pdf_bytes,
+        "pdf_filename": pdf_filename,
         "message": (
             f"Счёт № {invoice_number} сформирован, но почтовый сервер (SMTP / Resend) ещё не настроен в backend/.env "
             f"(укажите SMTP_HOST, SMTP_USER, SMTP_PASSWORD или RESEND_API_KEY). "

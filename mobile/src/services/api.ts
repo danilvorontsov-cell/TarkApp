@@ -309,13 +309,22 @@ export interface InvoiceRequestResponse {
   success: boolean;
   email_sent: boolean;
   invoice_number: string;
+  viitenumber: string;
+  amount: string;
+  currency: string;
+  recipient: string;
+  iban: string;
+  swift_bic: string;
+  explanation: string;
+  pdf_download_url: string;
   transport?: string;
   message: string;
 }
 
 export async function requestInvoiceEmail(
-  email: string,
-  plan: string,
+  email?: string,
+  plan?: string,
+  payerName?: string,
   baseUrl: string = API_BASE_URL
 ): Promise<InvoiceRequestResponse> {
   const deviceId = await getDeviceId();
@@ -327,7 +336,13 @@ export async function requestInvoiceEmail(
       Accept: 'application/json',
       'X-Device-ID': deviceId,
     },
-    body: JSON.stringify({ email, plan }),
+    body: JSON.stringify({
+      email: (email || '').trim() || undefined,
+      plan: plan || 'school_year',
+      plan_id: plan || 'school_year',
+      device_id: deviceId,
+      payer_name: payerName,
+    }),
   });
 
   if (!response.ok) {

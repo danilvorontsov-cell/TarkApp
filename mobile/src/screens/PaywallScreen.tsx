@@ -9,13 +9,22 @@ import {
   TextInput,
   ActivityIndicator,
   Platform,
+  Linking,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { darkTheme, Theme } from '../theme/colors';
-import { requestInvoiceEmail, getPlansCatalog, PlanItem, BankDetails } from '../services/api';
+import {
+  requestInvoiceEmail,
+  getPlansCatalog,
+  PlanItem,
+  BankDetails,
+  InvoiceRequestResponse,
+  API_BASE_URL,
+  resolveBaseUrl,
+} from '../services/api';
 import { DEFAULT_PLANS, DEFAULT_BANK_DETAILS } from '../utils/subscription';
 import { ThemedAlert } from '../components/ThemedAlert';
 
@@ -45,6 +54,8 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
   const [bankDetails, setBankDetails] = useState<BankDetails>(DEFAULT_BANK_DETAILS);
   const [selectedPlanId, setSelectedPlanId] = useState<string>('school_year');
   const [isInvoiceModalVisible, setIsInvoiceModalVisible] = useState(false);
+  const [invoiceData, setInvoiceData] = useState<InvoiceRequestResponse | null>(null);
+  const [isLoadingInvoice, setIsLoadingInvoice] = useState(false);
   const [emailInput, setEmailInput] = useState('');
   const [isSendingInvoice, setIsSendingInvoice] = useState(false);
   const [invoiceStatus, setInvoiceStatus] = useState<{
@@ -86,9 +97,9 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
     plans[0] ||
     DEFAULT_PLANS[2];
 
-  const ibanAccount = bankDetails.iban || DEFAULT_BANK_DETAILS.iban;
-  const recipientName = bankDetails.recipient_name || DEFAULT_BANK_DETAILS.recipient_name;
-  const swiftBic = bankDetails.swift_bic || DEFAULT_BANK_DETAILS.swift_bic;
+  const ibanAccount = invoiceData?.iban || bankDetails.iban || DEFAULT_BANK_DETAILS.iban;
+  const recipientName = invoiceData?.recipient || bankDetails.recipient_name || DEFAULT_BANK_DETAILS.recipient_name;
+  const swiftBic = invoiceData?.swift_bic || bankDetails.swift_bic || DEFAULT_BANK_DETAILS.swift_bic;
 
   const copyToClipboard = async (text: string, label: string) => {
     try {
@@ -100,9 +111,34 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
     }
   };
 
+  const fetchInvoiceData = async (planId: string) => {
+    setIsLoadingInvoice(true);
+    try {
+      const res = await requestInvoiceEmail(undefined, planId);
+      setInvoiceData(res);
+    } catch (e) {
+      console.warn('[Paywall] Failed to load invoice details:', e);
+    } finally {
+      setIsLoadingInvoice(false);
+    }
+  };
+
   const handleCtaPress = () => {
-    // Открываем модальное окно выбора способа оплаты / реквизитов IBAN
     setIsInvoiceModalVisible(true);
+    fetchInvoiceData(activePlan.id);
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!invoiceData?.pdf_download_url) {
+      ThemedAlert.alert('Формирование счёта', 'Пожалуйста, подождите завершения загрузки счёта...');
+      return;
+    }
+    const fullUrl = `${resolveBaseUrl(API_BASE_URL)}${invoiceData.pdf_download_url}`;
+    try {
+      await Linking.openURL(fullUrl);
+    } catch (err: any) {
+      ThemedAlert.alert('Ошибка', 'Не удалось открыть PDF: ' + (err?.message || String(err)));
+    }
   };
 
   const handleSendInvoiceRequest = async () => {
@@ -124,6 +160,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
     setInvoiceStatus(null);
     try {
       const res = await requestInvoiceEmail(trimmedEmail, activePlan.id);
+      setInvoiceData(res);
 
       if (res.email_sent) {
         setInvoiceStatus({
@@ -150,7 +187,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
           text: res.message,
         });
         ThemedAlert.alert(
-          'Требуется настройка почты (SMTP / Resend)',
+          'Счёт сформирован 📄',
           res.message
         );
       }
@@ -418,7 +455,15 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                 <View style={styles.ibanDetailsBox}>
                   <View style={styles.ibanDetailRow}>
                     <Text style={styles.ibanDetailLabel}>Получатель:</Text>
-                    <Text style={styles.ibanDetailValue}>{recipientName}</Text>
+                    <TouchableOpacity
+                      onPress={() => copyToClipboard(recipientName, 'Получатель')}
+                      style={styles.copyableRow}
+                    >
+                      <Text style={styles.ibanDetailValue}>{recipientName}</Text>
+                      <Text style={styles.copyActionPill}>
+                        {copiedField === 'Получатель' ? 'Скопировано ✓' : 'Копировать 📋'}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
 
                   <View style={styles.ibanDetailRow}>
@@ -436,23 +481,94 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
 
                   <View style={styles.ibanDetailRow}>
                     <Text style={styles.ibanDetailLabel}>SWIFT / BIC:</Text>
-                    <Text style={styles.ibanDetailValue}>{swiftBic}</Text>
+                    <TouchableOpacity
+                      onPress={() => copyToClipboard(swiftBic, 'SWIFT')}
+                      style={styles.copyableRow}
+                    >
+                      <Text style={styles.ibanDetailValue}>{swiftBic}</Text>
+                      <Text style={styles.copyActionPill}>
+                        {copiedField === 'SWIFT' ? 'Скопировано ✓' : 'Копировать 📋'}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
 
                   <View style={styles.ibanDetailRow}>
                     <Text style={styles.ibanDetailLabel}>Сумма:</Text>
                     <Text style={styles.ibanDetailPrice}>
-                      {`${activePlan.price} EUR`}
+                      {`${invoiceData?.amount || activePlan.price} EUR`}
                     </Text>
+                  </View>
+
+                  {/* Viitenumber Highlighted Box */}
+                  <View style={styles.viiteCard}>
+                    <View style={styles.viiteHeaderRow}>
+                      <Text style={styles.viiteLabel}>Номер ссылки / Viitenumber:</Text>
+                      {isLoadingInvoice ? (
+                        <ActivityIndicator size="small" color="#5FEDC5" />
+                      ) : (
+                        <TouchableOpacity
+                          onPress={() => copyToClipboard(invoiceData?.viitenumber || '', 'Viitenumber')}
+                          disabled={!invoiceData?.viitenumber}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Text style={styles.copyActionPill}>
+                            {copiedField === 'Viitenumber' ? 'Скопировано ✓' : 'Копировать 📋'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                    <Text style={styles.viiteValue}>
+                      {invoiceData?.viitenumber || (isLoadingInvoice ? 'Генерация...' : 'Загрузка...')}
+                    </Text>
+                    <View style={styles.viiteWarningBadge}>
+                      <Text style={styles.viiteWarningBadgeText}>
+                        ⚠️ Обязательно укажите viitenumber при переводе
+                      </Text>
+                    </View>
                   </View>
 
                   <View style={styles.ibanDetailRow}>
                     <Text style={styles.ibanDetailLabel}>Пояснение (Selgitus):</Text>
-                    <Text style={styles.ibanDetailValue}>
-                      {`TarkApp PRO ${activePlan.id === 'school_year' || activePlan.id === 'year' ? 'Aasta 9k' : activePlan.id === 'semester' ? 'Semester 5k' : activePlan.id === 'month_1' || activePlan.id === 'month' ? 'Kuu 1k' : `${activePlan.duration_months}k`}`}
-                    </Text>
+                    <TouchableOpacity
+                      onPress={() =>
+                        copyToClipboard(
+                          invoiceData?.explanation ||
+                            `TarkApp litsents: ${activePlan.title}${invoiceData?.invoice_number ? ` (${invoiceData.invoice_number})` : ''}`,
+                          'Пояснение'
+                        )
+                      }
+                      style={styles.copyableRow}
+                    >
+                      <Text style={[styles.ibanDetailValue, { flex: 1, paddingRight: 6 }]}>
+                        {invoiceData?.explanation ||
+                          `TarkApp litsents: ${activePlan.title}${invoiceData?.invoice_number ? ` (${invoiceData.invoice_number})` : ''}`}
+                      </Text>
+                      <Text style={styles.copyActionPill}>
+                        {copiedField === 'Пояснение' ? 'Скопировано ✓' : 'Копировать 📋'}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
+
+                {/* Button: Download PDF Invoice */}
+                <TouchableOpacity
+                  style={[
+                    styles.downloadPdfButton,
+                    (!invoiceData?.pdf_download_url || isLoadingInvoice) && styles.downloadPdfButtonDisabled,
+                  ]}
+                  onPress={handleDownloadPdf}
+                  disabled={!invoiceData?.pdf_download_url || isLoadingInvoice}
+                  activeOpacity={0.85}
+                >
+                  {isLoadingInvoice ? (
+                    <View style={styles.sendInvoiceLoadingRow}>
+                      <ActivityIndicator size="small" color="#5FEDC5" />
+                      <Text style={styles.downloadPdfButtonText}>Формирование счёта...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.downloadPdfButtonText}>Скачать PDF-счет 📄</Text>
+                  )}
+                </TouchableOpacity>
 
                 {/* Method 2: Request e-invoice by email */}
                 <Text style={[styles.invoiceSubheading, { marginTop: 14 }]}>
@@ -492,7 +608,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                         <Text style={styles.sendInvoiceButtonText}>Отправка...</Text>
                       </View>
                     ) : (
-                      <Text style={styles.sendInvoiceButtonText}>Выслать счёт</Text>
+                      <Text style={styles.sendInvoiceButtonText}>Отправить на email</Text>
                     )}
                   </TouchableOpacity>
                 </View>
@@ -984,6 +1100,65 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
     color: '#F8FAFC',
+  },
+  viiteCard: {
+    backgroundColor: 'rgba(95, 237, 197, 0.08)',
+    borderWidth: 1.5,
+    borderColor: '#5FEDC5',
+    borderRadius: 14,
+    padding: 12,
+    marginVertical: 4,
+  },
+  viiteHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  viiteLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#E2E8F0',
+  },
+  viiteValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#5FEDC5',
+    letterSpacing: 1.2,
+    marginVertical: 3,
+  },
+  viiteWarningBadge: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.4)',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginTop: 6,
+  },
+  viiteWarningBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FDE68A',
+  },
+  downloadPdfButton: {
+    backgroundColor: '#1E252B',
+    borderWidth: 1,
+    borderColor: '#5FEDC5',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  downloadPdfButtonDisabled: {
+    opacity: 0.6,
+  },
+  downloadPdfButtonText: {
+    color: '#5FEDC5',
+    fontSize: 14,
+    fontWeight: '800',
   },
   emailInputBox: {
     flexDirection: 'row',

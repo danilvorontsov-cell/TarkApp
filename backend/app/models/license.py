@@ -35,6 +35,24 @@ class AccessKey(Base):
     used_at = Column(DateTime, nullable=True)
 
 
+class Invoice(Base):
+    __tablename__ = "invoices"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    invoice_number = Column(String, unique=True, index=True, nullable=False)
+    viitenumber = Column(String, index=True, nullable=False)
+    device_id = Column(String, nullable=True, index=True)
+    customer_email = Column(String, nullable=False)
+    payer_name = Column(String, nullable=True)
+    plan_id = Column(String, nullable=False)
+    amount = Column(String, nullable=False)
+    currency = Column(String, default="EUR", nullable=False)
+    is_paid = Column(Boolean, default=False, nullable=False)
+    pdf_path = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    paid_at = Column(DateTime, nullable=True)
+
+
 # ==========================================
 # Pydantic Schemas for API
 # ==========================================
@@ -81,16 +99,43 @@ class KeyActivateResponse(BaseModel):
 
 
 class InvoiceRequest(BaseModel):
-    email: str = Field(..., min_length=5, max_length=254, description="Customer email for PDF invoice delivery")
-    plan: str = Field(default="year", description="Selected subscription plan: year, semester, month, full_year")
+    email: Optional[str] = Field(default=None, description="Customer email for PDF invoice delivery")
+    plan: Optional[str] = Field(default=None, description="Selected subscription plan: year, semester, month, full_year")
+    plan_id: Optional[str] = Field(default=None, description="Selected subscription plan ID")
+    device_id: Optional[str] = Field(default=None, description="Device ID of client")
+    payer_name: Optional[str] = Field(default=None, description="Name of payer or company")
 
 
 class InvoiceResponse(BaseModel):
-    success: bool
-    email_sent: bool
     invoice_number: str
+    viitenumber: str
+    amount: str
+    currency: str = "EUR"
+    recipient: str = "TarkApp OÜ"
+    iban: str = "EE129900001234567890"
+    swift_bic: str = "LHVBEE22"
+    explanation: str
+    pdf_download_url: str
+    success: bool = True
+    email_sent: bool = False
     transport: str = "none"
+    message: str = ""
+
+
+class InvoiceConfirmRequest(BaseModel):
+    invoice_number: Optional[str] = None
+    viitenumber: Optional[str] = None
+
+
+class InvoiceConfirmResponse(BaseModel):
+    success: bool
     message: str
+    invoice_number: str
+    viitenumber: str
+    is_active: bool
+    days_left: int
+    expires_at: str
+    package_name: Optional[str] = None
 
 
 class PlanItem(BaseModel):
