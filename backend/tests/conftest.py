@@ -71,3 +71,27 @@ def reset_rate_limit_storage():
     yield
     if hasattr(app.state, "limiter"):
         app.state.limiter.reset()
+
+
+@pytest.fixture(autouse=True)
+def reset_test_device_quota():
+    """Resets dev test device scan counters so test suite never exhausts daily quotas."""
+    from app.database import SessionLocal
+    from app.models.license import Device
+    db = SessionLocal()
+    try:
+        db.query(Device).update({"free_scans_used": 0})
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+    yield
+    db = SessionLocal()
+    try:
+        db.query(Device).update({"free_scans_used": 0})
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
