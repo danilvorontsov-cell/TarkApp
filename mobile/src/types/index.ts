@@ -15,6 +15,7 @@ export interface UserProfile {
   grade: number; // 1 - 12
   tier: SchoolTier;
   interests: string[]; // Free-form list of student's hobbies and interests
+  interestsByGrade?: Record<number, string[]>;
   hasCustomInterests?: boolean; // Whether interests were manually entered/edited by user
   nickname: string;
   avatarUri?: string;

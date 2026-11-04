@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -23,6 +23,7 @@ import {
   PRIMARY_CHILDISH_INTERESTS,
   AGE_SUGGESTIONS,
 } from '../types';
+import { StorageService } from '../services/storage';
 import { Theme, darkTheme } from '../theme/colors';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -47,45 +48,76 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
 }) => {
   const [name, setName] = useState(currentProfile.nickname || '');
   const [selectedGrade, setSelectedGrade] = useState(currentProfile.grade || 3);
+  const wasVisibleRef = useRef(false);
 
   useEffect(() => {
     if (visible) {
-      setName(currentProfile.nickname || '');
-      setSelectedGrade(currentProfile.grade || 3);
+      if (!wasVisibleRef.current) {
+        wasVisibleRef.current = true;
+        StorageService.getProfileDraft().then((draft) => {
+          if (draft) {
+            if (draft.nickname !== undefined) setName(draft.nickname);
+            else setName(currentProfile.nickname || '');
+
+            if (draft.grade !== undefined && draft.grade >= 1 && draft.grade <= 12) {
+              setSelectedGrade(draft.grade);
+            } else {
+              setSelectedGrade(currentProfile.grade || 3);
+            }
+          } else {
+            setName(currentProfile.nickname || '');
+            setSelectedGrade(currentProfile.grade || 3);
+          }
+        });
+      }
+    } else {
+      wasVisibleRef.current = false;
     }
-  }, [visible, currentProfile]);
+  }, [visible]);
 
   const tierPolicy = getTierPolicy(selectedGrade);
   const tierBadgeLabel = tierPolicy.name.split(' (')[0];
 
-  const handleSave = () => {
+  const handleNameChange = (text: string) => {
+    setName(text);
+    StorageService.saveProfileDraft({ nickname: text, grade: selectedGrade });
+  };
+
+  const handleGradeChange = (g: number) => {
+    setSelectedGrade(g);
+    StorageService.saveProfileDraft({ nickname: name, grade: g });
+  };
+
+  const handleAvatarPress = async () => {
+    await StorageService.saveProfileDraft({ nickname: name, grade: selectedGrade });
+    onOpenAvatarPicker?.();
+  };
+
+  const handleSave = async () => {
     const trimmed = name.trim() || 'Ученик';
-    const oldTier = currentProfile.tier || getTierFromGrade(currentProfile.grade);
     const newTier = getTierFromGrade(selectedGrade);
-    const isTierChanged = oldTier !== newTier;
 
-    let newInterests = currentProfile.interests || [];
-    let isCustom = currentProfile.hasCustomInterests;
+    // Retrieve interests for selectedGrade if previously stored
+    const gradeMap: Record<number, string[]> = {
+      ...(currentProfile.interestsByGrade || {}),
+    };
 
-    const validSuggestions = (AGE_SUGGESTIONS[newTier] || []).map((s) => s.trim().toLowerCase());
-    const validForNewTier = newInterests.filter((i) =>
-      validSuggestions.includes(i.trim().toLowerCase())
-    );
+    const savedForGrade = gradeMap[selectedGrade] || gradeMap[String(selectedGrade) as any];
+    let newInterests: string[];
+    let isCustom: boolean;
 
-    if (!isCustom || isDefaultInterestsList(newInterests) || (isTierChanged && isDefaultInterestsList(newInterests)) || validForNewTier.length === 0) {
+    if (savedForGrade && Array.isArray(savedForGrade) && savedForGrade.length > 0) {
+      newInterests = savedForGrade;
+      isCustom = !isDefaultInterestsList(savedForGrade);
+    } else if (selectedGrade === currentProfile.grade && currentProfile.interests && currentProfile.interests.length > 0) {
+      newInterests = currentProfile.interests;
+      isCustom = Boolean(currentProfile.hasCustomInterests);
+    } else {
       newInterests = getDefaultInterestsForTier(newTier);
       isCustom = false;
-    } else if (isTierChanged && (newTier === 'high' || newTier === 'gymnasium')) {
-      newInterests = validForNewTier.filter(
-        (i) => !PRIMARY_CHILDISH_INTERESTS.has(i.trim().toLowerCase())
-      );
-      if (newInterests.length === 0) {
-        newInterests = getDefaultInterestsForTier(newTier);
-        isCustom = false;
-      }
-    } else {
-      newInterests = validForNewTier;
     }
+
+    gradeMap[selectedGrade] = newInterests;
 
     const updated: UserProfile = {
       ...currentProfile,
@@ -94,41 +126,39 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
       tier: newTier,
       interests: newInterests,
       hasCustomInterests: isCustom,
+      interestsByGrade: gradeMap,
     };
+
+    await StorageService.clearProfileDraft();
     onClose();
     setTimeout(() => {
       onSaveProfile(updated);
     }, 120);
   };
 
-  const handleDismiss = () => {
+  const handleDismiss = async () => {
     // If nickname is completely empty on dismiss, ensure at least default 'Ученик' is set
     if (!currentProfile.nickname?.trim()) {
-      const oldTier = currentProfile.tier || getTierFromGrade(currentProfile.grade);
       const newTier = getTierFromGrade(selectedGrade);
-      const isTierChanged = oldTier !== newTier;
-      let newInterests = currentProfile.interests || [];
-      let isCustom = currentProfile.hasCustomInterests;
+      const gradeMap: Record<number, string[]> = {
+        ...(currentProfile.interestsByGrade || {}),
+      };
+      const savedForGrade = gradeMap[selectedGrade] || gradeMap[String(selectedGrade) as any];
+      const newInterests = savedForGrade && savedForGrade.length > 0
+        ? savedForGrade
+        : getDefaultInterestsForTier(newTier);
+      gradeMap[selectedGrade] = newInterests;
 
-      const validSuggestions = (AGE_SUGGESTIONS[newTier] || []).map((s) => s.trim().toLowerCase());
-      const validForNewTier = newInterests.filter((i) =>
-        validSuggestions.includes(i.trim().toLowerCase())
-      );
-
-      if (!isCustom || isDefaultInterestsList(newInterests) || (isTierChanged && isDefaultInterestsList(newInterests)) || validForNewTier.length === 0) {
-        newInterests = getDefaultInterestsForTier(newTier);
-        isCustom = false;
-      } else {
-        newInterests = validForNewTier;
-      }
       const updated: UserProfile = {
         ...currentProfile,
         nickname: 'Ученик',
         grade: selectedGrade,
         tier: newTier,
         interests: newInterests,
-        hasCustomInterests: isCustom,
+        hasCustomInterests: false,
+        interestsByGrade: gradeMap,
       };
+      await StorageService.clearProfileDraft();
       setTimeout(() => {
         onSaveProfile(updated);
       }, 120);
@@ -171,7 +201,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                   {/* Avatar Circle */}
                   <TouchableOpacity
                     style={styles.avatarCircle}
-                    onPress={onOpenAvatarPicker}
+                    onPress={handleAvatarPress}
                     activeOpacity={0.8}
                   >
                     {currentProfile.avatarUri ? (
@@ -198,7 +228,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                     <TextInput
                       style={styles.textInput}
                       value={name}
-                      onChangeText={setName}
+                      onChangeText={handleNameChange}
                       placeholder="Например, Даниил или София"
                       placeholderTextColor="#64748B"
                       autoCapitalize="words"
@@ -227,7 +257,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                               styles.gradeChip,
                               isSelected && styles.gradeChipSelected,
                             ]}
-                            onPress={() => setSelectedGrade(g)}
+                            onPress={() => handleGradeChange(g)}
                             activeOpacity={0.7}
                           >
                             <Text

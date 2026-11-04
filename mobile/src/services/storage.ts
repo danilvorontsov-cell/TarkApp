@@ -11,6 +11,7 @@ import {
 
 const STORAGE_KEYS = {
   PROFILE: '@tarkapp_user_profile',
+  PROFILE_DRAFT: '@tarkapp_profile_draft',
   VOCABULARY: '@tarkapp_saved_vocabulary',
   HISTORY: '@tarkapp_saved_history',
   AUTH_TOKEN: '@tarkapp_auth_token',
@@ -20,6 +21,9 @@ const DEFAULT_PROFILE: UserProfile = {
   grade: 3,
   tier: 'primary',
   interests: getDefaultInterestsForTier('primary'),
+  interestsByGrade: {
+    3: getDefaultInterestsForTier('primary'),
+  },
   hasCustomInterests: false,
   nickname: '',
 };
@@ -45,30 +49,45 @@ export const StorageService = {
         const parsed = JSON.parse(data) as any;
         const tier = parsed.tier || getTierFromGrade(parsed.grade);
         parsed.tier = tier;
+
+        // Restore and normalize interestsByGrade mapping
+        const normalizedMap: Record<number, string[]> = {};
+        if (parsed.interestsByGrade && typeof parsed.interestsByGrade === 'object') {
+          for (const key of Object.keys(parsed.interestsByGrade)) {
+            const numKey = Number(key);
+            if (!isNaN(numKey) && Array.isArray(parsed.interestsByGrade[key])) {
+              normalizedMap[numKey] = parsed.interestsByGrade[key].map((item: string) =>
+                typeof item === 'string' ? item.replace(/спотр/gi, 'спорт') : item
+              );
+            }
+          }
+        }
+
         if (!parsed.interests || !Array.isArray(parsed.interests)) {
           parsed.interests = parsed.theme_interest
             ? [parsed.theme_interest]
-            : getDefaultInterestsForTier(tier);
+            : (normalizedMap[parsed.grade] || getDefaultInterestsForTier(tier));
           parsed.hasCustomInterests = false;
         } else {
           parsed.interests = parsed.interests.map((item: string) =>
             typeof item === 'string' ? item.replace(/спотр/gi, 'спорт') : item
           );
-          // Strict isolation: filter out any interests not in AGE_SUGGESTIONS[tier]
-          const validSuggestions = (AGE_SUGGESTIONS[tier] || []).map((s) => s.trim().toLowerCase());
-          const validInterests = parsed.interests.filter((item: string) =>
-            typeof item === 'string' && validSuggestions.includes(item.trim().toLowerCase())
-          );
-          // Self-heal: If student is in middle/high/gymnasium, but has childish primary defaults saved
-          if (tier !== 'primary' && !parsed.hasCustomInterests && isDefaultInterestsList(parsed.interests)) {
-            parsed.interests = getDefaultInterestsForTier(tier);
-          } else if (validInterests.length === 0) {
-            parsed.interests = getDefaultInterestsForTier(tier);
-            parsed.hasCustomInterests = false;
-          } else {
-            parsed.interests = validInterests;
+
+          if (!parsed.hasCustomInterests) {
+            // Self-heal: If student is in middle/high/gymnasium, but has childish primary defaults saved
+            if (tier !== 'primary' && !parsed.hasCustomInterests && isDefaultInterestsList(parsed.interests)) {
+              parsed.interests = getDefaultInterestsForTier(tier);
+            } else if (parsed.interests.length === 0) {
+              parsed.interests = getDefaultInterestsForTier(tier);
+            }
           }
         }
+
+        if (parsed.interests && parsed.interests.length > 0) {
+          normalizedMap[parsed.grade] = parsed.interests;
+        }
+        parsed.interestsByGrade = normalizedMap;
+
         return parsed as UserProfile;
       }
     } catch (e) {
@@ -86,9 +105,17 @@ export const StorageService = {
   },
 
   async saveProfile(profile: UserProfile): Promise<void> {
+    const grade = profile.grade || 3;
+    const tier = profile.tier || getTierFromGrade(grade);
+    const interestsByGrade: Record<number, string[]> = {
+      ...(profile.interestsByGrade || {}),
+      [grade]: profile.interests || [],
+    };
     const payload: UserProfile = {
       ...profile,
-      tier: profile.tier || getTierFromGrade(profile.grade),
+      grade,
+      tier,
+      interestsByGrade,
     };
     const json = JSON.stringify(payload);
     memoryStore[STORAGE_KEYS.PROFILE] = json;
@@ -98,6 +125,46 @@ export const StorageService = {
     } catch (e) {
       // Non-blocking in-memory fallback - do not rethrow
     }
+  },
+
+  async getProfileDraft(): Promise<Partial<UserProfile> | null> {
+    try {
+      const data = await AsyncStorage.getItem(STORAGE_KEYS.PROFILE_DRAFT);
+      if (data) {
+        return JSON.parse(data);
+      }
+    } catch (e) {}
+    try {
+      const fallback = memoryStore[STORAGE_KEYS.PROFILE_DRAFT];
+      if (fallback) {
+        return JSON.parse(fallback);
+      }
+    } catch {}
+    return null;
+  },
+
+  async saveProfileDraft(draft: Partial<UserProfile>): Promise<void> {
+    try {
+      const existing = (await this.getProfileDraft()) || {};
+      const merged = { ...existing, ...draft };
+      const json = JSON.stringify(merged);
+      memoryStore[STORAGE_KEYS.PROFILE_DRAFT] = json;
+      await AsyncStorage.setItem(STORAGE_KEYS.PROFILE_DRAFT, json);
+    } catch (e) {
+      try {
+        const fallback = memoryStore[STORAGE_KEYS.PROFILE_DRAFT]
+          ? JSON.parse(memoryStore[STORAGE_KEYS.PROFILE_DRAFT])
+          : {};
+        memoryStore[STORAGE_KEYS.PROFILE_DRAFT] = JSON.stringify({ ...fallback, ...draft });
+      } catch {}
+    }
+  },
+
+  async clearProfileDraft(): Promise<void> {
+    try {
+      delete memoryStore[STORAGE_KEYS.PROFILE_DRAFT];
+      await AsyncStorage.removeItem(STORAGE_KEYS.PROFILE_DRAFT);
+    } catch (e) {}
   },
 
   async getSavedVocabulary(): Promise<VocabularyItem[]> {

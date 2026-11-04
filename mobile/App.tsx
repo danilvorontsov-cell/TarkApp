@@ -239,14 +239,24 @@ function MainApp() {
   const isPro = subInfo.isPro;
 
   useEffect(() => {
-    StorageService.getProfile().then((saved) => {
-      setProfile(saved);
-      if (saved.interests && saved.interests.length > 0) {
-        const cleanedInterests = saved.interests.map((i) => i.replace(/спотр/gi, 'спорт'));
+    StorageService.getProfile().then(async (saved) => {
+      const draft = await StorageService.getProfileDraft();
+      let effectiveProfile = saved;
+      if (draft) {
+        effectiveProfile = {
+          ...saved,
+          nickname: draft.nickname !== undefined ? draft.nickname : saved.nickname,
+          grade: (draft.grade !== undefined && draft.grade >= 1 && draft.grade <= 12) ? draft.grade : saved.grade,
+          avatarUri: draft.avatarUri !== undefined ? draft.avatarUri : saved.avatarUri,
+        };
+      }
+      setProfile(effectiveProfile);
+      if (effectiveProfile.interests && effectiveProfile.interests.length > 0) {
+        const cleanedInterests = effectiveProfile.interests.map((i) => i.replace(/спотр/gi, 'спорт'));
         setInterestsText(cleanedInterests.join(', '));
       }
 
-      const isRegistered = Boolean(saved.nickname && saved.nickname.trim().length > 0);
+      const isRegistered = Boolean(effectiveProfile.nickname && effectiveProfile.nickname.trim().length > 0);
       if (!isRegistered) {
         setIsProfileSetupModalVisible(true);
       } else {
@@ -256,7 +266,7 @@ function MainApp() {
             setAuthToken(tok);
           } else {
             const devId = await getDeviceId();
-            const token = buildAuthToken(devId, saved.nickname);
+            const token = buildAuthToken(devId, effectiveProfile.nickname);
             await StorageService.saveAuthToken(token);
             setAuthToken(token);
             setAuthTokenState(token);
@@ -480,23 +490,33 @@ function MainApp() {
   };
 
   const handleSaveProfile = async (updated: UserProfile) => {
-    setProfile(updated);
-    if (updated.interests && updated.interests.length > 0) {
-      setInterestsText(updated.interests.join(', '));
+    const currentGrade = updated.grade || 3;
+    const gradeMap: Record<number, string[]> = {
+      ...(updated.interestsByGrade || profile.interestsByGrade || {}),
+      [currentGrade]: updated.interests || [],
+    };
+    const completeUpdated: UserProfile = {
+      ...updated,
+      interestsByGrade: gradeMap,
+    };
+    setProfile(completeUpdated);
+    if (completeUpdated.interests && completeUpdated.interests.length > 0) {
+      setInterestsText(completeUpdated.interests.join(', '));
     } else {
       setInterestsText('');
     }
-    await StorageService.saveProfile(updated);
-    if (updated.nickname && updated.nickname.trim().length > 0) {
+    await StorageService.saveProfile(completeUpdated);
+    await StorageService.clearProfileDraft();
+    if (completeUpdated.nickname && completeUpdated.nickname.trim().length > 0) {
       const devId = await getDeviceId();
-      const token = buildAuthToken(devId, updated.nickname);
+      const token = buildAuthToken(devId, completeUpdated.nickname);
       await StorageService.saveAuthToken(token);
       setAuthToken(token);
       setAuthTokenState(token);
     }
     ThemedAlert.alert(
       'Добро пожаловать!',
-      `Профиль активирован для: ${updated.nickname}. Все настройки сохранены!`,
+      `Профиль активирован для: ${completeUpdated.nickname}. Все настройки сохранены!`,
       [{ text: 'Отлично' }]
     );
   };
@@ -526,40 +546,31 @@ function MainApp() {
   };
 
   const updateGrade = (grade: number) => {
-    const oldTier = profile.tier || getTierFromGrade(profile.grade);
+    const oldGrade = profile.grade;
     const newTier = getTierFromGrade(grade);
-    const isTierChanged = oldTier !== newTier;
 
-    let newInterests = profile.interests || [];
-    let isCustom = profile.hasCustomInterests;
+    // Save current active interests under current grade in map
+    const gradeMap: Record<number, string[]> = {
+      ...(profile.interestsByGrade || {}),
+    };
+    if (oldGrade) {
+      gradeMap[oldGrade] = profile.interests || [];
+    }
 
-    // Allowed suggestions for the new tier
-    const validSuggestions = (AGE_SUGGESTIONS[newTier] || []).map((s) => s.trim().toLowerCase());
-    const validForNewTier = newInterests.filter((i) =>
-      validSuggestions.includes(i.trim().toLowerCase())
-    );
+    // Check if new grade has existing stored interests
+    const storedForNewGrade = gradeMap[grade] || gradeMap[String(grade) as any];
 
-    // Hard isolation per selected class/tier:
-    // If user has not typed custom interests, or if interests match default list,
-    // or when crossing age categories without custom edits, or if none of the previous interests belong to new tier:
-    if (!isCustom || isDefaultInterestsList(newInterests) || (isTierChanged && isDefaultInterestsList(newInterests)) || validForNewTier.length === 0) {
+    let newInterests: string[];
+    let isCustom: boolean;
+
+    if (storedForNewGrade && Array.isArray(storedForNewGrade) && storedForNewGrade.length > 0) {
+      newInterests = storedForNewGrade;
+      isCustom = !isDefaultInterestsList(storedForNewGrade);
+    } else {
+      // First visit to this grade: populate with age-appropriate defaults
       newInterests = getDefaultInterestsForTier(newTier);
       isCustom = false;
-    } else if (isTierChanged && (newTier === 'high' || newTier === 'gymnasium')) {
-      // Purge childish toys when transitioning to high school / gymnasium
-      newInterests = validForNewTier.filter(
-        (i) => !PRIMARY_CHILDISH_INTERESTS.has(i.trim().toLowerCase())
-      );
-      if (newInterests.length === 0) {
-        newInterests = getDefaultInterestsForTier(newTier);
-        isCustom = false;
-      } else {
-        isCustom = true;
-      }
-    } else {
-      // Keep only chips matching the new tier's age group
-      newInterests = validForNewTier;
-      isCustom = true;
+      gradeMap[grade] = newInterests;
     }
 
     const newInterestsText = newInterests.join(', ');
@@ -571,6 +582,7 @@ function MainApp() {
       tier: newTier,
       interests: newInterests,
       hasCustomInterests: isCustom,
+      interestsByGrade: gradeMap,
     };
     setProfile(updated);
     StorageService.saveProfile(updated);
@@ -584,10 +596,15 @@ function MainApp() {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    const updated = {
+    const gradeMap: Record<number, string[]> = {
+      ...(profile.interestsByGrade || {}),
+      [profile.grade]: parsed,
+    };
+    const updated: UserProfile = {
       ...profile,
       interests: parsed,
       hasCustomInterests: true,
+      interestsByGrade: gradeMap,
     };
     setProfile(updated);
     StorageService.saveProfile(updated);
@@ -617,10 +634,15 @@ function MainApp() {
     }
     const newText = newList.join(', ');
     setInterestsText(newText);
-    const updated = {
+    const gradeMap: Record<number, string[]> = {
+      ...(profile.interestsByGrade || {}),
+      [profile.grade]: newList,
+    };
+    const updated: UserProfile = {
       ...profile,
       interests: newList,
       hasCustomInterests: true,
+      interestsByGrade: gradeMap,
     };
     setProfile(updated);
     StorageService.saveProfile(updated);
@@ -1014,9 +1036,31 @@ function MainApp() {
       }
 
       const newUri = result.assets[0].uri;
-      const updatedProfile: UserProfile = { ...profile, avatarUri: newUri };
+
+      // Preserve drafted name & grade so camera intent return never resets them
+      const draft = await StorageService.getProfileDraft();
+      const currentNickname = (draft?.nickname !== undefined && draft.nickname.trim().length > 0)
+        ? draft.nickname
+        : (profile.nickname || '');
+      const currentGrade = (draft?.grade !== undefined && draft.grade >= 1 && draft.grade <= 12)
+        ? draft.grade
+        : (profile.grade || 3);
+      const tier = getTierFromGrade(currentGrade);
+
+      const updatedProfile: UserProfile = {
+        ...profile,
+        nickname: currentNickname,
+        grade: currentGrade,
+        tier,
+        avatarUri: newUri,
+      };
       setProfile(updatedProfile);
       await StorageService.saveProfile(updatedProfile);
+      await StorageService.saveProfileDraft({
+        nickname: currentNickname,
+        grade: currentGrade,
+        avatarUri: newUri,
+      });
     } catch (err: any) {
       ThemedAlert.alert('Ошибка камеры', `Не удалось сделать снимок: ${err?.message || 'Сбой камеры'}`);
     }
@@ -1045,9 +1089,31 @@ function MainApp() {
       }
 
       const newUri = result.assets[0].uri;
-      const updatedProfile: UserProfile = { ...profile, avatarUri: newUri };
+
+      // Preserve drafted name & grade so gallery intent return never resets them
+      const draft = await StorageService.getProfileDraft();
+      const currentNickname = (draft?.nickname !== undefined && draft.nickname.trim().length > 0)
+        ? draft.nickname
+        : (profile.nickname || '');
+      const currentGrade = (draft?.grade !== undefined && draft.grade >= 1 && draft.grade <= 12)
+        ? draft.grade
+        : (profile.grade || 3);
+      const tier = getTierFromGrade(currentGrade);
+
+      const updatedProfile: UserProfile = {
+        ...profile,
+        nickname: currentNickname,
+        grade: currentGrade,
+        tier,
+        avatarUri: newUri,
+      };
       setProfile(updatedProfile);
       await StorageService.saveProfile(updatedProfile);
+      await StorageService.saveProfileDraft({
+        nickname: currentNickname,
+        grade: currentGrade,
+        avatarUri: newUri,
+      });
     } catch (err: any) {
       ThemedAlert.alert('Ошибка галереи', `Не удалось выбрать фото: ${err?.message || 'Сбой галереи'}`);
     }
