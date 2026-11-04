@@ -355,7 +355,11 @@ def test_analyze_page_json_invalid_base64(client):
         "mime_type": "image/jpeg",
         "grade": 3,
     }
-    response = client.post("/api/v1/analyze-page/json", json=payload)
+    response = client.post(
+        "/api/v1/analyze-page/json",
+        json=payload,
+        headers={"X-Device-ID": "dev-invalid-base64-test"},
+    )
     # Could be 400 or handled gracefully
     assert response.status_code in [400, 422]
 
