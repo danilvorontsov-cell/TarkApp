@@ -285,6 +285,9 @@ async def test_process_telegram_update_wrapper(db_session):
 def test_telegram_webhook_route():
     """Verifies that POST /api/v1/telegram/webhook accepts updates."""
     client = TestClient(app)
+    headers = {}
+    if settings.TELEGRAM_WEBHOOK_SECRET:
+        headers["X-Telegram-Bot-Api-Secret-Token"] = settings.TELEGRAM_WEBHOOK_SECRET
     payload = {
         "update_id": 9999,
         "message": {
@@ -294,7 +297,7 @@ def test_telegram_webhook_route():
             "text": "regular non-command message",
         },
     }
-    response = client.post("/api/v1/telegram/webhook", json=payload)
+    response = client.post("/api/v1/telegram/webhook", json=payload, headers=headers)
     assert response.status_code == 200
     data = response.json()
     assert data["ok"] is True
@@ -428,7 +431,11 @@ async def test_register_telegram_bot_commands():
             assert mock_post.called
 
             call_kwargs = mock_post.call_args.kwargs
-            payload = call_kwargs.get("json", {})
+            payload = call_kwargs.get("json")
+            if not payload and "content" in call_kwargs:
+                import json
+                payload = json.loads(call_kwargs["content"].decode("utf-8"))
+            payload = payload or {}
             commands = payload.get("commands", [])
             cmd_names = [c["command"] for c in commands]
 

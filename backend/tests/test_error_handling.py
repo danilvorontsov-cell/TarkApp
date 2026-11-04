@@ -56,8 +56,9 @@ async def test_global_exception_handler_and_error_logging():
 
 
 @pytest.mark.anyio
-async def test_telegram_alert_silent_when_not_configured():
+async def test_telegram_alert_silent_when_not_configured(monkeypatch):
     # Should safely return False without throwing when tokens are missing
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", None)
     result = await send_telegram_alert("/api/v1/test", RuntimeError("Test error"), 500)
     assert result is False
 
