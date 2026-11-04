@@ -12,6 +12,7 @@ import pytest
 from fastapi import Request
 
 from app.main import global_exception_handler, app
+from app.config import settings
 from app.logger import APP_LOG_PATH, ERROR_LOG_PATH
 from app.services.telegram_alert import send_telegram_alert
 
