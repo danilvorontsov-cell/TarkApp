@@ -78,9 +78,9 @@ test('Scenario 6: TaskVisualizer component code and animation logic are preserve
 
   // Verify core visualization elements and styles exist
   assert.match(visualizerContent, /export const TaskVisualizer/);
-  assert.match(visualizerContent, /cubeBox/);
-  assert.match(visualizerContent, /plusSign/);
-  assert.match(visualizerContent, /equalsSign/);
-  assert.match(visualizerContent, /sumResultBox/);
-  assert.match(visualizerContent, /replayButton/);
+  assert.match(visualizerContent, /RenderAutoMathBlocks/);
+  assert.match(visualizerContent, /glossyCube/);
+  assert.match(visualizerContent, /cubesRow/);
+  assert.match(visualizerContent, /flightArena/);
+  assert.match(visualizerContent, /Переместительный закон сложения/);
 });
