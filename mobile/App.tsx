@@ -75,6 +75,7 @@ import { ThemedAlert, ThemedAlertContainer } from './src/components/ThemedAlert'
 import { ProfileSetupModal } from './src/components/ProfileSetupModal';
 import { TaskVisualizer } from './src/components/TaskVisualizer';
 import { getSubscriptionInfo } from './src/utils/subscription';
+import { SHOW_CUBES_DEMO } from './src/config/features';
 
 // Initialize Sentry stub/client once at entry
 initSentry();
@@ -1486,18 +1487,20 @@ function MainApp() {
           </View>
 
           {/* Quick Demo Preview Button for testing visual animations */}
-          <TouchableOpacity
-            style={styles.quickDemoLessonButton}
-            onPress={() => {
-              setAnalysis(SAMPLE_MATH_LESSON);
-              setShowAlternativeExplanation(false);
-            }}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.quickDemoLessonButtonText}>
-              ✨ Открыть пример: Сложение и перестановка (3 + 2 = 5)
-            </Text>
-          </TouchableOpacity>
+          {SHOW_CUBES_DEMO && (
+            <TouchableOpacity
+              style={styles.quickDemoLessonButton}
+              onPress={() => {
+                setAnalysis(SAMPLE_MATH_LESSON);
+                setShowAlternativeExplanation(false);
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.quickDemoLessonButtonText}>
+                ✨ Открыть пример: Сложение и перестановка (3 + 2 = 5)
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -1520,18 +1523,20 @@ function MainApp() {
               <Text style={styles.analysisBackToStartBtnText}>← Новое фото</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.analysisDemoSwitchBtn}
-              onPress={() => {
-                AudioQueueManager.stop();
-                setAnalysis(SAMPLE_MATH_LESSON);
-                setShowAlternativeExplanation(false);
-              }}
-              activeOpacity={0.7}
-              accessibilityLabel="Показать пример со сложением и перестановкой кубиков"
-            >
-              <Text style={styles.analysisDemoSwitchBtnText}>✨ Пример: 3 + 2 = 5</Text>
-            </TouchableOpacity>
+            {SHOW_CUBES_DEMO && (
+              <TouchableOpacity
+                style={styles.analysisDemoSwitchBtn}
+                onPress={() => {
+                  AudioQueueManager.stop();
+                  setAnalysis(SAMPLE_MATH_LESSON);
+                  setShowAlternativeExplanation(false);
+                }}
+                activeOpacity={0.7}
+                accessibilityLabel="Показать пример со сложением и перестановкой кубиков"
+              >
+                <Text style={styles.analysisDemoSwitchBtnText}>✨ Пример: 3 + 2 = 5</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Banner when image was unreadable / blurry (is_acceptable === false) */}
@@ -1581,7 +1586,7 @@ function MainApp() {
               <Text style={styles.voiceScriptText}>{cleanEstTags(analysis.voice_prompt_script)}</Text>
 
               {/* Автоматическая наглядная визуализация прямо между текстом подсказки и кнопками действий (когда есть визуальное объяснение) */}
-              {profile.grade <= 6 && Boolean(analysis.visual) && (
+              {SHOW_CUBES_DEMO && profile.grade <= 6 && Boolean(analysis.visual) && (
                 <TaskVisualizer
                   visual={analysis.visual}
                   grade={profile.grade}
@@ -2740,12 +2745,17 @@ function MainApp() {
         hasPro={isPro}
         licenseStatus={licenseStatus}
         onOpenProfileSetup={() => setIsProfileSetupModalVisible(true)}
-        onOpenDemoLesson={() => {
-          AudioQueueManager.stop();
-          setAnalysis(SAMPLE_MATH_LESSON);
-          setShowAlternativeExplanation(false);
-          switchTab('study');
-        }}
+        onOpenDemoLesson={
+          SHOW_CUBES_DEMO
+            ? () => {
+                AudioQueueManager.stop();
+                setAnalysis(SAMPLE_MATH_LESSON);
+                setShowAlternativeExplanation(false);
+                switchTab('study');
+              }
+            : undefined
+        }
+        showCubesDemo={SHOW_CUBES_DEMO}
       />
 
       {/* Attractive Centered Avatar Picker Modal */}

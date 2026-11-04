@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Theme, darkTheme } from '../theme/colors';
 import { LicenseStatus } from '../services/api';
+import { SHOW_CUBES_DEMO } from '../config/features';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 320);
@@ -36,6 +37,7 @@ interface DrawerMenuProps {
   licenseStatus?: LicenseStatus | null;
   onOpenProfileSetup?: () => void;
   onOpenDemoLesson?: () => void;
+  showCubesDemo?: boolean;
 }
 
 interface MenuItemDef {
@@ -61,6 +63,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
   licenseStatus,
   onOpenProfileSetup,
   onOpenDemoLesson,
+  showCubesDemo = SHOW_CUBES_DEMO,
 }) => {
   const insets = useSafeAreaInsets();
   const animProgress = useRef(new Animated.Value(0)).current;
@@ -267,7 +270,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
             );
           })}
 
-          {onOpenDemoLesson ? (
+          {showCubesDemo && onOpenDemoLesson ? (
             <TouchableOpacity
               style={[
                 styles.menuItem,
