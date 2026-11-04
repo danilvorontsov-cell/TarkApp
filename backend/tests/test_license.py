@@ -344,6 +344,10 @@ def test_invoice_endpoint_validates_email_and_generates_pdf(setup_db, monkeypatc
     assert resp.status_code == 200
     data = resp.json()
     assert data["email_sent"] is False
+    assert data["success"] is True
+    assert "SMTP" not in data["message"]
+    assert ".env" not in data["message"]
+    assert data["message"] == f"Счёт № {data['invoice_number']} готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже."
     assert data["invoice_number"].startswith("INV-")
     assert "viitenumber" in data
     assert len(data["viitenumber"]) >= 2

@@ -182,24 +182,41 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
           ]
         );
       } else {
+        const invNum = res.invoice_number || invoiceData?.invoice_number || '';
+        const successTitle = 'Счёт сформирован';
+        const successText =
+          res.message &&
+          !res.message.includes('SMTP') &&
+          !res.message.includes('Resend') &&
+          !res.message.includes('.env')
+            ? res.message
+            : `Счёт № ${invNum} готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже.`;
+
         setInvoiceStatus({
-          type: 'warning',
-          text: res.message,
+          type: 'success',
+          text: successText,
         });
         ThemedAlert.alert(
-          'Счёт сформирован 📄',
-          res.message
+          successTitle,
+          successText
         );
       }
     } catch (err: any) {
-      const errMsg =
+      let errMsg =
         err?.message ||
-        'Не удалось отправить счёт. Проверьте соединение с сервером или оплатите по реквизитам IBAN выше.';
+        'Не удалось сформировать счёт. Проверьте соединение с сервером или оплатите по реквизитам IBAN выше.';
+      if (
+        errMsg.includes('SMTP') ||
+        errMsg.includes('Resend') ||
+        errMsg.includes('.env')
+      ) {
+        errMsg = 'Счёт готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже.';
+      }
       setInvoiceStatus({
         type: 'error',
         text: errMsg,
       });
-      ThemedAlert.alert('Ошибка отправки счёта', errMsg);
+      ThemedAlert.alert('Ошибка формирования счёта', errMsg);
     } finally {
       setIsSendingInvoice(false);
     }

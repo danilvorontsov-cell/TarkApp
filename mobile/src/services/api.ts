@@ -496,6 +496,18 @@ export function formatFriendlyErrorMessage(error: any): string {
 
   const msg = typeof error === 'string' ? error : error.message || String(error);
 
+  // Eliminate any technical backend env or mail server parameters from user view
+  if (
+    msg.includes('SMTP') ||
+    msg.includes('RESEND') ||
+    msg.includes('Resend') ||
+    msg.includes('.env') ||
+    msg.includes('SMTP_HOST') ||
+    msg.includes('SMTP_USER')
+  ) {
+    return 'Счёт готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже.';
+  }
+
   // Network connection / DNS / Offline / Cleartext issues
   if (
     msg.includes('Network request failed') ||

@@ -392,14 +392,14 @@ async def send_invoice_to_customer(
         except Exception as e:
             logger.error(f"[INVOICE] Resend delivery failed for {clean_email}: {e}")
             return {
-                "success": False,
+                "success": True,
                 "email_sent": False,
                 "invoice_number": invoice_number,
                 "viitenumber": viitenumber,
                 "transport": "resend",
                 "pdf_bytes": pdf_bytes,
                 "pdf_filename": pdf_filename,
-                "message": f"Не удалось отправить письмо через Resend API ({e}). Проверьте ключ RESEND_API_KEY в backend/.env.",
+                "message": f"Счёт № {invoice_number} готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже.",
             }
 
     # Check SMTP second
@@ -432,14 +432,14 @@ async def send_invoice_to_customer(
         except Exception as e:
             logger.error(f"[INVOICE] SMTP delivery failed for {clean_email}: {e}")
             return {
-                "success": False,
+                "success": True,
                 "email_sent": False,
                 "invoice_number": invoice_number,
                 "viitenumber": viitenumber,
                 "transport": "smtp",
                 "pdf_bytes": pdf_bytes,
                 "pdf_filename": pdf_filename,
-                "message": f"Ошибка почтового сервера SMTP ({e}). Проверьте настройки SMTP_USER / SMTP_PASSWORD в backend/.env.",
+                "message": f"Счёт № {invoice_number} готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже.",
             }
 
     # Neither Resend nor SMTP is configured in backend/.env
@@ -448,16 +448,12 @@ async def send_invoice_to_customer(
         f"Invoice {invoice_number} for {clean_email} saved to server log only."
     )
     return {
-        "success": False,
+        "success": True,
         "email_sent": False,
         "invoice_number": invoice_number,
         "viitenumber": viitenumber,
         "transport": "none",
         "pdf_bytes": pdf_bytes,
         "pdf_filename": pdf_filename,
-        "message": (
-            f"Счёт № {invoice_number} сформирован, но почтовый сервер (SMTP / Resend) ещё не настроен в backend/.env "
-            f"(укажите SMTP_HOST, SMTP_USER, SMTP_PASSWORD или RESEND_API_KEY). "
-            f"Вы можете оплатить перевод прямо сейчас по реквизитам IBAN выше."
-        ),
+        "message": f"Счёт № {invoice_number} готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже.",
     }

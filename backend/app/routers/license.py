@@ -333,7 +333,7 @@ async def request_invoice_email(
             "viitenumber": viitenumber,
             "transport": "none",
             "pdf_bytes": pdf_bytes,
-            "message": f"Счёт {invoice_number} сформирован.",
+            "message": f"Счёт № {invoice_number} готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже.",
         }
 
     invoices_dir = Path("static/invoices")
@@ -378,7 +378,7 @@ async def request_invoice_email(
         success=result.get("success", True),
         email_sent=result.get("email_sent", False),
         transport=result.get("transport", "none"),
-        message=result.get("message", f"Счёт {invoice_number} сформирован."),
+        message=result.get("message", f"Счёт № {invoice_number} готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже."),
     )
 
 

@@ -291,4 +291,24 @@ test('Scenario 10: PaywallScreen invoice endpoint and Graphite & Mint email inpu
   assert.match(paywallContent, /useState<string>\(['"]school_year['"]\)/);
 });
 
+test('Scenario 11: Invoice UI displays clean user-friendly messaging without technical SMTP / .env leaks', async () => {
+  const fs = await import('node:fs');
+  const paywallContent = fs.readFileSync('mobile/src/screens/PaywallScreen.tsx', 'utf-8');
+  const apiContent = fs.readFileSync('mobile/src/services/api.ts', 'utf-8');
+
+  // Verify neutral friendly title and text
+  assert.match(paywallContent, /const successTitle\s*=\s*['"]Счёт сформирован['"]/);
+  assert.match(paywallContent, /готов к оплате\. Используйте реквизиты IBAN и Viitenumber ниже/);
+
+  // Verify PaywallScreen does not leak SMTP or .env in user alert strings
+  assert.doesNotMatch(paywallContent, /['"][^'"]*SMTP_HOST[^'"]*['"]/);
+  assert.doesNotMatch(paywallContent, /['"][^'"]*RESEND_API_KEY[^'"]*['"]/);
+  assert.doesNotMatch(paywallContent, /['"][^'"]*backend\/\.env[^'"]*['"]/);
+
+  // Verify api.ts formatFriendlyErrorMessage sanitizes SMTP / .env
+  assert.match(apiContent, /msg\.includes\(['"]SMTP['"]\)/);
+  assert.match(apiContent, /msg\.includes\(['"]\.env['"]\)/);
+});
+
+
 
