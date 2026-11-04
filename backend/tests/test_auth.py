@@ -57,3 +57,12 @@ def test_get_current_user_token_without_nickname():
     assert user.user_id == "valid-token-uuid"
     assert user.nickname == "Ученик"
     assert user.token == "valid-token-uuid"
+
+
+def test_get_current_user_url_encoded_nickname():
+    import urllib.parse
+    encoded_nick = urllib.parse.quote("Данил")
+    user = get_current_user(authorization=f"Bearer dev-device-123:{encoded_nick}")
+    assert isinstance(user, CurrentUser)
+    assert user.user_id == "dev-device-123"
+    assert user.nickname == "Данил"

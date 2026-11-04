@@ -217,8 +217,26 @@ export function notifyAuthRequired(): void {
   }
 }
 
+export function toSafeHeaderAscii(val: string): string {
+  if (!val) return '';
+  if (val.includes(':')) {
+    const [dev, ...nickParts] = val.split(':');
+    const nick = nickParts.join(':');
+    try {
+      return `${dev}:${encodeURIComponent(decodeURIComponent(nick))}`;
+    } catch {
+      return `${dev}:${encodeURIComponent(nick)}`;
+    }
+  }
+  try {
+    return /[^\x00-\x7F]/.test(val) ? encodeURIComponent(decodeURIComponent(val)) : val;
+  } catch {
+    return encodeURIComponent(val);
+  }
+}
+
 export function setAuthToken(token: string | null): void {
-  cachedAuthToken = token ? token.trim() : null;
+  cachedAuthToken = token ? toSafeHeaderAscii(token.trim()) : null;
 }
 
 export function getAuthToken(): string | null {
@@ -232,7 +250,7 @@ export function clearAuthSession(): void {
 export function buildAuthToken(deviceId: string, nickname: string): string {
   const cleanDevice = (deviceId || '').trim();
   const cleanNick = (nickname || '').trim() || 'Ученик';
-  return `${cleanDevice}:${cleanNick}`;
+  return `${cleanDevice}:${encodeURIComponent(cleanNick)}`;
 }
 
 export interface LicenseStatus {
@@ -511,6 +529,8 @@ export function formatFriendlyErrorMessage(error: any): string {
   // Network connection / DNS / Offline / Cleartext issues
   if (
     msg.includes('Network request failed') ||
+    msg.includes('Unexpected char') ||
+    msg.includes('IllegalArgumentException') ||
     msg.includes('CLEARTEXT') ||
     msg.includes('Cleartext') ||
     msg.includes('cleartext') ||
@@ -688,8 +708,9 @@ export async function analyzePage(
     };
     const token = getAuthToken();
     if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-      headers['X-Auth-Token'] = token;
+      const safeToken = toSafeHeaderAscii(token);
+      headers['Authorization'] = `Bearer ${safeToken}`;
+      headers['X-Auth-Token'] = safeToken;
     }
 
     const response = await fetchWithTimeout(endpoint, {
@@ -752,8 +773,9 @@ export async function analyzePagesJson(
     };
     const token = getAuthToken();
     if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-      headers['X-Auth-Token'] = token;
+      const safeToken = toSafeHeaderAscii(token);
+      headers['Authorization'] = `Bearer ${safeToken}`;
+      headers['X-Auth-Token'] = safeToken;
     }
 
     const response = await fetchWithTimeout(endpoint, {

@@ -262,16 +262,36 @@ export const StorageService = {
     try {
       const token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
       if (token && token.trim()) {
-        memoryStore[STORAGE_KEYS.AUTH_TOKEN] = token.trim();
-        return token.trim();
+        let clean = token.trim();
+        if (/[^\x00-\x7F]/.test(clean)) {
+          if (clean.includes(':')) {
+            const [dev, ...nickParts] = clean.split(':');
+            const nick = nickParts.join(':');
+            clean = `${dev}:${encodeURIComponent(nick || 'Ученик')}`;
+          } else {
+            clean = encodeURIComponent(clean);
+          }
+          await AsyncStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, clean);
+        }
+        memoryStore[STORAGE_KEYS.AUTH_TOKEN] = clean;
+        return clean;
       }
     } catch {}
     return memoryStore[STORAGE_KEYS.AUTH_TOKEN] || null;
   },
 
   async saveAuthToken(token: string): Promise<void> {
-    const clean = (token || '').trim();
+    let clean = (token || '').trim();
     if (!clean) return;
+    if (/[^\x00-\x7F]/.test(clean)) {
+      if (clean.includes(':')) {
+        const [dev, ...nickParts] = clean.split(':');
+        const nick = nickParts.join(':');
+        clean = `${dev}:${encodeURIComponent(nick || 'Ученик')}`;
+      } else {
+        clean = encodeURIComponent(clean);
+      }
+    }
     memoryStore[STORAGE_KEYS.AUTH_TOKEN] = clean;
     try {
       await AsyncStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, clean);

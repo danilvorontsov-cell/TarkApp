@@ -166,3 +166,46 @@ test('Scenario 5: ProfileSetupModal supports grades 1 to 12 (including gymnasium
   // Verify elongated modal dimensions
   assert.ok(modalContent.includes('minHeight: Math.min'), 'Card must have minHeight to elongate window');
 });
+
+test('Scenario 6: Auth token with Cyrillic nickname is safely ASCII-encoded for HTTP headers without crashing OkHttp', () => {
+  const toSafeHeaderAscii = (val) => {
+    if (!val) return '';
+    if (val.includes(':')) {
+      const [dev, ...nickParts] = val.split(':');
+      const nick = nickParts.join(':');
+      try {
+        return `${dev}:${encodeURIComponent(decodeURIComponent(nick))}`;
+      } catch {
+        return `${dev}:${encodeURIComponent(nick)}`;
+      }
+    }
+    try {
+      return /[^\x00-\x7F]/.test(val) ? encodeURIComponent(decodeURIComponent(val)) : val;
+    } catch {
+      return encodeURIComponent(val);
+    }
+  };
+
+  const buildAuthToken = (deviceId, nickname) => {
+    const cleanDevice = (deviceId || '').trim();
+    const cleanNick = (nickname || '').trim() || 'Ученик';
+    return `${cleanDevice}:${encodeURIComponent(cleanNick)}`;
+  };
+
+  const devId = 'c0498db257d18804';
+  const nick = 'Данил';
+
+  const token = buildAuthToken(devId, nick);
+  assert.ok(/^[\x00-\x7F]+$/.test(token), 'Generated auth token must contain strictly ASCII characters (0-127)');
+  assert.equal(token, 'c0498db257d18804:%D0%94%D0%B0%D0%BD%D0%B8%D0%BB');
+
+  // Verify toSafeHeaderAscii handles legacy raw Cyrillic tokens from AsyncStorage
+  const legacyToken = 'c0498db257d18804:Данил';
+  const safeToken = toSafeHeaderAscii(legacyToken);
+  assert.ok(/^[\x00-\x7F]+$/.test(safeToken), 'Healed token must contain strictly ASCII characters');
+  assert.equal(safeToken, 'c0498db257d18804:%D0%94%D0%B0%D0%BD%D0%B8%D0%BB');
+
+  // Verify server can unquote back to Russian nickname
+  const [, encodedPart] = safeToken.split(':');
+  assert.equal(decodeURIComponent(encodedPart), 'Данил');
+});

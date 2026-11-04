@@ -48,6 +48,11 @@ def get_current_user(
     if ":" in raw_token:
         parts = raw_token.split(":", 1)
         user_id = parts[0]
-        nickname = parts[1] or "Ученик"
+        raw_nick = parts[1] or "Ученик"
+        try:
+            import urllib.parse
+            nickname = urllib.parse.unquote(raw_nick) or "Ученик"
+        except Exception:
+            nickname = raw_nick
 
     return CurrentUser(user_id=user_id, nickname=nickname, token=raw_token)
