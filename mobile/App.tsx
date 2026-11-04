@@ -533,20 +533,33 @@ function MainApp() {
     let newInterests = profile.interests || [];
     let isCustom = profile.hasCustomInterests;
 
+    // Allowed suggestions for the new tier
+    const validSuggestions = (AGE_SUGGESTIONS[newTier] || []).map((s) => s.trim().toLowerCase());
+    const validForNewTier = newInterests.filter((i) =>
+      validSuggestions.includes(i.trim().toLowerCase())
+    );
+
+    // Hard isolation per selected class/tier:
     // If user has not typed custom interests, or if interests match default list,
-    // or when crossing age categories without custom edits:
-    if (!isCustom || isDefaultInterestsList(newInterests) || (isTierChanged && isDefaultInterestsList(newInterests))) {
+    // or when crossing age categories without custom edits, or if none of the previous interests belong to new tier:
+    if (!isCustom || isDefaultInterestsList(newInterests) || (isTierChanged && isDefaultInterestsList(newInterests)) || validForNewTier.length === 0) {
       newInterests = getDefaultInterestsForTier(newTier);
       isCustom = false;
     } else if (isTierChanged && (newTier === 'high' || newTier === 'gymnasium')) {
       // Purge childish toys when transitioning to high school / gymnasium
-      newInterests = newInterests.filter(
+      newInterests = validForNewTier.filter(
         (i) => !PRIMARY_CHILDISH_INTERESTS.has(i.trim().toLowerCase())
       );
       if (newInterests.length === 0) {
         newInterests = getDefaultInterestsForTier(newTier);
         isCustom = false;
+      } else {
+        isCustom = true;
       }
+    } else {
+      // Keep only chips matching the new tier's age group
+      newInterests = validForNewTier;
+      isCustom = true;
     }
 
     const newInterestsText = newInterests.join(', ');
@@ -581,7 +594,13 @@ function MainApp() {
   };
 
   const handleAddSuggestion = (item: string) => {
-    const currentList = profile.interests || [];
+    const validSuggestions = (AGE_SUGGESTIONS[profile.tier] || []).map((s) => s.trim().toLowerCase());
+    
+    // Purge any stale interests from other tiers before modifying
+    const currentList = (profile.interests || []).filter((i) =>
+      validSuggestions.includes(i.trim().toLowerCase())
+    );
+
     const exists = currentList.some(
       (i) => i.toLowerCase() === item.toLowerCase()
     );
@@ -590,6 +609,9 @@ function MainApp() {
       newList = currentList.filter(
         (i) => i.toLowerCase() !== item.toLowerCase()
       );
+      if (newList.length === 0) {
+        newList = getDefaultInterestsForTier(profile.tier);
+      }
     } else {
       newList = [...currentList, item];
     }

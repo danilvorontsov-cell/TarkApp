@@ -147,3 +147,99 @@ test('Scenario 5: Simulation of grade switching across 3, 6, and 12 classes', ()
   assert.equal(student.tier, 'primary');
   assert.deepEqual(student.interests, ['Minecraft', 'LEGO', 'Roblox']);
 });
+
+test('Scenario 6: Strict grade isolation prevents cross-tier interest accumulator contamination', () => {
+  const AGE_SUGGESTIONS = {
+    primary: ['Minecraft', 'LEGO', 'Roblox', 'Brawl Stars', 'Динозавры'],
+    middle: ['Футбол', 'Видеоигры', 'Музыка и треки', 'Мемы'],
+    high: ['Видеоигры', 'Музыка и треки', 'CS:GO / Valorant'],
+    gymnasium: ['IT и программирование', 'Кино и сериалы', 'Путешествия', 'Фитнес и тренировки'],
+  };
+
+  const DEFAULT_INTERESTS_BY_TIER = {
+    primary: ['Minecraft', 'LEGO', 'Roblox'],
+    middle: ['Футбол', 'Видеоигры', 'Музыка и треки'],
+    high: ['Видеоигры', 'Музыка и треки', 'Гаджеты и технологии'],
+    gymnasium: ['IT и программирование', 'Кино и сериалы', 'Музыка и концерты'],
+  };
+
+  const getTierFromGrade = (grade) => {
+    if (grade <= 3) return 'primary';
+    if (grade <= 6) return 'middle';
+    if (grade <= 9) return 'high';
+    return 'gymnasium';
+  };
+
+  const isDefaultInterestsList = (interests) => {
+    if (!interests || interests.length === 0) return true;
+    const normalized = interests.map((i) => i.trim().toLowerCase()).sort().join(',');
+    for (const t of Object.keys(DEFAULT_INTERESTS_BY_TIER)) {
+      const tierDefaults = DEFAULT_INTERESTS_BY_TIER[t].map((i) => i.trim().toLowerCase()).sort().join(',');
+      if (normalized === tierDefaults) return true;
+    }
+    return false;
+  };
+
+  const updateGradeWithIsolation = (profile, grade) => {
+    const oldTier = profile.tier || getTierFromGrade(profile.grade);
+    const newTier = getTierFromGrade(grade);
+    const isTierChanged = oldTier !== newTier;
+
+    let newInterests = profile.interests || [];
+    let isCustom = profile.hasCustomInterests;
+
+    const validSuggestions = (AGE_SUGGESTIONS[newTier] || []).map((s) => s.trim().toLowerCase());
+    const validForNewTier = newInterests.filter((i) =>
+      validSuggestions.includes(i.trim().toLowerCase())
+    );
+
+    if (!isCustom || isDefaultInterestsList(newInterests) || (isTierChanged && isDefaultInterestsList(newInterests)) || validForNewTier.length === 0) {
+      newInterests = [...DEFAULT_INTERESTS_BY_TIER[newTier]];
+      isCustom = false;
+    } else {
+      newInterests = validForNewTier;
+      isCustom = true;
+    }
+
+    return {
+      ...profile,
+      grade,
+      tier: newTier,
+      interests: newInterests,
+      hasCustomInterests: isCustom,
+      interestsText: newInterests.join(', '),
+    };
+  };
+
+  // Student in Grade 3 has custom interests including Brawl Stars
+  let pupil = {
+    grade: 3,
+    tier: 'primary',
+    interests: ['Minecraft', 'LEGO', 'Roblox', 'Brawl Stars'],
+    hasCustomInterests: true,
+  };
+
+  // Switch to Grade 12 (gymnasium)
+  pupil = updateGradeWithIsolation(pupil, 12);
+  assert.equal(pupil.grade, 12);
+  assert.equal(pupil.tier, 'gymnasium');
+  // Primary toys must be completely purged
+  assert.equal(pupil.interests.includes('Minecraft'), false);
+  assert.equal(pupil.interests.includes('LEGO'), false);
+  assert.equal(pupil.interests.includes('Roblox'), false);
+  assert.equal(pupil.interests.includes('Brawl Stars'), false);
+  assert.deepEqual(pupil.interests, ['IT и программирование', 'Кино и сериалы', 'Музыка и концерты']);
+
+  // Pupil adds gymnasium interests
+  pupil.interests = ['IT и программирование', 'Путешествия', 'Фитнес и тренировки'];
+  pupil.hasCustomInterests = true;
+
+  // Switch back to Grade 3 (primary)
+  pupil = updateGradeWithIsolation(pupil, 3);
+  assert.equal(pupil.grade, 3);
+  assert.equal(pupil.tier, 'primary');
+  // Gymnasium interests must be completely purged
+  assert.equal(pupil.interests.includes('Путешествия'), false);
+  assert.equal(pupil.interests.includes('Фитнес и тренировки'), false);
+  assert.deepEqual(pupil.interests, ['Minecraft', 'LEGO', 'Roblox']);
+});

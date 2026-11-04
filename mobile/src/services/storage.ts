@@ -6,6 +6,7 @@ import {
   getTierFromGrade,
   getDefaultInterestsForTier,
   isDefaultInterestsList,
+  AGE_SUGGESTIONS,
 } from '../types';
 
 const STORAGE_KEYS = {
@@ -53,9 +54,19 @@ export const StorageService = {
           parsed.interests = parsed.interests.map((item: string) =>
             typeof item === 'string' ? item.replace(/спотр/gi, 'спорт') : item
           );
+          // Strict isolation: filter out any interests not in AGE_SUGGESTIONS[tier]
+          const validSuggestions = (AGE_SUGGESTIONS[tier] || []).map((s) => s.trim().toLowerCase());
+          const validInterests = parsed.interests.filter((item: string) =>
+            typeof item === 'string' && validSuggestions.includes(item.trim().toLowerCase())
+          );
           // Self-heal: If student is in middle/high/gymnasium, but has childish primary defaults saved
           if (tier !== 'primary' && !parsed.hasCustomInterests && isDefaultInterestsList(parsed.interests)) {
             parsed.interests = getDefaultInterestsForTier(tier);
+          } else if (validInterests.length === 0) {
+            parsed.interests = getDefaultInterestsForTier(tier);
+            parsed.hasCustomInterests = false;
+          } else {
+            parsed.interests = validInterests;
           }
         }
         return parsed as UserProfile;

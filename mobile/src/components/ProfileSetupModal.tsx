@@ -21,6 +21,7 @@ import {
   getDefaultInterestsForTier,
   isDefaultInterestsList,
   PRIMARY_CHILDISH_INTERESTS,
+  AGE_SUGGESTIONS,
 } from '../types';
 import { Theme, darkTheme } from '../theme/colors';
 
@@ -66,17 +67,24 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
     let newInterests = currentProfile.interests || [];
     let isCustom = currentProfile.hasCustomInterests;
 
-    if (!isCustom || isDefaultInterestsList(newInterests) || (isTierChanged && isDefaultInterestsList(newInterests))) {
+    const validSuggestions = (AGE_SUGGESTIONS[newTier] || []).map((s) => s.trim().toLowerCase());
+    const validForNewTier = newInterests.filter((i) =>
+      validSuggestions.includes(i.trim().toLowerCase())
+    );
+
+    if (!isCustom || isDefaultInterestsList(newInterests) || (isTierChanged && isDefaultInterestsList(newInterests)) || validForNewTier.length === 0) {
       newInterests = getDefaultInterestsForTier(newTier);
       isCustom = false;
     } else if (isTierChanged && (newTier === 'high' || newTier === 'gymnasium')) {
-      newInterests = newInterests.filter(
+      newInterests = validForNewTier.filter(
         (i) => !PRIMARY_CHILDISH_INTERESTS.has(i.trim().toLowerCase())
       );
       if (newInterests.length === 0) {
         newInterests = getDefaultInterestsForTier(newTier);
         isCustom = false;
       }
+    } else {
+      newInterests = validForNewTier;
     }
 
     const updated: UserProfile = {
@@ -101,9 +109,17 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
       const isTierChanged = oldTier !== newTier;
       let newInterests = currentProfile.interests || [];
       let isCustom = currentProfile.hasCustomInterests;
-      if (!isCustom || isDefaultInterestsList(newInterests) || (isTierChanged && isDefaultInterestsList(newInterests))) {
+
+      const validSuggestions = (AGE_SUGGESTIONS[newTier] || []).map((s) => s.trim().toLowerCase());
+      const validForNewTier = newInterests.filter((i) =>
+        validSuggestions.includes(i.trim().toLowerCase())
+      );
+
+      if (!isCustom || isDefaultInterestsList(newInterests) || (isTierChanged && isDefaultInterestsList(newInterests)) || validForNewTier.length === 0) {
         newInterests = getDefaultInterestsForTier(newTier);
         isCustom = false;
+      } else {
+        newInterests = validForNewTier;
       }
       const updated: UserProfile = {
         ...currentProfile,
