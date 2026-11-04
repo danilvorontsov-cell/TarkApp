@@ -76,11 +76,13 @@ def reset_rate_limit_storage():
 @pytest.fixture(autouse=True)
 def reset_test_device_quota():
     """Resets dev test device scan counters so test suite never exhausts daily quotas."""
+    from datetime import datetime, timezone
     from app.database import SessionLocal
     from app.models.license import Device
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     db = SessionLocal()
     try:
-        db.query(Device).update({"free_scans_used": 0})
+        db.query(Device).update({"free_reviews_left": 20, "last_review_date": today_str})
         db.commit()
     except Exception:
         db.rollback()
@@ -89,7 +91,7 @@ def reset_test_device_quota():
     yield
     db = SessionLocal()
     try:
-        db.query(Device).update({"free_scans_used": 0})
+        db.query(Device).update({"free_reviews_left": 20, "last_review_date": today_str})
         db.commit()
     except Exception:
         db.rollback()
