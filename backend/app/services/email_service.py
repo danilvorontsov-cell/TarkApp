@@ -399,7 +399,10 @@ async def send_invoice_to_customer(
                 "transport": "resend",
                 "pdf_bytes": pdf_bytes,
                 "pdf_filename": pdf_filename,
-                "message": f"Счёт № {invoice_number} готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже.",
+                "message": (
+                    f"Номер счёта: {invoice_number}\n"
+                    f"Реквизиты и Viitenumber отображены на экране. После подтверждения банковского перевода ключ активации будет автоматически отправлен на указанный email."
+                ),
             }
 
     # Check SMTP second
@@ -439,7 +442,10 @@ async def send_invoice_to_customer(
                 "transport": "smtp",
                 "pdf_bytes": pdf_bytes,
                 "pdf_filename": pdf_filename,
-                "message": f"Счёт № {invoice_number} готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже.",
+                "message": (
+                    f"Номер счёта: {invoice_number}\n"
+                    f"Реквизиты и Viitenumber отображены на экране. После подтверждения банковского перевода ключ активации будет автоматически отправлен на указанный email."
+                ),
             }
 
     # Neither Resend nor SMTP is configured in backend/.env
@@ -455,5 +461,8 @@ async def send_invoice_to_customer(
         "transport": "none",
         "pdf_bytes": pdf_bytes,
         "pdf_filename": pdf_filename,
-        "message": f"Счёт № {invoice_number} готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже.",
+        "message": (
+            f"Номер счёта: {invoice_number}\n"
+            f"Реквизиты и Viitenumber отображены на экране. После подтверждения банковского перевода ключ активации будет автоматически отправлен на указанный email."
+        ),
     }

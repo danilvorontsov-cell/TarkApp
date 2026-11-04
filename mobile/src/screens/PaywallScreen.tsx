@@ -111,21 +111,12 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
     }
   };
 
-  const fetchInvoiceData = async (planId: string) => {
-    setIsLoadingInvoice(true);
-    try {
-      const res = await requestInvoiceEmail(undefined, planId);
-      setInvoiceData(res);
-    } catch (e) {
-      console.warn('[Paywall] Failed to load invoice details:', e);
-    } finally {
-      setIsLoadingInvoice(false);
-    }
-  };
-
   const handleCtaPress = () => {
+    if (invoiceData && invoiceData.explanation && !invoiceData.explanation.includes(activePlan.title)) {
+      setInvoiceData(null);
+    }
+    setInvoiceStatus(null);
     setIsInvoiceModalVisible(true);
-    fetchInvoiceData(activePlan.id);
   };
 
   const handleDownloadPdf = async () => {
@@ -144,14 +135,25 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
   const handleSendInvoiceRequest = async () => {
     const trimmedEmail = emailInput.trim();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
+    if (!trimmedEmail) {
+      setInvoiceStatus({
+        type: 'error',
+        text: 'Пожалуйста, укажите адрес электронной почты. На него придёт счёт и ключ доступа.',
+      });
+      ThemedAlert.alert(
+        'Укажите e-mail',
+        'Поле e-mail обязательно для заполнения перед формированием счёта, чтобы системе было куда отправить ключ доступа.'
+      );
+      return;
+    }
+    if (!emailRegex.test(trimmedEmail)) {
       setInvoiceStatus({
         type: 'error',
         text: 'Пожалуйста, укажите корректный e-mail адрес (например, ivan.ivanov@mail.ee).',
       });
       ThemedAlert.alert(
         'Некорректный e-mail',
-        'Пожалуйста, укажите верный адрес электронной почты для отправки PDF-счёта.'
+        'Пожалуйста, укажите верный адрес электронной почты для отправки PDF-счёта и ключа доступа.'
       );
       return;
     }
@@ -162,45 +164,20 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
       const res = await requestInvoiceEmail(trimmedEmail, activePlan.id);
       setInvoiceData(res);
 
-      if (res.email_sent) {
-        setInvoiceStatus({
-          type: 'success',
-          text: res.message,
-        });
-        ThemedAlert.alert(
-          'Счёт отправлен! ✅',
-          res.message,
-          [
-            {
-              text: 'Отлично',
-              onPress: () => {
-                setEmailInput('');
-                setInvoiceStatus(null);
-                setIsInvoiceModalVisible(false);
-              },
-            },
-          ]
-        );
-      } else {
-        const invNum = res.invoice_number || invoiceData?.invoice_number || '';
-        const successTitle = 'Счёт сформирован';
-        const successText =
-          res.message &&
-          !res.message.includes('SMTP') &&
-          !res.message.includes('Resend') &&
-          !res.message.includes('.env')
-            ? res.message
-            : `Счёт № ${invNum} готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже.`;
+      const invNum = res.invoice_number || invoiceData?.invoice_number || '';
+      const successTitle = 'Счёт успешно сформирован';
+      const successText =
+        `Номер счёта: ${invNum}\n\nРеквизиты и Viitenumber отображены на экране. После подтверждения банковского перевода ключ активации будет автоматически отправлен на указанный email.`;
 
-        setInvoiceStatus({
-          type: 'success',
-          text: successText,
-        });
-        ThemedAlert.alert(
-          successTitle,
-          successText
-        );
-      }
+      setInvoiceStatus({
+        type: 'success',
+        text: `Номер счёта: ${invNum}\nРеквизиты и Viitenumber отображены на экране. После подтверждения банковского перевода ключ активации будет автоматически отправлен на указанный email.`,
+      });
+
+      ThemedAlert.alert(
+        successTitle,
+        successText
+      );
     } catch (err: any) {
       let errMsg =
         err?.message ||
@@ -274,6 +251,17 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
 
             <Text style={styles.headlineSubtitle}>
               Объясняем задания на понятном русском языке, переводим школьные термины и учим ребёнка справляться с уроками без помощи родителей.
+            </Text>
+          </View>
+
+          {/* Closed Beta Info Banner */}
+          <View style={styles.closedBetaBanner}>
+            <View style={styles.closedBetaHeaderRow}>
+              <Text style={styles.closedBetaIcon}>🔒</Text>
+              <Text style={styles.closedBetaTitle}>Пилотный запуск (Closed Beta)</Text>
+            </View>
+            <Text style={styles.closedBetaText}>
+              Доступ оформляется по безналичному счёту (Arve). Укажите ваш email — на него придёт счёт, а после поступления банковской оплаты система автоматически отправит ключ доступа на вашу почту.
             </Text>
           </View>
 
@@ -467,168 +455,186 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{ paddingBottom: 10 }}
               >
-                {/* Method 1: Instant IBAN bank transfer */}
-                <Text style={styles.invoiceSubheading}>1. Банковский перевод (Эстония / SEPA):</Text>
-                <View style={styles.ibanDetailsBox}>
-                  <View style={styles.ibanDetailRow}>
-                    <Text style={styles.ibanDetailLabel}>Получатель:</Text>
-                    <TouchableOpacity
-                      onPress={() => copyToClipboard(recipientName, 'Получатель')}
-                      style={styles.copyableRow}
-                    >
-                      <Text style={styles.ibanDetailValue}>{recipientName}</Text>
-                      <Text style={styles.copyActionPill}>
-                        {copiedField === 'Получатель' ? 'Скопировано ✓' : 'Копировать 📋'}
+                {!invoiceData ? (
+                  <>
+                    <View style={styles.modalInfoPill}>
+                      <Text style={styles.modalInfoPillIcon}>🔒</Text>
+                      <Text style={styles.modalInfoPillText}>
+                        Доступ оформляется по безналичному счёту (Arve). Укажите ваш email — на него придёт счёт с персональным Viitenumber, а после поступления банковской оплаты система автоматически отправит ключ доступа на вашу почту.
                       </Text>
-                    </TouchableOpacity>
-                  </View>
+                    </View>
 
-                  <View style={styles.ibanDetailRow}>
-                    <Text style={styles.ibanDetailLabel}>IBAN (LHV Pank):</Text>
-                    <TouchableOpacity
-                      onPress={() => copyToClipboard(ibanAccount, 'IBAN')}
-                      style={styles.copyableRow}
-                    >
-                      <Text style={styles.ibanDetailCode}>{ibanAccount}</Text>
-                      <Text style={styles.copyActionPill}>
-                        {copiedField === 'IBAN' ? 'Скопировано ✓' : 'Копировать 📋'}
+                    <Text style={styles.inputLabel}>Ваш e-mail для счёта и ключа доступа:</Text>
+                    <View style={styles.emailInputBox}>
+                      <TextInput
+                        style={styles.emailTextInput}
+                        placeholder="ivan.ivanov@mail.ee"
+                        placeholderTextColor="#94A3B8"
+                        value={emailInput}
+                        onChangeText={(val) => {
+                          setEmailInput(val);
+                          if (invoiceStatus) setInvoiceStatus(null);
+                        }}
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        autoComplete="off"
+                        importantForAutofill="no"
+                        selectionColor="#5FEDC5"
+                        cursorColor="#5FEDC5"
+                        editable={!isSendingInvoice}
+                      />
+                      <TouchableOpacity
+                        style={[
+                          styles.sendInvoiceButton,
+                          isSendingInvoice && styles.sendInvoiceButtonDisabled,
+                        ]}
+                        onPress={handleSendInvoiceRequest}
+                        disabled={isSendingInvoice}
+                        activeOpacity={0.85}
+                      >
+                        {isSendingInvoice ? (
+                          <View style={styles.sendInvoiceLoadingRow}>
+                            <ActivityIndicator size="small" color="#064E3B" />
+                            <Text style={styles.sendInvoiceButtonText}>Формирование...</Text>
+                          </View>
+                        ) : (
+                          <Text style={styles.sendInvoiceButtonText}>Сформировать счёт</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <View style={styles.invoiceCreatedBadge}>
+                      <Text style={styles.invoiceCreatedBadgeTitle}>
+                        {`✓ Счёт № ${invoiceData.invoice_number || ''} сформирован`}
                       </Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <View style={styles.ibanDetailRow}>
-                    <Text style={styles.ibanDetailLabel}>SWIFT / BIC:</Text>
-                    <TouchableOpacity
-                      onPress={() => copyToClipboard(swiftBic, 'SWIFT')}
-                      style={styles.copyableRow}
-                    >
-                      <Text style={styles.ibanDetailValue}>{swiftBic}</Text>
-                      <Text style={styles.copyActionPill}>
-                        {copiedField === 'SWIFT' ? 'Скопировано ✓' : 'Копировать 📋'}
+                      <Text style={styles.invoiceCreatedBadgeSubtitle}>
+                        Реквизиты и Viitenumber отображены на экране. После подтверждения банковского перевода ключ активации будет автоматически отправлен на указанный email.
                       </Text>
-                    </TouchableOpacity>
-                  </View>
+                    </View>
 
-                  <View style={styles.ibanDetailRow}>
-                    <Text style={styles.ibanDetailLabel}>Сумма:</Text>
-                    <Text style={styles.ibanDetailPrice}>
-                      {`${invoiceData?.amount || activePlan.price} EUR`}
-                    </Text>
-                  </View>
-
-                  {/* Viitenumber Highlighted Box */}
-                  <View style={styles.viiteCard}>
-                    <View style={styles.viiteHeaderRow}>
-                      <Text style={styles.viiteLabel}>Номер ссылки / Viitenumber:</Text>
-                      {isLoadingInvoice ? (
-                        <ActivityIndicator size="small" color="#5FEDC5" />
-                      ) : (
+                    {/* Bank transfer details */}
+                    <Text style={styles.invoiceSubheading}>Реквизиты для оплаты (Эстония / SEPA):</Text>
+                    <View style={styles.ibanDetailsBox}>
+                      <View style={styles.ibanDetailRow}>
+                        <Text style={styles.ibanDetailLabel}>Получатель:</Text>
                         <TouchableOpacity
-                          onPress={() => copyToClipboard(invoiceData?.viitenumber || '', 'Viitenumber')}
-                          disabled={!invoiceData?.viitenumber}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          onPress={() => copyToClipboard(recipientName, 'Получатель')}
+                          style={styles.copyableRow}
                         >
+                          <Text style={styles.ibanDetailValue}>{recipientName}</Text>
                           <Text style={styles.copyActionPill}>
-                            {copiedField === 'Viitenumber' ? 'Скопировано ✓' : 'Копировать 📋'}
+                            {copiedField === 'Получатель' ? 'Скопировано ✓' : 'Копировать 📋'}
                           </Text>
                         </TouchableOpacity>
-                      )}
-                    </View>
-                    <Text style={styles.viiteValue}>
-                      {invoiceData?.viitenumber || (isLoadingInvoice ? 'Генерация...' : 'Загрузка...')}
-                    </Text>
-                    <View style={styles.viiteWarningBadge}>
-                      <Text style={styles.viiteWarningBadgeText}>
-                        ⚠️ Обязательно укажите viitenumber при переводе
-                      </Text>
-                    </View>
-                  </View>
+                      </View>
 
-                  <View style={styles.ibanDetailRow}>
-                    <Text style={styles.ibanDetailLabel}>Пояснение (Selgitus):</Text>
+                      <View style={styles.ibanDetailRow}>
+                        <Text style={styles.ibanDetailLabel}>IBAN (LHV Pank):</Text>
+                        <TouchableOpacity
+                          onPress={() => copyToClipboard(ibanAccount, 'IBAN')}
+                          style={styles.copyableRow}
+                        >
+                          <Text style={styles.ibanDetailCode}>{ibanAccount}</Text>
+                          <Text style={styles.copyActionPill}>
+                            {copiedField === 'IBAN' ? 'Скопировано ✓' : 'Копировать 📋'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      <View style={styles.ibanDetailRow}>
+                        <Text style={styles.ibanDetailLabel}>SWIFT / BIC:</Text>
+                        <TouchableOpacity
+                          onPress={() => copyToClipboard(swiftBic, 'SWIFT')}
+                          style={styles.copyableRow}
+                        >
+                          <Text style={styles.ibanDetailValue}>{swiftBic}</Text>
+                          <Text style={styles.copyActionPill}>
+                            {copiedField === 'SWIFT' ? 'Скопировано ✓' : 'Копировать 📋'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      <View style={styles.ibanDetailRow}>
+                        <Text style={styles.ibanDetailLabel}>Сумма:</Text>
+                        <Text style={styles.ibanDetailPrice}>
+                          {`${invoiceData?.amount || activePlan.price} EUR`}
+                        </Text>
+                      </View>
+
+                      {/* Viitenumber Highlighted Box */}
+                      <View style={styles.viiteCard}>
+                        <View style={styles.viiteHeaderRow}>
+                          <Text style={styles.viiteLabel}>Номер ссылки / Viitenumber:</Text>
+                          <TouchableOpacity
+                            onPress={() => copyToClipboard(invoiceData?.viitenumber || '', 'Viitenumber')}
+                            disabled={!invoiceData?.viitenumber}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <Text style={styles.copyActionPill}>
+                              {copiedField === 'Viitenumber' ? 'Скопировано ✓' : 'Копировать 📋'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                        <Text style={styles.viiteValue}>
+                          {invoiceData?.viitenumber}
+                        </Text>
+                        <View style={styles.viiteWarningBadge}>
+                          <Text style={styles.viiteWarningBadgeText}>
+                            ⚠️ Обязательно укажите viitenumber при переводе
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.ibanDetailRow}>
+                        <Text style={styles.ibanDetailLabel}>Пояснение (Selgitus):</Text>
+                        <TouchableOpacity
+                          onPress={() =>
+                            copyToClipboard(
+                              invoiceData?.explanation ||
+                                `TarkApp litsents: ${activePlan.title}${invoiceData?.invoice_number ? ` (${invoiceData.invoice_number})` : ''}`,
+                              'Пояснение'
+                            )
+                          }
+                          style={styles.copyableRow}
+                        >
+                          <Text style={[styles.ibanDetailValue, { flex: 1, paddingRight: 6 }]}>
+                            {invoiceData?.explanation ||
+                              `TarkApp litsents: ${activePlan.title}${invoiceData?.invoice_number ? ` (${invoiceData.invoice_number})` : ''}`}
+                          </Text>
+                          <Text style={styles.copyActionPill}>
+                            {copiedField === 'Пояснение' ? 'Скопировано ✓' : 'Копировать 📋'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Button: Download PDF Invoice */}
                     <TouchableOpacity
-                      onPress={() =>
-                        copyToClipboard(
-                          invoiceData?.explanation ||
-                            `TarkApp litsents: ${activePlan.title}${invoiceData?.invoice_number ? ` (${invoiceData.invoice_number})` : ''}`,
-                          'Пояснение'
-                        )
-                      }
-                      style={styles.copyableRow}
+                      style={[
+                        styles.downloadPdfButton,
+                        !invoiceData?.pdf_download_url && styles.downloadPdfButtonDisabled,
+                      ]}
+                      onPress={handleDownloadPdf}
+                      disabled={!invoiceData?.pdf_download_url}
+                      activeOpacity={0.85}
                     >
-                      <Text style={[styles.ibanDetailValue, { flex: 1, paddingRight: 6 }]}>
-                        {invoiceData?.explanation ||
-                          `TarkApp litsents: ${activePlan.title}${invoiceData?.invoice_number ? ` (${invoiceData.invoice_number})` : ''}`}
-                      </Text>
-                      <Text style={styles.copyActionPill}>
-                        {copiedField === 'Пояснение' ? 'Скопировано ✓' : 'Копировать 📋'}
+                      <Text style={styles.downloadPdfButtonText}>Скачать PDF-счет 📄</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.changeEmailRow}
+                      onPress={() => setInvoiceData(null)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.changeEmailText}>
+                        Оформить счёт на другой email? <Text style={styles.changeEmailLink}>Изменить</Text>
                       </Text>
                     </TouchableOpacity>
-                  </View>
-                </View>
-
-                {/* Button: Download PDF Invoice */}
-                <TouchableOpacity
-                  style={[
-                    styles.downloadPdfButton,
-                    (!invoiceData?.pdf_download_url || isLoadingInvoice) && styles.downloadPdfButtonDisabled,
-                  ]}
-                  onPress={handleDownloadPdf}
-                  disabled={!invoiceData?.pdf_download_url || isLoadingInvoice}
-                  activeOpacity={0.85}
-                >
-                  {isLoadingInvoice ? (
-                    <View style={styles.sendInvoiceLoadingRow}>
-                      <ActivityIndicator size="small" color="#5FEDC5" />
-                      <Text style={styles.downloadPdfButtonText}>Формирование счёта...</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.downloadPdfButtonText}>Скачать PDF-счет 📄</Text>
-                  )}
-                </TouchableOpacity>
-
-                {/* Method 2: Request e-invoice by email */}
-                <Text style={[styles.invoiceSubheading, { marginTop: 14 }]}>
-                  2. Получить официальный e-счёт (PDF) на email:
-                </Text>
-                <View style={styles.emailInputBox}>
-                  <TextInput
-                    style={styles.emailTextInput}
-                    placeholder="ivan.ivanov@mail.ee"
-                    placeholderTextColor="#94A3B8"
-                    value={emailInput}
-                    onChangeText={(val) => {
-                      setEmailInput(val);
-                      if (invoiceStatus) setInvoiceStatus(null);
-                    }}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoComplete="off"
-                    importantForAutofill="no"
-                    selectionColor="#5FEDC5"
-                    cursorColor="#5FEDC5"
-                    editable={!isSendingInvoice}
-                  />
-                  <TouchableOpacity
-                    style={[
-                      styles.sendInvoiceButton,
-                      isSendingInvoice && styles.sendInvoiceButtonDisabled,
-                    ]}
-                    onPress={handleSendInvoiceRequest}
-                    disabled={isSendingInvoice}
-                    activeOpacity={0.85}
-                  >
-                    {isSendingInvoice ? (
-                      <View style={styles.sendInvoiceLoadingRow}>
-                        <ActivityIndicator size="small" color="#064E3B" />
-                        <Text style={styles.sendInvoiceButtonText}>Отправка...</Text>
-                      </View>
-                    ) : (
-                      <Text style={styles.sendInvoiceButtonText}>Отправить на email</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
+                  </>
+                )}
 
                 {invoiceStatus && (
                   <View
@@ -1256,5 +1262,95 @@ const styles = StyleSheet.create({
   keyPromptRowText: {
     fontSize: 13,
     color: darkTheme.textSecondary,
+  },
+  closedBetaBanner: {
+    backgroundColor: '#1E252B',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2C363F',
+    padding: 16,
+    marginBottom: 16,
+  },
+  closedBetaHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    gap: 8,
+  },
+  closedBetaIcon: {
+    fontSize: 18,
+  },
+  closedBetaTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#5FEDC5',
+    letterSpacing: 0.2,
+  },
+  closedBetaText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#CBD5E1',
+    fontWeight: '500',
+  },
+  modalInfoPill: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: 'rgba(95, 237, 197, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(95, 237, 197, 0.25)',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+    gap: 10,
+  },
+  modalInfoPillIcon: {
+    fontSize: 18,
+    marginTop: 1,
+  },
+  modalInfoPillText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#CBD5E1',
+    fontWeight: '500',
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#E2E8F0',
+    marginBottom: 8,
+  },
+  invoiceCreatedBadge: {
+    backgroundColor: 'rgba(95, 237, 197, 0.12)',
+    borderWidth: 1,
+    borderColor: '#5FEDC5',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+  },
+  invoiceCreatedBadgeTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#5FEDC5',
+    marginBottom: 4,
+  },
+  invoiceCreatedBadgeSubtitle: {
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: '#CBD5E1',
+    fontWeight: '500',
+  },
+  changeEmailRow: {
+    alignItems: 'center',
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  changeEmailText: {
+    fontSize: 13,
+    color: '#94A3B8',
+  },
+  changeEmailLink: {
+    color: '#5FEDC5',
+    fontWeight: '700',
   },
 });

@@ -317,7 +317,20 @@ def test_invoice_endpoint_validates_email_and_generates_pdf(setup_db, monkeypatc
         headers={"X-Device-ID": "test-device-invoice"},
         json={"email": "invalid-email", "plan": "month"},
     )
+    # 1. Invalid or empty email returns 400
+    bad_resp = client.post(
+        "/api/v1/license/invoice",
+        headers={"X-Device-ID": "test-device-invoice"},
+        json={"email": "invalid-email", "plan": "month"},
+    )
     assert bad_resp.status_code == 400
+
+    empty_resp = client.post(
+        "/api/v1/license/invoice",
+        headers={"X-Device-ID": "test-device-invoice"},
+        json={"email": "", "plan": "month"},
+    )
+    assert empty_resp.status_code == 400
 
     # 2. Valid PDF generation check
     pdf_bytes = build_invoice_pdf(
@@ -347,7 +360,8 @@ def test_invoice_endpoint_validates_email_and_generates_pdf(setup_db, monkeypatc
     assert data["success"] is True
     assert "SMTP" not in data["message"]
     assert ".env" not in data["message"]
-    assert data["message"] == f"Счёт № {data['invoice_number']} готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже."
+    assert f"Номер счёта: {data['invoice_number']}" in data["message"]
+    assert "После подтверждения банковского перевода ключ активации будет автоматически отправлен на указанный email." in data["message"]
     assert data["invoice_number"].startswith("INV-")
     assert "viitenumber" in data
     assert len(data["viitenumber"]) >= 2

@@ -256,16 +256,18 @@ async def request_invoice_email(
     db: Session = Depends(get_db),
 ) -> InvoiceResponse:
     clean_email = (payload.email or "").strip()
-    if clean_email:
-        if "@" not in clean_email or "." not in clean_email.split("@")[-1]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": "INVALID_EMAIL", "message": "Пожалуйста, укажите корректный адрес электронной почты."},
-            )
+    if not clean_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "EMAIL_REQUIRED", "message": "Пожалуйста, укажите адрес электронной почты для отправки счёта и ключа доступа."},
+        )
+    if "@" not in clean_email or "." not in clean_email.split("@")[-1]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "INVALID_EMAIL", "message": "Пожалуйста, укажите корректный адрес электронной почты."},
+        )
 
     device_id = (payload.device_id or x_device_id or "").strip() or "unknown-device"
-    if not clean_email:
-        clean_email = f"app-{device_id[:8]}@tarkapp.ee"
 
     raw_plan = (payload.plan_id or payload.plan or "school_year").strip()
     resolved_plan = PLAN_ALIASES.get(raw_plan, raw_plan)
@@ -378,7 +380,10 @@ async def request_invoice_email(
         success=result.get("success", True),
         email_sent=result.get("email_sent", False),
         transport=result.get("transport", "none"),
-        message=result.get("message", f"Счёт № {invoice_number} готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже."),
+        message=result.get(
+            "message",
+            f"Номер счёта: {invoice_number}\nРеквизиты и Viitenumber отображены на экране. После подтверждения банковского перевода ключ активации будет автоматически отправлен на указанный email.",
+        ),
     )
 
 

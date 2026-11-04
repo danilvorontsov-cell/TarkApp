@@ -296,9 +296,15 @@ test('Scenario 11: Invoice UI displays clean user-friendly messaging without tec
   const paywallContent = fs.readFileSync('mobile/src/screens/PaywallScreen.tsx', 'utf-8');
   const apiContent = fs.readFileSync('mobile/src/services/api.ts', 'utf-8');
 
+  // Verify Closed Beta banner
+  assert.match(paywallContent, /Пилотный запуск \(Closed Beta\)/);
+  assert.match(paywallContent, /Доступ оформляется по безналичному счёту \(Arve\)/);
+
   // Verify neutral friendly title and text
-  assert.match(paywallContent, /const successTitle\s*=\s*['"]Счёт сформирован['"]/);
-  assert.match(paywallContent, /готов к оплате\. Используйте реквизиты IBAN и Viitenumber ниже/);
+  assert.match(paywallContent, /const successTitle\s*=\s*['"]Счёт успешно сформирован['"]/);
+  assert.match(paywallContent, /Номер счёта: \$\{invNum\}/);
+  assert.match(paywallContent, /Реквизиты и Viitenumber отображены на экране/);
+  assert.match(paywallContent, /После подтверждения банковского перевода ключ активации будет автоматически отправлен на указанный email/);
 
   // Verify PaywallScreen does not leak SMTP or .env in user alert strings
   assert.doesNotMatch(paywallContent, /['"][^'"]*SMTP_HOST[^'"]*['"]/);
