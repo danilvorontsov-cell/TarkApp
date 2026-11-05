@@ -16,7 +16,8 @@ export function resolveBaseUrl(baseUrl?: string): string {
   return baseUrl || API_BASE_URL;
 }
 
-export const API_TIMEOUT_MS = 30000;
+export const API_TIMEOUT_MS = 60000;
+export const ANALYZE_TIMEOUT_MS = 90000;
 
 /**
  * Fetch wrapper that automatically enforces an AbortController timeout.
@@ -782,11 +783,15 @@ export async function analyzePagesJson(
       headers['X-Auth-Token'] = safeToken;
     }
 
-    const response = await fetchWithTimeout(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(bodyPayload),
-    });
+    const response = await fetchWithTimeout(
+      endpoint,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(bodyPayload),
+      },
+      ANALYZE_TIMEOUT_MS
+    );
 
     if (!response.ok) {
       throw await parseErrorResponse(response);
