@@ -144,6 +144,31 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
     }
   };
 
+  // Определяем, какой из текстов является эстонским, а какой русским
+  const getLanguagePairs = (res: QuickTranslateResponse) => {
+    // 1. По явному определению языка от сервера
+    if (res.source_lang === 'et') {
+      return { estText: res.original_text, ruText: res.translated_text };
+    }
+    if (res.target_lang === 'et') {
+      return { estText: res.translated_text, ruText: res.original_text };
+    }
+    // 2. Эвристика по алфавиту: если один текст на кириллице, а второй нет
+    const origHasCyrillic = /[а-яА-ЯёЁ]/.test(res.original_text);
+    const transHasCyrillic = /[а-яА-ЯёЁ]/.test(res.translated_text);
+    if (!origHasCyrillic && transHasCyrillic) {
+      return { estText: res.original_text, ruText: res.translated_text };
+    }
+    if (origHasCyrillic && !transHasCyrillic) {
+      return { estText: res.translated_text, ruText: res.original_text };
+    }
+    // 3. Fallback по выбранному направлению перевода
+    if (sourceLang === 'et') {
+      return { estText: res.original_text, ruText: res.translated_text };
+    }
+    return { estText: res.translated_text, ruText: res.original_text };
+  };
+
   // Озвучивание
   const handleToggleVoice = async () => {
     if (isPlayingAudio) {
@@ -154,14 +179,14 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
 
     if (!result) return;
 
-    // Озвучиваем эстонскую часть для тренировки произношения (если переводили на эстонский — перевод, если с эстонского — оригинал)
-    const isEstonianResult = result.target_lang === 'et' || sourceLang === 'ru';
-    const textToSpeak = isEstonianResult ? result.translated_text : result.original_text;
-    const voiceLang = 'et';
+    // Озвучиваем эстонское слово для тренировки произношения (kiirhääldus)
+    const { estText } = getLanguagePairs(result);
+    const cleanEstText = (estText || '').replace(/<\/?[^>]+(>|$)/g, '').trim();
+    if (!cleanEstText) return;
 
     try {
       setIsPlayingAudio(true);
-      const player = await playTts(textToSpeak, voiceLang, 'quick_translator', {
+      const player = await playTts(cleanEstText, 'et', 'quick_translator', {
         onFinish: () => setIsPlayingAudio(false),
         onError: () => setIsPlayingAudio(false),
       });
@@ -189,9 +214,9 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
   const handleSaveToVocabulary = async () => {
     if (!result || isSavedToVocab) return;
 
-    const isEstonianSource = result.source_lang === 'et' || sourceLang === 'et';
-    const estWord = isEstonianSource ? result.original_text : result.translated_text;
-    const ruWord = isEstonianSource ? result.translated_text : result.original_text;
+    const { estText, ruText } = getLanguagePairs(result);
+    const cleanEst = (estText || '').replace(/<\/?[^>]+(>|$)/g, '').trim();
+    const cleanRu = (ruText || '').replace(/<\/?[^>]+(>|$)/g, '').trim();
 
     let exampleText = result.base_forms || '';
     if (result.context_note) {
@@ -201,8 +226,8 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
     }
 
     const item: VocabularyItem = {
-      est: estWord.trim(),
-      ru: ruWord.trim(),
+      est: cleanEst,
+      ru: cleanRu,
       example: exampleText || 'Быстрый перевод (Kiirtõlge)',
     };
 

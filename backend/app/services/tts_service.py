@@ -36,6 +36,7 @@ except Exception:
 
 _TTS_STREAM_CACHE: Dict[str, bytes] = {}
 MAX_CACHE_ENTRIES = 500
+MIN_VALID_AUDIO_BYTES = 4096
 
 # Registry of active in-flight tasks for deduplication of simultaneous requests
 _IN_FLIGHT_TASKS: Dict[str, asyncio.Task[bytes]] = {}
@@ -754,8 +755,16 @@ def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -
     if bilingual or has_est_tag:
         segments = parse_bilingual_segments(clean_text)
     elif "et-EE" in voice or voice == "et":
-        clean_est = normalize_text_for_estonian_tts(clean_text)
-        segments = [(clean_est, ESTONIAN_VOICE)]
+        # Если передан чисто кириллический текст для эстонского диктора,
+        # перенаправляем на русский или двуязычный парсер, чтобы избежать сбоя Azure
+        if re.search(r'[а-яА-ЯёЁ]', clean_text) and not re.search(r'[a-zA-ZäöüõÄÖÜÕšžŠŽ]', clean_text):
+            norm_text = normalize_text_for_speech(clean_text, is_russian_context=True)
+            segments = [(norm_text, DEFAULT_VOICE)]
+        elif re.search(r'[а-яА-ЯёЁ]', clean_text):
+            segments = parse_bilingual_segments(clean_text)
+        else:
+            clean_est = normalize_text_for_estonian_tts(clean_text)
+            segments = [(clean_est, ESTONIAN_VOICE)]
     else:
         # Если во всем тексте нет кириллицы и это не английский термин — озвучиваем эстонским
         if not re.search(r'[а-яА-ЯёЁ]', clean_text) and not _is_pure_english_brand_or_key(clean_text):
@@ -856,13 +865,20 @@ async def get_or_synthesize_audio(
 
     # 2. Проверка локального файлового кэша на диске
     cache_file = AUDIO_CACHE_DIR / f"{ssml_hash}.mp3"
-    if cache_file.is_file() and cache_file.stat().st_size > 0:
-        logger.info(f"Serving TTS from disk cache: {cache_file} (md5={ssml_hash[:10]}...)")
+    if cache_file.is_file():
         try:
-            cached_bytes = cache_file.read_bytes()
-            if cached_bytes:
-                _store_in_memory_cache(_TTS_STREAM_CACHE, ssml_hash, cached_bytes)
-                return cached_bytes
+            cached_size = cache_file.stat().st_size
+            if cached_size < MIN_VALID_AUDIO_BYTES:
+                logger.warning(
+                    f"Purging corrupted/truncated audio cache file {cache_file} (size={cached_size} bytes)"
+                )
+                cache_file.unlink(missing_ok=True)
+            else:
+                cached_bytes = cache_file.read_bytes()
+                if len(cached_bytes) >= MIN_VALID_AUDIO_BYTES:
+                    logger.info(f"Serving TTS from disk cache: {cache_file} (md5={ssml_hash[:10]}...)")
+                    _store_in_memory_cache(_TTS_STREAM_CACHE, ssml_hash, cached_bytes)
+                    return cached_bytes
         except Exception as read_err:
             logger.warning(f"Failed reading cache file {cache_file}: {read_err}")
 
@@ -878,7 +894,7 @@ async def get_or_synthesize_audio(
     async def _worker() -> bytes:
         logger.info(f"Synthesizing audio via Azure Speech SDK (md5={ssml_hash[:10]}...)")
         audio_bytes = await asyncio.to_thread(_synthesize_azure_ssml, ssml)
-        if audio_bytes:
+        if audio_bytes and len(audio_bytes) >= MIN_VALID_AUDIO_BYTES:
             # Сохраняем в кэш на диск
             try:
                 AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)

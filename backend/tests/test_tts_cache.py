@@ -9,11 +9,15 @@ from app.services.tts_service import (
     DEFAULT_VOICE,
 )
 
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
 @pytest.fixture(autouse=True)
 def mock_azure_synth(monkeypatch):
     def fake_synthesize(ssml: str) -> bytes:
         time.sleep(0.05)
-        return b"ID3" + b"\x00" * 2000
+        return b"ID3" + b"\x00" * 6000
 
     monkeypatch.setattr(tts_service, "_synthesize_azure_ssml", fake_synthesize)
 

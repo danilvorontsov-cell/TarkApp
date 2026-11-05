@@ -92,8 +92,9 @@ async def text_to_speech(
             )
 
         try:
-            if not file_path.exists() or file_path.stat().st_size != len(audio_bytes):
-                file_path.write_bytes(audio_bytes)
+            if len(audio_bytes) >= 4096:
+                if not file_path.exists() or file_path.stat().st_size != len(audio_bytes) or file_path.stat().st_size < 4096:
+                    file_path.write_bytes(audio_bytes)
         except Exception as write_err:
             logger.warning(f"Could not write static audio file: {write_err}")
 
@@ -157,8 +158,9 @@ async def speak_word(
             )
 
         try:
-            if not file_path.exists() or file_path.stat().st_size != len(audio_bytes):
-                file_path.write_bytes(audio_bytes)
+            if len(audio_bytes) >= 4096:
+                if not file_path.exists() or file_path.stat().st_size != len(audio_bytes) or file_path.stat().st_size < 4096:
+                    file_path.write_bytes(audio_bytes)
         except Exception as write_err:
             logger.warning(f"Could not write static audio file: {write_err}")
 
