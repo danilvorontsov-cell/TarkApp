@@ -162,3 +162,73 @@ def test_numbered_examples_and_steps_ordinal():
     assert "Шаги решения: Первое: Вычисли 15 разделить на 3" in norm_steps
     assert "Второе: Запиши ответ" in norm_steps
 
+
+# --- Тесты сквозной нормализации TTS: ударения, ё, слэш и эстонские числительные ---
+
+def test_russian_accents_and_yo_normalization():
+    from app.services.tts_service import normalize_russian_accents_and_yo
+
+    # 1. Восстановление 'ё'
+    assert normalize_russian_accents_and_yo("еще не все готово") == "ещё не всё готово"
+    assert normalize_russian_accents_and_yo("счет со счета") == "счёт со счёта"
+    assert normalize_russian_accents_and_yo("четный и нечетный") == "чётный и нечётный"
+    assert normalize_russian_accents_and_yo("перенес объем трех и четырех") == "перенёс объём трёх и четырёх"
+    assert normalize_russian_accents_and_yo("вот и все") == "вот и всё"
+    assert normalize_russian_accents_and_yo("прежде всего") == "прежде всего\u0301"
+
+    # 2. Знаки ударения на школьных терминах и глаголах
+    norm = normalize_russian_accents_and_yo("Мы вычитаем и складываем слагаемое.")
+    assert "вычита\u0301ем" in norm
+    assert "слага\u0301емое" in norm
+
+    norm_math = normalize_russian_accents_and_yo("Сложение, вычитание, умножение и деление: делитель и делимое.")
+    assert "Сложе\u0301ние" in norm_math
+    assert "вычита\u0301ние" in norm_math
+    assert "умноже\u0301ние" in norm_math
+    assert "деле\u0301ние" in norm_math
+    assert "дели\u0301тель" in norm_math
+    assert "дели\u0301мое" in norm_math
+
+    norm_study = normalize_russian_accents_and_yo("Разбираем пример, смотрим правило и пишем ответ.")
+    assert "Разбира\u0301ем" in norm_study
+    assert "приме\u0301р" in norm_study
+    assert "пра\u0301вило" in norm_study
+    assert "отве\u0301т" in norm_study
+
+
+def test_slash_normalization():
+    from app.services.tts_service import clean_text_for_speech, build_ssml
+
+    # В русском тексте '/' заменяется на ' или '
+    text_ru = "Сложение/вычитание чисел: шаг 1 / шаг 2"
+    cleaned = clean_text_for_speech(text_ru)
+    assert "Сложение или вычитание" in cleaned
+    assert "шаг 1 или шаг 2" in cleaned
+    assert "/" not in cleaned
+
+    # В SSML русском блоке слэш озвучивается как 'или'
+    ssml_ru = build_ssml("Сложение/вычитание")
+    assert "Сложе\u0301ние или вычита\u0301ние" in ssml_ru
+    assert "Сложение/вычитание" not in ssml_ru
+
+    # В эстонском блоке слэш заменяется на 'või'
+    ssml_est = build_ssml("leib/sai", voice="et-EE")
+    assert "leib või sai" in ssml_est
+    assert "leib/sai" not in ssml_est
+
+
+def test_estonian_numerals_ssml_cardinal():
+    from app.services.tts_service import build_ssml
+
+    # Эстонские числа оборачиваются в <say-as interpret-as="cardinal">
+    ssml = build_ssml("Harjutus 10. Loe lehekülg 4.", voice="et-EE")
+    assert '<say-as interpret-as="cardinal">10</say-as>' in ssml
+    assert '<say-as interpret-as="cardinal">4</say-as>' in ssml
+
+    # Числительные с падежными окончаниями через дефис (5-ga) не ломаются
+    ssml_case = build_ssml("Korruta 5-ga ja liida 2-le.", voice="et-EE")
+    assert "5-ga" in ssml_case
+    assert "2-le" in ssml_case
+    assert '<say-as interpret-as="cardinal">5-ga</say-as>' not in ssml_case
+
+

@@ -209,3 +209,24 @@ test('Scenario 6: Auth token with Cyrillic nickname is safely ASCII-encoded for 
   const [, encodedPart] = safeToken.split(':');
   assert.equal(decodeURIComponent(encodedPart), 'Данил');
 });
+
+test('Scenario 7: Header avatar photo update preserves profile fields (name, grade, interests)', () => {
+  const appFile = fs.readFileSync(path.resolve(__dirname, '../App.tsx'), 'utf-8');
+  assert.ok(appFile.includes('StorageService.getProfile()'), 'handleTakeAvatarPhoto must query persisted profile');
+  assert.ok(appFile.includes('preservedNickname'), 'handleTakeAvatarPhoto must preserve existing nickname');
+  assert.ok(appFile.includes('preservedGrade'), 'handleTakeAvatarPhoto must preserve existing grade');
+
+  // Verify ProfileSetupModal handleDismiss does NOT force overwrite to 'Ученик'
+  const modalFile = fs.readFileSync(path.resolve(__dirname, '../src/components/ProfileSetupModal.tsx'), 'utf-8');
+  assert.ok(!modalFile.includes("nickname: 'Ученик'"), "handleDismiss must not overwrite nickname with 'Ученик'");
+});
+
+test('Scenario 8: BrandLogo component is mounted in Header TopBar with authentic brand logo asset', () => {
+  const brandLogoFile = path.resolve(__dirname, '../src/components/BrandLogo.tsx');
+  assert.ok(fs.existsSync(brandLogoFile), 'BrandLogo.tsx component must exist');
+  const logoContent = fs.readFileSync(brandLogoFile, 'utf-8');
+  assert.ok(logoContent.includes('tarkapp_logo.png'), 'BrandLogo must reference tarkapp_logo.png');
+
+  const appFile = fs.readFileSync(path.resolve(__dirname, '../App.tsx'), 'utf-8');
+  assert.ok(appFile.includes('<BrandLogo'), 'App.tsx header must render BrandLogo component');
+});

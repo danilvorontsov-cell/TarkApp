@@ -73,6 +73,7 @@ import { FeedbackScreen } from './src/screens/FeedbackScreen';
 import { PaywallScreen } from './src/screens/PaywallScreen';
 import { ThemedAlert, ThemedAlertContainer } from './src/components/ThemedAlert';
 import { ProfileSetupModal } from './src/components/ProfileSetupModal';
+import { BrandLogo } from './src/components/BrandLogo';
 import { TaskVisualizer } from './src/components/TaskVisualizer';
 import { getSubscriptionInfo } from './src/utils/subscription';
 import { SHOW_CUBES_DEMO } from './src/config/features';
@@ -1037,30 +1038,37 @@ function MainApp() {
 
       const newUri = result.assets[0].uri;
 
-      // Preserve drafted name & grade so camera intent return never resets them
+      // Update ONLY avatarUri while strictly preserving existing profile fields (name, grade, interests)
+      const saved = await StorageService.getProfile();
       const draft = await StorageService.getProfileDraft();
-      const currentNickname = (draft?.nickname !== undefined && draft.nickname.trim().length > 0)
-        ? draft.nickname
-        : (profile.nickname || '');
-      const currentGrade = (draft?.grade !== undefined && draft.grade >= 1 && draft.grade <= 12)
+      const preservedNickname = draft?.nickname?.trim() || saved.nickname?.trim() || profile.nickname?.trim() || 'Ученик';
+      const preservedGrade = (draft?.grade && draft.grade >= 1 && draft.grade <= 12)
         ? draft.grade
-        : (profile.grade || 3);
-      const tier = getTierFromGrade(currentGrade);
+        : (saved.grade || profile.grade || 3);
+      const preservedInterests = (draft?.interests && draft.interests.length > 0)
+        ? draft.interests
+        : (saved.interests || profile.interests);
+      const preservedInterestsByGrade = saved.interestsByGrade || profile.interestsByGrade;
+      const tier = getTierFromGrade(preservedGrade);
 
       const updatedProfile: UserProfile = {
+        ...saved,
         ...profile,
-        nickname: currentNickname,
-        grade: currentGrade,
+        nickname: preservedNickname,
+        grade: preservedGrade,
         tier,
+        interests: preservedInterests,
+        interestsByGrade: preservedInterestsByGrade,
         avatarUri: newUri,
       };
       setProfile(updatedProfile);
       await StorageService.saveProfile(updatedProfile);
-      await StorageService.saveProfileDraft({
-        nickname: currentNickname,
-        grade: currentGrade,
-        avatarUri: newUri,
-      });
+      if (draft) {
+        await StorageService.saveProfileDraft({
+          ...draft,
+          avatarUri: newUri,
+        });
+      }
     } catch (err: any) {
       ThemedAlert.alert('Ошибка камеры', `Не удалось сделать снимок: ${err?.message || 'Сбой камеры'}`);
     }
@@ -1090,39 +1098,58 @@ function MainApp() {
 
       const newUri = result.assets[0].uri;
 
-      // Preserve drafted name & grade so gallery intent return never resets them
+      // Update ONLY avatarUri while strictly preserving existing profile fields (name, grade, interests)
+      const saved = await StorageService.getProfile();
       const draft = await StorageService.getProfileDraft();
-      const currentNickname = (draft?.nickname !== undefined && draft.nickname.trim().length > 0)
-        ? draft.nickname
-        : (profile.nickname || '');
-      const currentGrade = (draft?.grade !== undefined && draft.grade >= 1 && draft.grade <= 12)
+      const preservedNickname = draft?.nickname?.trim() || saved.nickname?.trim() || profile.nickname?.trim() || 'Ученик';
+      const preservedGrade = (draft?.grade && draft.grade >= 1 && draft.grade <= 12)
         ? draft.grade
-        : (profile.grade || 3);
-      const tier = getTierFromGrade(currentGrade);
+        : (saved.grade || profile.grade || 3);
+      const preservedInterests = (draft?.interests && draft.interests.length > 0)
+        ? draft.interests
+        : (saved.interests || profile.interests);
+      const preservedInterestsByGrade = saved.interestsByGrade || profile.interestsByGrade;
+      const tier = getTierFromGrade(preservedGrade);
 
       const updatedProfile: UserProfile = {
+        ...saved,
         ...profile,
-        nickname: currentNickname,
-        grade: currentGrade,
+        nickname: preservedNickname,
+        grade: preservedGrade,
         tier,
+        interests: preservedInterests,
+        interestsByGrade: preservedInterestsByGrade,
         avatarUri: newUri,
       };
       setProfile(updatedProfile);
       await StorageService.saveProfile(updatedProfile);
-      await StorageService.saveProfileDraft({
-        nickname: currentNickname,
-        grade: currentGrade,
-        avatarUri: newUri,
-      });
+      if (draft) {
+        await StorageService.saveProfileDraft({
+          ...draft,
+          avatarUri: newUri,
+        });
+      }
     } catch (err: any) {
       ThemedAlert.alert('Ошибка галереи', `Не удалось выбрать фото: ${err?.message || 'Сбой галереи'}`);
     }
   };
 
   const handleRemoveAvatar = async () => {
-    const updatedProfile: UserProfile = { ...profile, avatarUri: undefined };
+    const saved = await StorageService.getProfile();
+    const updatedProfile: UserProfile = {
+      ...saved,
+      ...profile,
+      avatarUri: undefined,
+    };
     setProfile(updatedProfile);
     await StorageService.saveProfile(updatedProfile);
+    const draft = await StorageService.getProfileDraft();
+    if (draft) {
+      await StorageService.saveProfileDraft({
+        ...draft,
+        avatarUri: undefined,
+      });
+    }
   };
 
   const handleSelectAvatarSource = () => {
@@ -2645,7 +2672,7 @@ function MainApp() {
         </TouchableOpacity>
 
         <View style={styles.headerTitleCenter} pointerEvents="none">
-          <Text style={styles.headerBrandTitle}>TarkApp</Text>
+          <BrandLogo height={24} />
         </View>
 
         {/* Right Header Controls: PRO/Plan Badge & Profile */}
@@ -2677,38 +2704,50 @@ function MainApp() {
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
+          <View
             style={[
               styles.headerProfilePill,
               !profile.nickname?.trim() && styles.headerProfilePillGuest,
             ]}
-            onPress={() => setIsProfileSetupModalVisible(true)}
-            accessibilityLabel={
-              profile.nickname?.trim()
-                ? `Профиль: ${profile.nickname.trim()}`
-                : 'Войти в профиль'
-            }
-            accessibilityRole="button"
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            activeOpacity={0.75}
           >
-            {profile.avatarUri ? (
-              <Image source={{ uri: profile.avatarUri }} style={styles.headerProfileAvatar} />
-            ) : (
-              <Text style={styles.headerProfileEmoji}>
-                {profile.nickname?.trim() ? '🧑‍🎓' : '👤'}
-              </Text>
-            )}
-            <Text
-              style={[
-                styles.headerProfileText,
-                !profile.nickname?.trim() && styles.headerProfileTextGuest,
-              ]}
-              numberOfLines={1}
+            <TouchableOpacity
+              onPress={handleSelectAvatarSource}
+              accessibilityLabel="Сменить аватарку"
+              accessibilityRole="button"
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 4 }}
+              activeOpacity={0.7}
             >
-              {profile.nickname?.trim() ? profile.nickname.trim() : 'Войти'}
-            </Text>
-          </TouchableOpacity>
+              {profile.avatarUri ? (
+                <Image source={{ uri: profile.avatarUri }} style={styles.headerProfileAvatar} />
+              ) : (
+                <Text style={styles.headerProfileEmoji}>
+                  {profile.nickname?.trim() ? '🧑‍🎓' : '👤'}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setIsProfileSetupModalVisible(true)}
+              accessibilityLabel={
+                profile.nickname?.trim()
+                  ? `Профиль: ${profile.nickname.trim()}`
+                  : 'Войти в профиль'
+              }
+              accessibilityRole="button"
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+              activeOpacity={0.75}
+            >
+              <Text
+                style={[
+                  styles.headerProfileText,
+                  !profile.nickname?.trim() && styles.headerProfileTextGuest,
+                ]}
+                numberOfLines={1}
+              >
+                {profile.nickname?.trim() ? profile.nickname.trim() : 'Войти'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Non-interactive concave arch cap at bottom of header */}

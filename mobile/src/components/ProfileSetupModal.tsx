@@ -137,32 +137,8 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
   };
 
   const handleDismiss = async () => {
-    // If nickname is completely empty on dismiss, ensure at least default 'Ученик' is set
-    if (!currentProfile.nickname?.trim()) {
-      const newTier = getTierFromGrade(selectedGrade);
-      const gradeMap: Record<number, string[]> = {
-        ...(currentProfile.interestsByGrade || {}),
-      };
-      const savedForGrade = gradeMap[selectedGrade] || gradeMap[String(selectedGrade) as any];
-      const newInterests = savedForGrade && savedForGrade.length > 0
-        ? savedForGrade
-        : getDefaultInterestsForTier(newTier);
-      gradeMap[selectedGrade] = newInterests;
-
-      const updated: UserProfile = {
-        ...currentProfile,
-        nickname: 'Ученик',
-        grade: selectedGrade,
-        tier: newTier,
-        interests: newInterests,
-        hasCustomInterests: false,
-        interestsByGrade: gradeMap,
-      };
-      await StorageService.clearProfileDraft();
-      setTimeout(() => {
-        onSaveProfile(updated);
-      }, 120);
-    }
+    // Dismissing without clicking Save must never overwrite or reset the existing profile
+    await StorageService.clearProfileDraft();
     onClose();
   };
 
