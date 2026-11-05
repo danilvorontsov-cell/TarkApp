@@ -125,8 +125,8 @@ def test_list_numbering_dot_removal():
     norm = normalize_text_for_speech(text)
     assert "1." not in norm
     assert "2." not in norm
-    assert "Первое: Сложи числа" in norm
-    assert "Второе: Запиши ответ" in norm
+    assert "Первое, Сложи числа" in norm
+    assert "Второе, Запиши ответ" in norm
 
 
 def test_math_division_colon_and_symbols():
@@ -144,23 +144,44 @@ def test_math_division_colon_and_symbols():
 
 
 def test_numbered_examples_and_steps_ordinal():
-    # Пример 1, Пример 2 -> Первый пример:, Второй пример:
+    # Пример 1, Пример 2 -> Первый пример, Второй пример
     text = "Пример 1: 15 : 3 = 5\nПример 2: 24 : 6 = 4"
     norm = normalize_text_for_speech(text)
-    assert "Первый пример: 15 разделить на 3 равно 5" in norm
-    assert "Второй пример: 24 разделить на 6 равно 4" in norm
+    assert "Первый пример, 15 разделить на 3 равно 5" in norm
+    assert "Второй пример, 24 разделить на 6 равно 4" in norm
 
     # Скобочная нумерация: 1), 2)
     text_paren = "1) 15 : 3 = 5\n2) 20 : 4 = 5"
     norm_paren = normalize_text_for_speech(text_paren)
-    assert "Первое: 15 разделить на 3 равно 5" in norm_paren
-    assert "Второе: 20 разделить на 4 равно 5" in norm_paren
+    assert "Первое, 15 разделить на 3 равно 5" in norm_paren
+    assert "Второе, 20 разделить на 4 равно 5" in norm_paren
 
     # Шаги решения с двоеточием перед списком
     text_steps = "Шаги решения: 1. Вычисли 15 : 3\n2. Запиши ответ"
     norm_steps = normalize_text_for_speech(text_steps)
-    assert "Шаги решения: Первое: Вычисли 15 разделить на 3" in norm_steps
-    assert "Второе: Запиши ответ" in norm_steps
+    assert "Шаги решения, Первое, Вычисли 15 разделить на 3" in norm_steps
+    assert "Второе, Запиши ответ" in norm_steps
+
+
+def test_colon_not_mistaken_for_division_in_lists_and_parentheses():
+    from app.services.tts_service import parse_bilingual_segments, build_ssml
+
+    # Случай из баг-репорта: (sadad): 4 сотни
+    text = "Смотрим на верхний узелок — это сотни (sadad): 4 сотни."
+    norm = normalize_text_for_speech(text)
+    assert "разделить" not in norm
+    assert "sadad), 4 сотни" in norm
+
+    # Сегменты для дикторов: sadad отправляется эстонскому диктору, а остальной текст - русскому
+    segs = parse_bilingual_segments(text)
+    for seg_text, voice in segs:
+        assert "разделить" not in seg_text
+
+    # Прямая речь и списки: "Учитель спрашивает: 4 сотни"
+    teacher_text = "Учитель спрашивает: 4 сотни ребят пришли в школу."
+    teacher_norm = normalize_text_for_speech(teacher_text)
+    assert "разделить" not in teacher_norm
+    assert "Учитель спрашивает, 4 сотни" in teacher_norm
 
 
 # --- Тесты сквозной нормализации TTS: ударения, ё, слэш и эстонские числительные ---

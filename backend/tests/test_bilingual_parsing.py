@@ -84,7 +84,7 @@ def test_pure_estonian_example_with_brand_in_est_tag():
     text = "Пример предложения: <est>Ta mängib Minecrafti mängu</est>."
     segments = parse_bilingual_segments(text)
     assert len(segments) == 2
-    assert segments[0] == ("Пример предложения:", DEFAULT_VOICE)
+    assert segments[0] == ("Пример предложения,", DEFAULT_VOICE)
     assert segments[1] == ("Ta mängib Minecrafti mängu", ESTONIAN_VOICE)
 
 def test_pure_estonian_without_cyrillic():
@@ -106,7 +106,7 @@ def test_estonian_quote_in_given_condition():
     text = "Учитель на уроке спрашивает: 'Mis seade see on ja milleks sa seda kasutad?'"
     segments = parse_bilingual_segments(text)
     assert len(segments) == 2
-    assert segments[0] == ("Учитель на уроке спрашивает:", DEFAULT_VOICE)
+    assert segments[0] == ("Учитель на уроке спрашивает,", DEFAULT_VOICE)
     assert segments[1] == ("Mis seade see on ja milleks sa seda kasutad?", ESTONIAN_VOICE)
 
 def test_estonian_russian_pair_in_parentheses():

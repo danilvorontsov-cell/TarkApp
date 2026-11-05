@@ -95,7 +95,7 @@ def test_bilingual_parser():
     text = "Найди слово: <est>koolikott</est> и скажи <est>tere</est>."
     segments = parse_bilingual_segments(text)
     assert len(segments) == 4
-    assert segments[0][0] == "Найди слово:"
+    assert segments[0][0] == "Найди слово,"
     assert segments[0][1] == DEFAULT_VOICE
     assert segments[1][0] == "koolikott"
     assert segments[1][1] == ESTONIAN_VOICE
