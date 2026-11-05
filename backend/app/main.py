@@ -17,7 +17,7 @@ from app.config import settings
 from app.limiter import limiter
 from app.logger import setup_logging, app_logger, error_logger
 from app.database import init_db, SessionLocal
-from app.routers.analyze import router as analyze_router
+from app.routers.analyze import router as analyze_router, legacy_lessons_router
 from app.routers.health import router as health_router
 from app.routers.voice import router as voice_router
 from app.routers.translate import router as translate_router
@@ -128,6 +128,7 @@ async def log_requests_middleware(request: Request, call_next):
 # Register routers
 app.include_router(health_router)
 app.include_router(analyze_router)
+app.include_router(legacy_lessons_router)
 app.include_router(voice_router)
 app.include_router(translate_router)
 app.include_router(feedback_router)

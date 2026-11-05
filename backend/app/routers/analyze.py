@@ -13,6 +13,7 @@ from app.limiter import safe_limit, get_device_or_ip
 from app.models.page_analysis import (
     AgeTier,
     AnalyzePageJsonRequest,
+    AppendPageJsonRequest,
     MoreExamplesRequest,
     MoreExamplesResponse,
     PageAnalysisResponse,
@@ -21,6 +22,7 @@ from app.models.page_analysis import (
 from app.services.gemini_service import gemini_tutor_service, GeminiServiceError
 from app.services.telegram_alert import send_telegram_message
 from app.services import license_service
+from app.services.lesson_session_service import lesson_session_service
 from app.services.analysis_cache import (
     compute_analysis_cache_key,
     get_cached_analysis,
@@ -167,6 +169,17 @@ async def analyze_page(
     if cached_result and cached_result.is_acceptable is not False:
         if dev_id and isinstance(db, Session):
             license_service.deduct_review_attempt(dev_id, db)
+        session = lesson_session_service.create_session(
+            device_id=dev_id,
+            profile=profile,
+            images=images_data,
+            analysis=cached_result,
+        )
+        cached_result.lesson_id = session.lesson_id
+        cached_result.page_count = session.page_count
+        cached_result.can_append_page = session.can_append
+        cached_result.session_expires_at = session.expires_at
+        cached_result.session_seconds_remaining = session.seconds_remaining
         return cached_result
 
     try:
@@ -179,6 +192,17 @@ async def analyze_page(
             store_cached_analysis(cache_key, result)
             if dev_id and isinstance(db, Session):
                 license_service.deduct_review_attempt(dev_id, db)
+        session = lesson_session_service.create_session(
+            device_id=dev_id,
+            profile=profile,
+            images=images_data,
+            analysis=result,
+        )
+        result.lesson_id = session.lesson_id
+        result.page_count = session.page_count
+        result.can_append_page = session.can_append
+        result.session_expires_at = session.expires_at
+        result.session_seconds_remaining = session.seconds_remaining
         return result
     except GeminiServiceError as e:
         logger.error(f"GeminiServiceError analyzing page: {e}")
@@ -287,6 +311,17 @@ async def analyze_page_json(
     if cached_result and cached_result.is_acceptable is not False:
         if dev_id and isinstance(db, Session):
             license_service.deduct_review_attempt(dev_id, db)
+        session = lesson_session_service.create_session(
+            device_id=dev_id,
+            profile=profile,
+            images=images_data,
+            analysis=cached_result,
+        )
+        cached_result.lesson_id = session.lesson_id
+        cached_result.page_count = session.page_count
+        cached_result.can_append_page = session.can_append
+        cached_result.session_expires_at = session.expires_at
+        cached_result.session_seconds_remaining = session.seconds_remaining
         return cached_result
 
     try:
@@ -299,6 +334,17 @@ async def analyze_page_json(
             store_cached_analysis(cache_key, result)
             if dev_id and isinstance(db, Session):
                 license_service.deduct_review_attempt(dev_id, db)
+        session = lesson_session_service.create_session(
+            device_id=dev_id,
+            profile=profile,
+            images=images_data,
+            analysis=result,
+        )
+        result.lesson_id = session.lesson_id
+        result.page_count = session.page_count
+        result.can_append_page = session.can_append
+        result.session_expires_at = session.expires_at
+        result.session_seconds_remaining = session.seconds_remaining
         return result
     except GeminiServiceError as e:
         logger.error(f"GeminiServiceError analyzing page via JSON: {e}")
@@ -317,6 +363,161 @@ async def analyze_page_json(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Ошибка обработки страницы: {str(e)}",
         )
+
+
+@router.post(
+    "/lessons/{lesson_id}/append-page",
+    response_model=PageAnalysisResponse,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(get_current_user)],
+    summary="Добавление второй страницы (разворота) в активную сессию урока",
+    description="Добавляет страницу 2 к уроку в течение 5 минут. Повторно очки сканирований не списываются.",
+)
+async def append_page_to_lesson(
+    lesson_id: str,
+    request: Request,
+    payload: Optional[AppendPageJsonRequest] = None,
+    x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PageAnalysisResponse:
+    dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")
+    session = lesson_session_service.get_session(lesson_id)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "SESSION_NOT_FOUND", "message": "Сессия урока не найдена или завершена."},
+        )
+
+    if dev_id and session.device_id and session.device_id != dev_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "DEVICE_MISMATCH", "message": "Сессия урока принадлежит другому устройству."},
+        )
+
+    if session.is_expired:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={"error": "SESSION_EXPIRED", "message": "Время бесплатного дополнения урока (5 минут) истекло. Пожалуйста, начните новый урок."},
+        )
+
+    if session.page_count >= 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "PAGE_LIMIT_REACHED", "message": "В сессию урока можно добавить максимум 2 страницы (разворот)."},
+        )
+
+    image_bytes = None
+    mime_type = "image/jpeg"
+    content_type = (request.headers.get("content-type") or "").lower()
+
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        uploaded = form.get("file")
+        if uploaded and hasattr(uploaded, "read"):
+            mime_type = uploaded.content_type or "image/jpeg"
+            if mime_type.lower() not in ALLOWED_MIME_TYPES:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Неподдерживаемый формат изображения: {mime_type}.",
+                )
+            image_bytes = await uploaded.read()
+    else:
+        # JSON payload handling
+        clean_b64 = None
+        if payload and payload.image_base64:
+            clean_b64 = payload.image_base64
+            mime_type = payload.mime_type or "image/jpeg"
+        else:
+            try:
+                body_json = await request.json()
+                clean_b64 = body_json.get("image_base64")
+                if "mime_type" in body_json:
+                    mime_type = body_json["mime_type"]
+            except Exception:
+                pass
+
+        if clean_b64:
+            clean_str = clean_b64.split(",", 1)[1] if "," in clean_b64 else clean_b64
+            try:
+                image_bytes = base64.b64decode(clean_str, validate=True)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Некорректная Base64 строка: {e}",
+                )
+
+    if not image_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Не передано изображение второй страницы для добавления.",
+        )
+
+    max_size_bytes = settings.MAX_IMAGE_SIZE_MB * 1024 * 1024
+    if len(image_bytes) > max_size_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Размер изображения превышает лимит {settings.MAX_IMAGE_SIZE_MB} МБ.",
+        )
+
+    # 1. Прикрепляем вторую страницу к сессии урока
+    lesson_session_service.append_image(lesson_id, image_bytes, mime_type)
+
+    # 2. Вызываем мультимодальный анализ Gemini для объединения контекста обеих страниц
+    try:
+        updated_result = await gemini_tutor_service.analyze_page(
+            profile=session.profile,
+            images=session.images,
+        )
+        updated_result.lesson_id = session.lesson_id
+        updated_result.page_count = session.page_count
+        updated_result.can_append_page = False
+        updated_result.session_expires_at = session.expires_at
+        updated_result.session_seconds_remaining = 0
+        lesson_session_service.update_analysis(lesson_id, updated_result)
+        # ВАЖНО: лицензия/квота НЕ списывается повторно! (1 очко за сессию)
+        return updated_result
+    except GeminiServiceError as e:
+        logger.error(f"GeminiServiceError appending page to lesson {lesson_id}: {e}")
+        await _dispatch_gemini_alert(e, f"POST /api/v1/lessons/{lesson_id}/append-page")
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error appending page to lesson {lesson_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка обработки второй страницы урока: {str(e)}",
+        )
+
+
+legacy_lessons_router = APIRouter(
+    prefix="/api/lessons",
+    tags=["Analysis"],
+)
+
+
+@legacy_lessons_router.post(
+    "/{lesson_id}/append-page",
+    response_model=PageAnalysisResponse,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(get_current_user)],
+    summary="Алиас для добавления второй страницы (разворота) в активную сессию урока",
+)
+async def append_page_legacy_alias(
+    lesson_id: str,
+    request: Request,
+    payload: Optional[AppendPageJsonRequest] = None,
+    x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PageAnalysisResponse:
+    return await append_page_to_lesson(
+        lesson_id=lesson_id,
+        request=request,
+        payload=payload,
+        x_device_id=x_device_id,
+        current_user=current_user,
+        db=db,
+    )
 
 
 @router.post(

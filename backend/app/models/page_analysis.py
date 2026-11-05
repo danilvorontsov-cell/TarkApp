@@ -211,6 +211,37 @@ class PageAnalysisResponse(BaseModel):
         default=True,
         description="Флаг пригодности снимка: False, если фото не читаемое/размытое и выдан обучающий fallback"
     )
+    lesson_id: Optional[str] = Field(
+        default=None,
+        description="Уникальный идентификатор активной сессии урока для бесплатного добавления разворота"
+    )
+    page_count: Optional[int] = Field(
+        default=1,
+        description="Количество страниц в текущем разборе урока (1 или 2)"
+    )
+    can_append_page: Optional[bool] = Field(
+        default=True,
+        description="Доступна ли бесплатная досылка второй страницы разворота в текущей сессии"
+    )
+    session_expires_at: Optional[float] = Field(
+        default=None,
+        description="Unix-время окончания 5-минутного окна для бесплатного дополнения разворота"
+    )
+    session_seconds_remaining: Optional[int] = Field(
+        default=None,
+        description="Осталось секунд для бесплатного дополнения разворота (до 300)"
+    )
+
+
+class AppendPageJsonRequest(BaseModel):
+    image_base64: str = Field(
+        ...,
+        description="Изображение второй страницы (разворота или тетради) в формате Base64"
+    )
+    mime_type: Optional[str] = Field(
+        default="image/jpeg",
+        description="MIME тип изображения (image/jpeg, image/png)"
+    )
 
 
 class AnalyzePageJsonRequest(BaseModel):
