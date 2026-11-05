@@ -529,6 +529,10 @@ export function formatFriendlyErrorMessage(error: any): string {
   // Network connection / DNS / Offline / Cleartext issues
   if (
     msg.includes('Network request failed') ||
+    msg.includes('UnknownHostException') ||
+    msg.includes('Unable to resolve host') ||
+    msg.includes('SSLHandshakeException') ||
+    msg.includes('CertPathValidatorException') ||
     msg.includes('Unexpected char') ||
     msg.includes('IllegalArgumentException') ||
     msg.includes('CLEARTEXT') ||
