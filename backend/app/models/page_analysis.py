@@ -245,6 +245,7 @@ class AppendPageJsonRequest(BaseModel):
 
 
 class AnalyzePageJsonRequest(BaseModel):
+    lesson_id: Optional[str] = Field(default=None, description="ID активной сессии урока для добавления разворота без списания баллов")
     image_base64: Optional[str] = Field(default=None, description="Изображение страницы учебника в формате base64 (одиночное)")
     images_base64: Optional[List[str]] = Field(default=None, description="Список изображений нескольких страниц учебника/тетради в формате base64")
     mime_type: str = Field(default="image/jpeg", description="MIME тип изображения (image/jpeg, image/png)")

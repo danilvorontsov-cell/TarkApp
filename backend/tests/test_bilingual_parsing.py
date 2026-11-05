@@ -125,8 +125,7 @@ def test_build_ssml_with_est_tag():
     assert 'xml:lang="ru-RU"' in ssml
     assert f'<voice name="{DEFAULT_VOICE}">' in ssml
     assert 'Привет! <break time="500ms" /> Запомни слово' in ssml
-    assert f'<voice name="{ESTONIAN_VOICE}">' in ssml
-    assert 'klaviatuur' in ssml
+    assert '<lang xml:lang="et-EE">klaviatuur</lang>' in ssml
     assert 'и повтори. <break time="500ms" />' in ssml
 
 
@@ -179,8 +178,8 @@ def test_clean_text_for_speech_sanitization():
 def test_phonetic_replacements_in_clean_text():
     raw = "В игре Minecraft и Roblox нажми Enter, затем Space и Shift, посмотри в Google и на YouTube."
     cleaned = clean_text_for_speech(raw)
-    assert "Майнкрафт" in cleaned
-    assert "Роблокс" in cleaned
+    assert "Minecraft" in cleaned
+    assert "Roblox" in cleaned
     assert "Энтер" in cleaned
     assert "Пробел" in cleaned
     assert "Шифт" in cleaned
@@ -196,10 +195,9 @@ def test_phonetic_replacements_in_clean_text():
 def test_target_phrase_ssml_pipeline():
     phrase = "В игре Minecraft нажми 5 > 3 -> затем клавишу <est>klaviatuur</est>."
     ssml = build_ssml(phrase)
-    assert "Майнкрафт" in ssml
+    assert '<lang xml:lang="en-US">Minecraft</lang>' in ssml
     assert "5 &gt; 3" in ssml
     assert "затем клавишу" in ssml
     assert '<break time="500ms" />' in ssml
     assert f'<voice name="{DEFAULT_VOICE}">' in ssml
-    assert f'<voice name="{ESTONIAN_VOICE}">' in ssml
-    assert "klaviatuur. <break time=\"500ms\" />" in ssml
+    assert '<lang xml:lang="et-EE">klaviatuur</lang>' in ssml

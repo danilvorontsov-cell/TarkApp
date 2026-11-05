@@ -8,8 +8,8 @@ from app.models.page_analysis import PageAnalysisResponse, UserProfile
 
 logger = logging.getLogger("tarkapp.sessions")
 
-# 5 minutes window for free spread appending as specified in requirements
-SESSION_TIMEOUT_SECONDS = 300
+# 10 minutes window for free spread appending as specified in requirements
+SESSION_TIMEOUT_SECONDS = 600
 MAX_PAGES_PER_SESSION = 2
 
 
@@ -88,7 +88,7 @@ class LessonSessionService:
     ) -> LessonSession:
         """
         Appends second page image to the active session.
-        Enforces timeout (5 min) and maximum 2 pages quota limit.
+        Enforces timeout (10 min) and maximum 2 pages quota limit.
         """
         session = self._sessions.get(lesson_id)
         if not session:

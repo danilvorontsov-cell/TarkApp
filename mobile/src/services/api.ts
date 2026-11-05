@@ -750,7 +750,8 @@ export interface ImagePayload {
 export async function analyzePagesJson(
   images: ImagePayload[],
   profile: UserProfile,
-  baseUrl: string = API_BASE_URL
+  baseUrl: string = API_BASE_URL,
+  lessonId?: string
 ): Promise<PageAnalysisResponse> {
   const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/analyze-page/json`;
   try {
@@ -761,7 +762,7 @@ export async function analyzePagesJson(
 
     const mimeTypes = images.map((img) => img.mimeType || 'image/jpeg');
 
-    const bodyPayload = {
+    const bodyPayload: Record<string, any> = {
       images_base64: validBase64Images,
       mime_type: mimeTypes[0] || 'image/jpeg',
       mime_types: mimeTypes,
@@ -770,6 +771,9 @@ export async function analyzePagesJson(
       interests: profile.interests,
       nickname: profile.nickname,
     };
+    if (lessonId) {
+      bodyPayload.lesson_id = lessonId;
+    }
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

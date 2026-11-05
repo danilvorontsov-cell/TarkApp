@@ -195,26 +195,29 @@ def test_russian_accents_and_yo_normalization():
     assert normalize_russian_accents_and_yo("четный и нечетный") == "чётный и нечётный"
     assert normalize_russian_accents_and_yo("перенес объем трех и четырех") == "перенёс объём трёх и четырёх"
     assert normalize_russian_accents_and_yo("вот и все") == "вот и всё"
-    assert normalize_russian_accents_and_yo("прежде всего") == "прежде всего\u0301"
+    assert normalize_russian_accents_and_yo("прежде всего") == "прежде всего"
 
-    # 2. Знаки ударения на школьных терминах и глаголах
+    # 2. ПОЛНОЕ УДАЛЕНИЕ принудительных знаков ударения (\u0301) — нейросеть Azure Лия знает ударения сама
     norm = normalize_russian_accents_and_yo("Мы вычитаем и складываем слагаемое.")
-    assert "вычита\u0301ем" in norm
-    assert "слага\u0301емое" in norm
+    assert "\u0301" not in norm
+    assert "вычитаем" in norm
+    assert "слагаемое" in norm
 
     norm_math = normalize_russian_accents_and_yo("Сложение, вычитание, умножение и деление: делитель и делимое.")
-    assert "Сложе\u0301ние" in norm_math
-    assert "вычита\u0301ние" in norm_math
-    assert "умноже\u0301ние" in norm_math
-    assert "деле\u0301ние" in norm_math
-    assert "дели\u0301тель" in norm_math
-    assert "дели\u0301мое" in norm_math
+    assert "\u0301" not in norm_math
+    assert "Сложение" in norm_math
+    assert "вычитание" in norm_math
+    assert "умножение" in norm_math
+    assert "деление" in norm_math
+    assert "делитель" in norm_math
+    assert "делимое" in norm_math
 
     norm_study = normalize_russian_accents_and_yo("Разбираем пример, смотрим правило и пишем ответ.")
-    assert "Разбира\u0301ем" in norm_study
-    assert "приме\u0301р" in norm_study
-    assert "пра\u0301вило" in norm_study
-    assert "отве\u0301т" in norm_study
+    assert "\u0301" not in norm_study
+    assert "Разбираем" in norm_study
+    assert "пример" in norm_study
+    assert "правило" in norm_study
+    assert "ответ" in norm_study
 
 
 def test_slash_normalization():
@@ -227,15 +230,60 @@ def test_slash_normalization():
     assert "шаг 1 или шаг 2" in cleaned
     assert "/" not in cleaned
 
-    # В SSML русском блоке слэш озвучивается как 'или'
+    # В SSML русском блоке слэш озвучивается как 'или' (без принудительного знака ударения \u0301)
     ssml_ru = build_ssml("Сложение/вычитание")
-    assert "Сложе\u0301ние или вычита\u0301ние" in ssml_ru
+    assert "Сложение или вычитание" in ssml_ru
     assert "Сложение/вычитание" not in ssml_ru
+    assert "\u0301" not in ssml_ru
 
     # В эстонском блоке слэш заменяется на 'või'
     ssml_est = build_ssml("leib/sai", voice="et-EE")
     assert "leib või sai" in ssml_est
     assert "leib/sai" not in ssml_est
+
+
+def test_number_ranges_normalization():
+    from app.services.tts_service import normalize_number_ranges, normalize_text_for_speech
+
+    assert normalize_number_ranges("1-9") == "от 1 до 9"
+    assert normalize_number_ranges("выбери числа 1-10") == "выбери числа от 1 до 10"
+    assert normalize_number_ranges("страницы 10-20") == "страницы от 10 до 20"
+    # Математические выражения с вычитанием не должны превращаться в диапазоны
+    assert normalize_number_ranges("9 - 3 = 6") == "9 - 3 = 6"
+
+    # В сквозном пайплайне
+    assert "от 1 до 9" in normalize_text_for_speech("выбери числа 1-9")
+
+
+def test_math_subtraction_minus():
+    from app.services.tts_service import normalize_math_expressions
+
+    norm = normalize_math_expressions("9 - 3 = 6")
+    assert "9 минус 3 равно 6" in norm
+
+
+def test_ssml_unified_multilingual_document():
+    from app.services.tts_service import build_ssml
+    import xml.etree.ElementTree as ET
+
+    text = "Смотрим на термин liidetav и summa: мы играем в Minecraft с клавишами WASD."
+    ssml = build_ssml(text)
+
+    # Единый голос SvetlanaNeural
+    assert "ru-RU-SvetlanaNeural" in ssml or "ru-RU-SvetlanaMultilingualNeural" in ssml
+    # Эстонские термины в <lang xml:lang="et-EE">
+    assert '<lang xml:lang="et-EE">liidetav</lang>' in ssml
+    assert '<lang xml:lang="et-EE">summa</lang>' in ssml
+    # Английские бренды в <lang xml:lang="en-US">
+    assert '<lang xml:lang="en-US">Minecraft</lang>' in ssml
+    # Клавиши в <say-as interpret-as="characters">
+    assert '<say-as interpret-as="characters">W A S D</say-as>' in ssml
+    # Никаких знаков ударения \u0301
+    assert "\u0301" not in ssml
+
+    # Валидность XML
+    root = ET.fromstring(ssml)
+    assert root.tag.endswith("speak")
 
 
 def test_estonian_numerals_ssml_cardinal():

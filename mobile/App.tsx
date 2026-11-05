@@ -701,7 +701,9 @@ function MainApp() {
     };
 
     setSessionLessons((prev) => {
-      const filtered = prev.filter((p) => p.title !== data.task_title);
+      const filtered = prev.filter(
+        (p) => (data.lesson_id ? p.analysis?.lesson_id !== data.lesson_id : true) && p.title !== data.task_title
+      );
       return [newSessionItem, ...filtered];
     });
 
@@ -748,13 +750,16 @@ function MainApp() {
           : 'Переводим термины и готовим подсказку...'
       );
 
-      const data = await analyzePagesJson(payload, profile, API_BASE_URL);
+      const isAppend = imagesList.length > 1 && Boolean(analysis?.lesson_id);
+      const currentLessonId = isAppend ? analysis?.lesson_id : undefined;
+
+      const data = await analyzePagesJson(payload, profile, API_BASE_URL, currentLessonId);
 
       // Discard if user logged out while backend was analyzing
       if (analysisSessionRef.current !== currentSession) return;
 
-      // Decrement free reviews counter immediately in local state ONLY when photo was acceptable
-      if (!isPro && data.is_acceptable !== false) {
+      // Decrement free reviews counter immediately in local state ONLY for new scans (not appends) and when photo was acceptable
+      if (!isAppend && !isPro && data.is_acceptable !== false) {
         setLicenseStatus({
           ...(licenseStatus || {
             is_active: true,
@@ -825,8 +830,8 @@ function MainApp() {
   const handleTakePhoto = async (mode: 'replace' | 'append' = 'replace') => {
     setAnalysisError(null);
     if (!checkAuthGate()) return;
-    // Check if free review allowance ran out
-    if (!isPro && subInfo.remainingReviews <= 0) {
+    // Check if free review allowance ran out (only for new lessons; appending to active session is free)
+    if (mode !== 'append' && !isPro && subInfo.remainingReviews <= 0) {
       setModalBlockReason('reviews_limit_reached');
       setIsPaywallVisible(true);
       return;
@@ -885,8 +890,8 @@ function MainApp() {
   const handlePickImage = async (mode: 'replace' | 'append' = 'replace') => {
     setAnalysisError(null);
     if (!checkAuthGate()) return;
-    // Check if free review allowance ran out
-    if (!isPro && subInfo.remainingReviews <= 0) {
+    // Check if free review allowance ran out (only for new lessons; appending to active session is free)
+    if (mode !== 'append' && !isPro && subInfo.remainingReviews <= 0) {
       setModalBlockReason('reviews_limit_reached');
       setIsPaywallVisible(true);
       return;
@@ -954,12 +959,7 @@ function MainApp() {
 
   const handleAddPagePrompt = () => {
     if (!checkAuthGate()) return;
-    // Check if free review allowance ran out
-    if (!isPro && subInfo.remainingReviews <= 0) {
-      setModalBlockReason('reviews_limit_reached');
-      setIsPaywallVisible(true);
-      return;
-    }
+    // Appending to an active lesson session does not deduct reviews and is free
 
     ThemedAlert.alert(
       'Добавить страницу к уроку',
@@ -1417,20 +1417,22 @@ function MainApp() {
               </View>
             ))}
 
-            {/* + Добавить страницу (Камера / Галерея) */}
-            <TouchableOpacity
-              style={[
-                styles.addPageThumbnailBtn,
-                isJunior && styles.addPageThumbnailBtnJunior,
-              ]}
-              onPress={handleAddPagePrompt}
-              disabled={loading}
-              activeOpacity={0.7}
-              accessibilityLabel="Добавить страницу задания"
-            >
-              <Text style={styles.addPageIcon}>➕</Text>
-              <Text style={styles.addPageText}>Добавить{'\n'}страницу</Text>
-            </TouchableOpacity>
+            {/* + Добавить страницу (Камера / Галерея) - скрыта, если разворот из 2 страниц уже загружен */}
+            {capturedImages.length < 2 && (
+              <TouchableOpacity
+                style={[
+                  styles.addPageThumbnailBtn,
+                  isJunior && styles.addPageThumbnailBtnJunior,
+                ]}
+                onPress={handleAddPagePrompt}
+                disabled={loading}
+                activeOpacity={0.7}
+                accessibilityLabel="Добавить страницу задания"
+              >
+                <Text style={styles.addPageIcon}>➕</Text>
+                <Text style={styles.addPageText}>Добавить{'\n'}страницу</Text>
+              </TouchableOpacity>
+            )}
           </ScrollView>
         </View>
       )}
@@ -2672,7 +2674,7 @@ function MainApp() {
         </TouchableOpacity>
 
         <View style={styles.headerTitleCenter} pointerEvents="none">
-          <BrandLogo height={24} />
+          <BrandLogo height={24} tintColor={styles.burgerBar.backgroundColor} />
         </View>
 
         {/* Right Header Controls: PRO/Plan Badge & Profile */}

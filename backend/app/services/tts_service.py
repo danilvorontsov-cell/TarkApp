@@ -51,10 +51,33 @@ def _store_in_memory_cache(cache: Dict[str, bytes], key: str, data: bytes) -> No
     cache[key] = data
 
 
+# Поддерживаемые англоязычные бренды и термины для разметки <lang xml:lang="en-US">
+ENGLISH_BRANDS = [
+    "Lego Mindstorms", "Mindstorms", "Minecraft", "Roblox", "Scratch", "Python"
+]
+
+# Ключевые термины эстонского языка для автоматической мультиязычной SSML-разметки
+ESTONIAN_CORE_KEYWORDS = {
+    "liidetav", "liidetavad", "liidetavat", "liidetava", "liidetavale",
+    "vähendatav", "vähendatavat", "vähendatava", "vähendatavale",
+    "vähendaja", "vähendajat", "vähendajale",
+    "summa", "summat", "summas", "summale",
+    "vahe", "vahet", "vahes", "vahele",
+    "korrutis", "korrutist", "korrutaja", "korrutatav",
+    "jagatis", "jagatist", "jagatav", "jagaja",
+    "harjutus", "harjutuse", "harjutust", "harjutuses",
+    "ülesanne", "ülesande", "ülesannet", "ülesandes",
+    "vastus", "vastuse", "vastust", "vastuseks",
+    "küсимus", "küsimuse", "küsimust", "küsimusele",
+    "sadad", "kümned", "ühelised", "arvud", "arv",
+    "tere", "aitäh", "palun", "näide", "näited",
+    "tehe", "tehted", "lahutamine", "liitmine", "korrutamine", "jagamine",
+}
+
 # Фонетическая замена для диктора (словарик подмен популярных брендов/игр/клавиш)
 PHONETIC_REPLACEMENTS = [
-    (re.compile(r'\b(?:minecraft|майнкрафт)(?:[’\'-]?([а-яё]+))?\b', re.IGNORECASE), lambda m: 'Майнкрафт' + (m.group(1) or '') if m.group(1) else 'Майнкрафт'),
-    (re.compile(r'\b(?:roblox|роблокс)(?:[’\'-]?([а-яё]+))?\b', re.IGNORECASE), lambda m: 'Роблокс' + (m.group(1) or '') if m.group(1) else 'Роблокс'),
+    (re.compile(r'\b(?:майнкрафт)(?:[’\'-]?([а-яё]+))?\b', re.IGNORECASE), lambda m: 'Майнкрафт' + (m.group(1) or '') if m.group(1) else 'Майнкрафт'),
+    (re.compile(r'\b(?:роблокс)(?:[’\'-]?([а-яё]+))?\b', re.IGNORECASE), lambda m: 'Роблокс' + (m.group(1) or '') if m.group(1) else 'Роблокс'),
     (re.compile(r'\b(?:youtube|ютуб)(?:[’\'-]?([а-яё]+))?\b', re.IGNORECASE), lambda m: 'Ютуб' + (m.group(1) or '') if m.group(1) else 'Ютуб'),
     (re.compile(r'\b(?:google|гугл)(?:[’\'-]?([а-яё]+))?\b', re.IGNORECASE), lambda m: 'Гугл' + (m.group(1) or '') if m.group(1) else 'Гугл'),
     (re.compile(r'\benter\b', re.IGNORECASE), 'Энтер'),
@@ -144,21 +167,30 @@ def clean_text_for_speech(text: str) -> str:
 
 def add_ssml_sentence_breaks(escaped_xml: str) -> str:
     """
-    Добавляет <break time="500ms" /> после знаков препинания (. ! ? :)
+    Добавляет <break time="500ms" /> после знаков препинания (. ! ?)
     в экранированный XML-текст.
+    - Исключает XML-теги (<lang ...>, <say-as ...>, <break ...>).
     - Исключает десятичные точки (3.14) и время (14:30).
     - Исключает точку с запятой, чтобы не нарушать XML-сущности (&gt;, &lt;, &amp;).
     """
+    xml_tags = []
+    def mask_tag(m):
+        idx = len(xml_tags)
+        xml_tags.append(m.group(0))
+        return f"__XML_TAG_{idx}__"
+
+    t = re.sub(r'<[^>]+>', mask_tag, escaped_xml)
+
     masked = []
     def mask_num_time(m):
         idx = len(masked)
         masked.append(m.group(0))
         return f"NUMTIMEPLACEHOLDER{idx}NUMTIME"
 
-    t = re.sub(r'\b\d+[:.]\d+\b', mask_num_time, escaped_xml)
+    t = re.sub(r'\b\d+[:.]\d+\b', mask_num_time, t)
 
-    # Находим знаки конца предложения: точки, восклицательные, вопросительные, двоеточия
-    pattern = re.compile(r'([.!?\u2026]+|:(?!\d))(?!\s*<break\b)')
+    # Находим знаки конца предложения: точки, восклицательные, вопросительные
+    pattern = re.compile(r'([.!?\u2026]+)(?!\s*<break\b)')
     def repl(m):
         return f'{m.group(1)} <break time="500ms" /> '
 
@@ -166,6 +198,9 @@ def add_ssml_sentence_breaks(escaped_xml: str) -> str:
 
     for idx, orig in enumerate(masked):
         t = t.replace(f"NUMTIMEPLACEHOLDER{idx}NUMTIME", orig)
+
+    for idx, orig_tag in enumerate(xml_tags):
+        t = t.replace(f"__XML_TAG_{idx}__", orig_tag)
 
     # Предотвращаем дублирование тегов break
     t = re.sub(r'(?:<break\s+time="[^"]+"\s*\/?>\s*){2,}', '<break time="500ms" /> ', t)
@@ -289,6 +324,27 @@ ORDINAL_FORMS: Dict[int, Tuple[str, str, str, str, str, str]] = {
 
 ROMAN_KEYS = sorted(ROMAN_TO_INT.keys(), key=lambda x: len(x), reverse=True)
 ROMAN_PATTERN = "|".join(ROMAN_KEYS)
+
+def normalize_number_ranges(text: str) -> str:
+    """
+    Нормализует диапазоны чисел: '1-9' -> 'от 1 до 9'.
+    Если n1 < n2 и нет последующего '=' (не математическое выражение), заменяет на диапазон.
+    """
+    if not text:
+        return ""
+    def repl(m):
+        prefix = text[:m.start()]
+        if re.search(r'=\s*$', prefix):
+            return m.group(0)
+        n1 = int(m.group(1))
+        n2 = int(m.group(2))
+        if n1 < n2:
+            return f"от {n1} до {n2}"
+        return m.group(0)
+
+    pattern = re.compile(r'\b(\d+)\s*[-–—]\s*(\d+)\b(?!\s*=)')
+    return pattern.sub(repl, text)
+
 
 MATH_VAR_MAP = {
     "x": "икс", "X": "икс",
@@ -623,85 +679,6 @@ RUSSIAN_ACCENT_WORDS: Dict[str, str] = {
     "узнаешь": "узнаёшь",
     "чертеж": "чертёж",
     "Чертеж": "Чертёж",
-
-    # 2. Математические и школьные термины/глаголы с явным знаком ударения (\u0301)
-    "вычитаем": "вычита\u0301ем",
-    "Вычитаем": "Вычита\u0301ем",
-    "вычитание": "вычита\u0301ние",
-    "Вычитание": "Вычита\u0301ние",
-    "вычтем": "вы\u0301чтем",
-    "Вычтем": "Вы\u0301чтем",
-    "вычли": "вы\u0301чли",
-    "Вычли": "Вы\u0301чли",
-    "сложение": "сложе\u0301ние",
-    "Сложение": "Сложе\u0301ние",
-    "сложим": "сло\u0301жим",
-    "Сложим": "Сло\u0301жим",
-    "слагаемое": "слага\u0301емое",
-    "Слагаемое": "Слага\u0301емое",
-    "слагаемого": "слага\u0301емого",
-    "слагаемые": "слага\u0301емые",
-    "Слагаемые": "Слага\u0301емые",
-    "слагаемых": "слага\u0301емых",
-    "умножение": "умноже\u0301ние",
-    "Умножение": "Умноже\u0301ние",
-    "умножим": "умно\u0301жим",
-    "Умножим": "Умно\u0301жим",
-    "множитель": "мно\u0301житель",
-    "Множитель": "Мно\u0301житель",
-    "множителя": "мно\u0301жителя",
-    "множители": "мно\u0301жители",
-    "Множители": "Мно\u0301жители",
-    "множителей": "мно\u0301жителей",
-    "деление": "деле\u0301ние",
-    "Деление": "Деле\u0301ние",
-    "делитель": "дели\u0301тель",
-    "Делитель": "Дели\u0301тель",
-    "делителя": "дели\u0301теля",
-    "делители": "дели\u0301тели",
-    "Делители": "Дели\u0301тели",
-    "делимое": "дели\u0301мое",
-    "Делимое": "Дели\u0301мое",
-    "разделим": "разде\u0301лим",
-    "Разделим": "Разде\u0301лим",
-    "разность": "ра\u0301зность",
-    "Разность": "Ра\u0301зность",
-    "разности": "ра\u0301зности",
-    "частное": "ча\u0301стное",
-    "Частное": "Ча\u0301стное",
-    "разбираем": "разбира\u0301ем",
-    "Разбираем": "Разбира\u0301ем",
-    "разберем": "разберём",
-    "Разберем": "Разберём",
-    "проверяем": "проверя\u0301ем",
-    "Проверяем": "Проверя\u0301ем",
-    "проверим": "прове\u0301рим",
-    "Проверим": "Прове\u0301рим",
-    "пример": "приме\u0301р",
-    "Пример": "Приме\u0301р",
-    "примеры": "приме\u0301ры",
-    "Примеры": "Приме\u0301ры",
-    "упражнение": "упражне\u0301ние",
-    "Упражнение": "Упражне\u0301ние",
-    "упражнения": "упражне\u0301ния",
-    "Упражнения": "Упражне\u0301ния",
-    "правило": "пра\u0301вило",
-    "Правило": "Пра\u0301вило",
-    "правила": "пра\u0301вила",
-    "Правила": "Пра\u0301вила",
-    "уравнение": "уравне\u0301ние",
-    "Уравнение": "Уравне\u0301ние",
-    "уравнения": "уравне\u0301ния",
-    "Уравнения": "Уравне\u0301ния",
-    "множество": "мно\u0301жество",
-    "Множество": "Мно\u0301жество",
-    "множества": "мно\u0301жества",
-    "ответ": "отве\u0301т",
-    "Ответ": "Отве\u0301т",
-    "ответы": "отве\u0301ты",
-    "Ответы": "Отве\u0301ты",
-    "поэтому": "поэ\u0301тому",
-    "Поэтому": "Поэ\u0301тому",
 }
 
 _RUSSIAN_ACCENT_PATTERN = re.compile(
@@ -720,9 +697,11 @@ def normalize_russian_accents_and_yo(text: str) -> str:
         return ""
     t = _RUSSIAN_ACCENT_PATTERN.sub(lambda m: RUSSIAN_ACCENT_WORDS.get(m.group(0), m.group(0)), text)
     t = re.sub(r'(?i)\bсо\s+счет([аеуом]|ом)?\b', r'со счёт\1', t)
-    t = re.sub(r'(?i)\bпрежде\s+всего\b', 'прежде всего\u0301', t)
+    t = re.sub(r'(?i)\bпрежде\s+всего\b', 'прежде всего', t)
     t = re.sub(r'(?i)\bвот\s+и\s+все\b', 'вот и всё', t)
     t = re.sub(r'(?i)\bвсе\s+(готово|верно|правильно|получилось|сходится)\b', r'всё \1', t)
+    # ПОЛНОЕ УДАЛЕНИЕ принудительных знаков ударения (\u0301)
+    t = t.replace('\u0301', '')
     return t
 
 
@@ -763,6 +742,7 @@ def normalize_text_for_speech(text: str, is_russian_context: bool = True) -> str
     masked_text = re.sub(r'([«"“„][^»"”]+[»"”])', mask_est_quote, masked_text)
     norm_text = normalize_russian_ordinals_with_dot(masked_text)
     norm_text = normalize_roman_numerals(norm_text)
+    norm_text = normalize_number_ranges(norm_text)
     norm_text = normalize_math_expressions(norm_text)
 
     for idx, orig_q in enumerate(est_quotes):
@@ -904,13 +884,13 @@ def _escape_ssml(text: str) -> str:
 
 def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -> str:
     """
-    Формирует SSML разметку для одного запроса к Azure Speech Services:
-    - Санитизирует текст (очищает markdown, конвертирует стрелки, выполняет фонетическую замену брендов/клавиш).
-    - Скорость чтения стандартная естественная (100% темп речи диктора).
-    - Добавляет естественные паузы <break time="500ms" /> между предложениями.
-    - Теги <est>...</est> и эстонские термины оборачиваются в <voice name="et-EE-AnuNeural">.
-    - Русский и смешанный текст оборачивается в <voice name="ru-RU-SvetlanaMultilingualNeural">.
-    - Поддерживает моно-эстонский и моно-русский текст.
+    Формирует единый SSML-документ для одного запроса к Azure Speech Services:
+    - Голос по умолчанию: ru-RU-SvetlanaNeural.
+    - Эстонские фрагменты (слова, термины, предложения на эстонском) оборачиваются в <lang xml:lang="et-EE">...</lang>.
+    - Числительные внутри эстонского контекста оборачиваются в <say-as interpret-as="cardinal">...</say-as>.
+    - Английские термины и названия брендов (Lego Mindstorms, Minecraft и т.д.) оборачиваются в <lang xml:lang="en-US">...</lang>.
+    - Клавиши управления / аббревиатуры (WASD, W, A, S, D) оборачиваются в <say-as interpret-as="characters">W A S D</say-as>.
+    - Если voice explicitly Estonian ("et" или "et-EE..."), синтезируется голос et-EE-AnuNeural.
     """
     clean_text = clean_text_for_speech(text)
     if not clean_text:
@@ -921,8 +901,6 @@ def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -
     if bilingual or has_est_tag:
         segments = parse_bilingual_segments(clean_text)
     elif "et-EE" in voice or voice == "et":
-        # Если передан чисто кириллический текст для эстонского диктора,
-        # перенаправляем на русский или двуязычный парсер, чтобы избежать сбоя Azure
         if re.search(r'[а-яА-ЯёЁ]', clean_text) and not re.search(r'[a-zA-ZäöüõÄÖÜÕšžŠŽ]', clean_text):
             norm_text = normalize_text_for_speech(clean_text, is_russian_context=True)
             segments = [(norm_text, DEFAULT_VOICE)]
@@ -932,7 +910,6 @@ def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -
             clean_est = normalize_text_for_estonian_tts(clean_text)
             segments = [(clean_est, ESTONIAN_VOICE)]
     else:
-        # Если во всем тексте нет кириллицы и это не английский термин — озвучиваем эстонским
         if not re.search(r'[а-яА-ЯёЁ]', clean_text) and not _is_pure_english_brand_or_key(clean_text):
             clean_est = normalize_text_for_estonian_tts(clean_text)
             segments = [(clean_est, ESTONIAN_VOICE)]
@@ -941,50 +918,91 @@ def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -
             segments = [(norm_text, DEFAULT_VOICE)]
 
     is_all_est = all("et-EE" in v or v == "et" for _, v in segments)
-    root_lang = "et-EE" if is_all_est else "ru-RU"
 
-    voice_blocks: List[str] = []
-    for i, (seg_text, seg_voice) in enumerate(segments):
+    # Если весь документ чисто эстонский (например, быстрый переводчик или чисто эстонский текст)
+    if is_all_est and ("et-EE" in voice or voice == "et" or not re.search(r'[а-яА-ЯёЁ]', clean_text)):
+        root_voice = ESTONIAN_VOICE
+        root_lang = "et-EE"
+        body_parts = []
+        for seg_text, _ in segments:
+            s_clean = seg_text.strip()
+            if not s_clean:
+                continue
+            s_clean = re.sub(r'(?<=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])\s*/\s*(?=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])', ' või ', s_clean)
+            s_clean = re.sub(r'\s+/\s+', ' või ', s_clean)
+            esc = _escape_ssml(s_clean)
+            esc = re.sub(
+                r'\b(\d+)\b(?!\s*-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)',
+                r'<say-as interpret-as="cardinal">\1</say-as>',
+                esc,
+            )
+            body_parts.append(esc)
+        inner_content = add_ssml_sentence_breaks(" ".join(body_parts))
+        return (
+            '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
+            'xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="et-EE">\n'
+            f'  <voice name="{root_voice}">{inner_content}</voice>\n'
+            '</speak>'
+        )
+
+    # Иначе: ЕДИНЫЙ многоязычный голос Лии (ru-RU-SvetlanaNeural)
+    root_voice = DEFAULT_VOICE
+    root_lang = "ru-RU"
+
+    processed_blocks = []
+    for seg_text, seg_voice in segments:
         s_clean = seg_text.strip()
         if not s_clean:
             continue
-        v_name = ESTONIAN_VOICE if ("et-EE" in seg_voice or seg_voice == "et") else DEFAULT_VOICE
-        if v_name == ESTONIAN_VOICE:
-            # 1. Estonian slash replacement
+
+        if "et-EE" in seg_voice or seg_voice == "et":
+            # Эстонский фрагмент
             s_clean = re.sub(r'(?<=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])\s*/\s*(?=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])', ' või ', s_clean)
             s_clean = re.sub(r'\s+/\s+', ' või ', s_clean)
-            escaped_content = _escape_ssml(s_clean)
-            # 2. Wrap standalone numerals in <say-as interpret-as="cardinal">
-            escaped_content = re.sub(
+            esc = _escape_ssml(s_clean)
+            # Эстонские числа: <say-as interpret-as="cardinal">
+            esc = re.sub(
                 r'\b(\d+)\b(?!\s*-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)',
                 r'<say-as interpret-as="cardinal">\1</say-as>',
-                escaped_content,
+                esc,
             )
+            processed_blocks.append(f'<lang xml:lang="et-EE">{esc}</lang>')
         else:
-            # 1. Russian slash replacement
+            # Русский контекст
             s_clean = re.sub(r'(?<=[а-яА-ЯёЁ0-9a-zA-Z])\s*/\s*(?=[а-яА-ЯёЁ0-9a-zA-Z])', ' или ', s_clean)
             s_clean = re.sub(r'\s+/\s+', ' или ', s_clean)
-            # 2. Contextual Russian normalization & accentuation (restore 'ё', place acute stress)
-            s_accented = normalize_russian_accents_and_yo(s_clean)
-            escaped_content = _escape_ssml(s_accented)
+            s_norm = normalize_russian_accents_and_yo(s_clean)
 
-        content_with_breaks = add_ssml_sentence_breaks(escaped_content)
-        # Если последний сегмент не имел знака препинания, но исходный текст заканчивался на [.!?:],
-        # добавляем точку и паузу в конец для естественного завершения речи
-        if i == len(segments) - 1 and re.search(r'[.!?:]\s*$', clean_text):
-            if not content_with_breaks.endswith('/>'):
-                content_with_breaks = f'{content_with_breaks}. <break time="500ms" />'
+            # Экранируем русский текст
+            esc = _escape_ssml(s_norm)
 
-        voice_blocks.append(f'  <voice name="{v_name}">{content_with_breaks}</voice>')
+            # Оборачиваем английские бренды в <lang xml:lang="en-US">
+            for brand in ENGLISH_BRANDS:
+                p_brand = re.compile(rf'\b{re.escape(brand)}\b', re.IGNORECASE)
+                esc = p_brand.sub(f'<lang xml:lang="en-US">{brand}</lang>', esc)
 
-    if not voice_blocks:
-        voice_blocks.append(f'  <voice name="{DEFAULT_VOICE}">{_escape_ssml(clean_text)}</voice>')
+            # Оборачиваем клавиши WASD в <say-as interpret-as="characters">W A S D</say-as>
+            p_wasd = re.compile(r'\b(?:WASD|W,\s*A,\s*S,\s*D|W\s+A\s+S\s+D)\b', re.IGNORECASE)
+            esc = p_wasd.sub('<say-as interpret-as="characters">W A S D</say-as>', esc)
 
-    inner_xml = "\n".join(voice_blocks)
+            # Автоматическая разметка отдельных эстонских ключевых терминов в русском тексте
+            p_est_kw = re.compile(r'\b(' + '|'.join(re.escape(k) for k in ESTONIAN_CORE_KEYWORDS) + r')\b', re.IGNORECASE)
+            esc = p_est_kw.sub(r'<lang xml:lang="et-EE">\1</lang>', esc)
+
+            processed_blocks.append(esc)
+
+    joined_body = " ".join(processed_blocks)
+    inner_with_breaks = add_ssml_sentence_breaks(joined_body)
+
+    if re.search(r'[.!?:]\s*$', clean_text) and not inner_with_breaks.endswith('/>'):
+        inner_with_breaks = f'{inner_with_breaks}. <break time="500ms" />'
+
     return (
         f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
         f'xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="{root_lang}">\n'
-        f'{inner_xml}\n'
+        f'  <voice name="{root_voice}">\n'
+        f'    {inner_with_breaks}\n'
+        f'  </voice>\n'
         f'</speak>'
     )
 

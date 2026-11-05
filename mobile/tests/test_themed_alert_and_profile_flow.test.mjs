@@ -229,4 +229,20 @@ test('Scenario 8: BrandLogo component is mounted in Header TopBar with authentic
 
   const appFile = fs.readFileSync(path.resolve(__dirname, '../App.tsx'), 'utf-8');
   assert.ok(appFile.includes('<BrandLogo'), 'App.tsx header must render BrandLogo component');
+  assert.ok(appFile.includes('tintColor='), 'App.tsx must pass tintColor to BrandLogo to bind with burger menu color');
+});
+
+test('Scenario 9: Multi-page lesson sessions hide "+ Добавить страницу" when spread is complete (2 pages)', () => {
+  const appFile = fs.readFileSync(path.resolve(__dirname, '../App.tsx'), 'utf-8');
+  assert.ok(appFile.includes('capturedImages.length < 2 &&'), 'App.tsx must conditionally hide add-page button when 2 pages are reached');
+});
+
+test('Scenario 10: Multi-page spread append passes lesson_id and preserves balance quota', () => {
+  const apiFile = fs.readFileSync(path.resolve(__dirname, '../src/services/api.ts'), 'utf-8');
+  assert.ok(apiFile.includes('lessonId?: string'), 'analyzePagesJson must accept lessonId');
+  assert.ok(apiFile.includes('bodyPayload.lesson_id = lessonId'), 'analyzePagesJson must forward lesson_id to server');
+
+  const appFile = fs.readFileSync(path.resolve(__dirname, '../App.tsx'), 'utf-8');
+  assert.ok(appFile.includes('currentLessonId = isAppend ? analysis?.lesson_id : undefined'), 'App.tsx must compute currentLessonId for spread append');
+  assert.ok(appFile.includes('!isAppend && !isPro && data.is_acceptable !== false'), 'App.tsx must not decrement remainingReviews on spread append');
 });

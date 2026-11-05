@@ -305,31 +305,62 @@ async def analyze_page_json(
 
     dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")
 
-    # Check cache for identical image content and pedagogical profile
+    # Проверяем, передана ли активная сессия урока для добавления разворота
+    active_session = None
+    if payload.lesson_id:
+        active_session = lesson_session_service.get_session(payload.lesson_id)
+        if active_session:
+            if active_session.is_expired:
+                raise HTTPException(
+                    status_code=status.HTTP_410_GONE,
+                    detail={"error": "SESSION_EXPIRED", "message": "Время бесплатного дополнения урока (10 минут) истекло. Пожалуйста, начните новый урок."},
+                )
+            if dev_id and active_session.device_id and active_session.device_id != dev_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={"error": "DEVICE_MISMATCH", "message": "Сессия урока принадлежит другому устройству."},
+                )
+
+    is_session_append = active_session is not None
+
+    # Check cache for identical image content and pedagogical profile (only for new lessons)
     cache_key = compute_analysis_cache_key([b for b, _ in images_data], profile)
-    cached_result = get_cached_analysis(cache_key)
-    if cached_result and cached_result.is_acceptable is not False:
-        if dev_id and isinstance(db, Session):
-            license_service.deduct_review_attempt(dev_id, db)
-        session = lesson_session_service.create_session(
-            device_id=dev_id,
-            profile=profile,
-            images=images_data,
-            analysis=cached_result,
-        )
-        cached_result.lesson_id = session.lesson_id
-        cached_result.page_count = session.page_count
-        cached_result.can_append_page = session.can_append
-        cached_result.session_expires_at = session.expires_at
-        cached_result.session_seconds_remaining = session.seconds_remaining
-        return cached_result
+    if not is_session_append:
+        cached_result = get_cached_analysis(cache_key)
+        if cached_result and cached_result.is_acceptable is not False:
+            if dev_id and isinstance(db, Session):
+                license_service.deduct_review_attempt(dev_id, db)
+            session = lesson_session_service.create_session(
+                device_id=dev_id,
+                profile=profile,
+                images=images_data,
+                analysis=cached_result,
+            )
+            cached_result.lesson_id = session.lesson_id
+            cached_result.page_count = session.page_count
+            cached_result.can_append_page = session.can_append
+            cached_result.session_expires_at = session.expires_at
+            cached_result.session_seconds_remaining = session.seconds_remaining
+            return cached_result
 
     try:
         result = await gemini_tutor_service.analyze_page(
             profile=profile,
             images=images_data,
         )
-        # Store in cache and deduct 1 review attempt ONLY if the image was acceptable
+
+        if is_session_append and active_session:
+            # Для существующей сессии очки баланса НЕ списываются
+            active_session.page_count = len(images_data)
+            lesson_session_service.update_analysis(active_session.lesson_id, result)
+            result.lesson_id = active_session.lesson_id
+            result.page_count = len(images_data)
+            result.can_append_page = False
+            result.session_expires_at = active_session.expires_at
+            result.session_seconds_remaining = active_session.seconds_remaining
+            return result
+
+        # Новая сессия: сохраняем в кэш и списываем ровно 1 очко
         if result.is_acceptable is not False:
             store_cached_analysis(cache_key, result)
             if dev_id and isinstance(db, Session):
@@ -371,7 +402,7 @@ async def analyze_page_json(
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(get_current_user)],
     summary="Добавление второй страницы (разворота) в активную сессию урока",
-    description="Добавляет страницу 2 к уроку в течение 5 минут. Повторно очки сканирований не списываются.",
+    description="Добавляет страницу 2 к уроку в течение 10 минут. Повторно очки сканирований не списываются.",
 )
 async def append_page_to_lesson(
     lesson_id: str,
@@ -398,7 +429,7 @@ async def append_page_to_lesson(
     if session.is_expired:
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
-            detail={"error": "SESSION_EXPIRED", "message": "Время бесплатного дополнения урока (5 минут) истекло. Пожалуйста, начните новый урок."},
+            detail={"error": "SESSION_EXPIRED", "message": "Время бесплатного дополнения урока (10 минут) истекло. Пожалуйста, начните новый урок."},
         )
 
     if session.page_count >= 2:

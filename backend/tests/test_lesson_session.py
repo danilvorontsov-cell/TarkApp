@@ -243,3 +243,49 @@ def test_session_not_found(client):
     assert res.status_code == 404
     err = res.json()
     assert err["detail"]["error"] == "SESSION_NOT_FOUND"
+
+def test_analyze_page_json_with_existing_lesson_id_is_zero_cost(client):
+    """
+    Scenario 8: Passing existing lesson_id to /api/v1/analyze-page/json
+    appends the 2nd page without deducting balance.
+    """
+    device_id = "test-session-dev-json-append"
+    headers = {
+        "X-Device-ID": device_id,
+        "Authorization": f"Bearer {device_id}:Student",
+    }
+
+    # 1. First page scan
+    payload_1 = {
+        "image_base64": TINY_PNG_B64,
+        "mime_type": "image/png",
+        "grade": 3,
+        "interests": ["Minecraft"],
+    }
+    res_1 = client.post("/api/v1/analyze-page/json", json=payload_1, headers=headers)
+    assert res_1.status_code == 200
+    lesson_id = res_1.json()["lesson_id"]
+
+    # Quota before append
+    with SessionLocal() as db:
+        before_quota = license_service.check_device_access(device_id, db)["free_reviews_left"]
+
+    # 2. Append spread via analyze-page/json with lesson_id
+    payload_2 = {
+        "lesson_id": lesson_id,
+        "images_base64": [TINY_PNG_B64, TINY_PNG_B64],
+        "mime_type": "image/png",
+        "grade": 3,
+        "interests": ["Minecraft"],
+    }
+    res_2 = client.post("/api/v1/analyze-page/json", json=payload_2, headers=headers)
+    assert res_2.status_code == 200
+    data_2 = res_2.json()
+    assert data_2["lesson_id"] == lesson_id
+    assert data_2["page_count"] == 2
+    assert data_2["can_append_page"] is False
+
+    # Verify zero balance deducted
+    with SessionLocal() as db:
+        after_quota = license_service.check_device_access(device_id, db)["free_reviews_left"]
+        assert after_quota == before_quota

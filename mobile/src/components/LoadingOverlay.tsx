@@ -27,43 +27,24 @@ export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
   subtitle = 'Переводим термины и готовим подсказку',
   stepText,
 }) => {
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const borderProgress = useRef(new Animated.Value(0)).current;
   const scanLineAnim = useRef(new Animated.Value(0)).current;
-  const glowAnim = useRef(new Animated.Value(0.4)).current;
 
   useEffect(() => {
     if (!visible) return;
 
-    // Pulse animation for outer scanner frame
-    const pulseLoop = Animated.loop(
+    // Seamless ping-pong loop: strictly from 0 to 1 and back from 1 to 0 (zero phase discontinuity)
+    const borderLoop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.05,
-          duration: 900,
+        Animated.timing(borderProgress, {
+          toValue: 1,
+          duration: 1200,
           easing: Easing.inOut(Easing.ease),
           useNativeDriver: true,
         }),
-        Animated.timing(pulseAnim, {
-          toValue: 0.98,
-          duration: 900,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ])
-    );
-
-    // Glowing opacity oscillation
-    const glowLoop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(glowAnim, {
-          toValue: 0.9,
-          duration: 1000,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(glowAnim, {
-          toValue: 0.35,
-          duration: 1000,
+        Animated.timing(borderProgress, {
+          toValue: 0,
+          duration: 1200,
           easing: Easing.inOut(Easing.ease),
           useNativeDriver: true,
         }),
@@ -75,31 +56,39 @@ export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
       Animated.sequence([
         Animated.timing(scanLineAnim, {
           toValue: 1,
-          duration: 1400,
-          easing: Easing.inOut(Easing.cubic),
+          duration: 1300,
+          easing: Easing.inOut(Easing.ease),
           useNativeDriver: true,
         }),
         Animated.timing(scanLineAnim, {
           toValue: 0,
-          duration: 1400,
-          easing: Easing.inOut(Easing.cubic),
+          duration: 1300,
+          easing: Easing.inOut(Easing.ease),
           useNativeDriver: true,
         }),
       ])
     );
 
-    pulseLoop.start();
-    glowLoop.start();
+    borderLoop.start();
     scanLoop.start();
 
     return () => {
-      pulseLoop.stop();
-      glowLoop.stop();
+      borderLoop.stop();
       scanLoop.stop();
     };
   }, [visible]);
 
   if (!visible) return null;
+
+  const pulseScale = borderProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.98, 1.05],
+  });
+
+  const glowOpacity = borderProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.35, 0.88],
+  });
 
   const scanTranslateY = scanLineAnim.interpolate({
     inputRange: [0, 1],
@@ -123,8 +112,8 @@ export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
             style={[
               styles.glowBox,
               {
-                opacity: glowAnim,
-                transform: [{ scale: pulseAnim }],
+                opacity: glowOpacity,
+                transform: [{ scale: pulseScale }],
               },
             ]}
           />
