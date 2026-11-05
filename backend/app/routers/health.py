@@ -5,8 +5,8 @@ from app.services.gemini_service import gemini_tutor_service
 router = APIRouter(tags=["Health"])
 
 
-@router.get("/health")
-@router.get("/api/v1/health")
+@router.api_route("/health", methods=["GET", "HEAD"])
+@router.api_route("/api/v1/health", methods=["GET", "HEAD"])
 async def health_check():
     has_live_client = gemini_tutor_service.client is not None
     return {

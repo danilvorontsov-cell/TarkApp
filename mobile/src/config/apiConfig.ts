@@ -1,11 +1,11 @@
 /**
  * Global API Configuration for TarkApp.
  * 
- * Configured backend URL: http://185.31.243.124:8080 (Zone VPS)
+ * Configured backend URL: https://api.tarkapp.ee
  */
 
 export const DEFAULT_API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL || 'http://185.31.243.124:8080';
+  process.env.EXPO_PUBLIC_API_URL || 'https://api.tarkapp.ee';
 
 export const API_BASE_URL = DEFAULT_API_BASE_URL;
 

@@ -57,6 +57,10 @@ def test_health_check(client):
     assert "service" in data
     assert "gemini_model" in data
 
+    # Verify HEAD request also succeeds (for curl -I / monitoring)
+    head_resp = client.head("/health")
+    assert head_resp.status_code == 200
+
 
 def test_api_v1_health(client):
     response = client.get("/api/v1/health")
