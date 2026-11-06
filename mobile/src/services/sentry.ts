@@ -5,10 +5,9 @@ import * as Sentry from '@sentry/react-native';
  * Real-time crash reporting, native error handling, and performance monitoring.
  */
 
-// Sentry DSN configuration for organization 'tark-systems'
-// Run code: ea0bafc94d
+// Sentry DSN configuration for organization 'tark-systems', project 'tarkapp-mobile'
 const DEFAULT_SENTRY_DSN =
-  'https://ea0bafc94d@o4508900000000000.ingest.de.sentry.io/4508900000000000';
+  'https://e79b08bb210fb9906a3ebf8230bb4e80@o4512386157051904.ingest.de.sentry.io/4512386343043152';
 
 export const SENTRY_DSN =
   process.env.EXPO_PUBLIC_SENTRY_DSN ||
