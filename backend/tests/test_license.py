@@ -367,7 +367,8 @@ def test_invoice_endpoint_validates_email_and_generates_pdf(setup_db, monkeypatc
     assert len(data["viitenumber"]) >= 2
     assert data["amount"] == "9.99"
     assert data["currency"] == "EUR"
-    assert data["recipient"] == "TarkApp OÜ"
+    assert data["recipient"] == "Tark Systems OÜ"
+    assert data["explanation"] == f"Tarkapp, {data['invoice_number']}"
     assert data["iban"] == "EE129900001234567890"
     assert "pdf_download_url" in data
 

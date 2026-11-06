@@ -112,7 +112,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
   };
 
   const handleCtaPress = () => {
-    if (invoiceData && invoiceData.explanation && !invoiceData.explanation.includes(activePlan.title)) {
+    if (invoiceData && invoiceData.amount && invoiceData.amount !== activePlan.price) {
       setInvoiceData(null);
     }
     setInvoiceStatus(null);
@@ -594,7 +594,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                           onPress={() =>
                             copyToClipboard(
                               invoiceData?.explanation ||
-                                `TarkApp litsents: ${activePlan.title}${invoiceData?.invoice_number ? ` (${invoiceData.invoice_number})` : ''}`,
+                                `Tarkapp, ${invoiceData?.invoice_number || 'INV-2026-1001'}`,
                               'Пояснение'
                             )
                           }
@@ -602,7 +602,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                         >
                           <Text style={[styles.ibanDetailValue, { flex: 1, paddingRight: 6 }]}>
                             {invoiceData?.explanation ||
-                              `TarkApp litsents: ${activePlan.title}${invoiceData?.invoice_number ? ` (${invoiceData.invoice_number})` : ''}`}
+                              `Tarkapp, ${invoiceData?.invoice_number || 'INV-2026-1001'}`}
                           </Text>
                           <Text style={styles.copyActionPill}>
                             {copiedField === 'Пояснение' ? 'Скопировано ✓' : 'Копировать 📋'}

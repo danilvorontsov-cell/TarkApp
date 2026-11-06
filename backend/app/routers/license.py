@@ -289,7 +289,7 @@ async def request_invoice_email(
 
     amount = plan_info.get("amount", "71.90")
     title_ru = plan_info.get("title_ru", "PRO")
-    explanation = f"TarkApp litsents: {title_ru} ({invoice_number})"
+    explanation = f"Tarkapp, {invoice_number}"
 
     # Also notify admin in Telegram asynchronously
     try:

@@ -316,5 +316,20 @@ test('Scenario 11: Invoice UI displays clean user-friendly messaging without tec
   assert.match(apiContent, /msg\.includes\(['"]\.env['"]\)/);
 });
 
+test('Scenario 12: Recipient is Tark Systems OÜ and explanation format is concise (Tarkapp, <INV-NUMBER>)', async () => {
+  const fs = await import('node:fs');
+  const paywallContent = fs.readFileSync('mobile/src/screens/PaywallScreen.tsx', 'utf-8');
+  const subContent = fs.readFileSync('mobile/src/utils/subscription.ts', 'utf-8');
+
+  // Recipient must be Tark Systems OÜ
+  assert.match(subContent, /recipient_name:\s*['"]Tark Systems OÜ['"]/);
+
+  // Explanation format in PaywallScreen fallback must be concise: `Tarkapp, ${...}`
+  assert.match(paywallContent, /`Tarkapp,\s*\$\{invoiceData\?\.invoice_number/);
+  // Ensure old verbose strings are removed
+  assert.doesNotMatch(paywallContent, /TarkApp litsents:\s*\$\{activePlan\.title\}/);
+});
+
+
 
 

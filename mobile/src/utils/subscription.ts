@@ -4,7 +4,7 @@ export const DEFAULT_MAX_FREE_REVIEWS = 20;
 export const DEFAULT_TRIAL_DAYS = 14;
 
 export const DEFAULT_BANK_DETAILS: BankDetails = {
-  recipient_name: 'TarkApp OÜ (Reg: 16987456)',
+  recipient_name: 'Tark Systems OÜ',
   iban: 'EE129900001234567890',
   swift_bic: 'LHVBEE22',
 };

@@ -111,7 +111,7 @@ class InvoiceResponse(BaseModel):
     viitenumber: str
     amount: str
     currency: str = "EUR"
-    recipient: str = "TarkApp OÜ"
+    recipient: str = "Tark Systems OÜ"
     iban: str = "EE129900001234567890"
     swift_bic: str = "LHVBEE22"
     explanation: str

@@ -46,7 +46,7 @@ PLAN_ALIASES: Dict[str, str] = {
     "school_year": "year",
 }
 
-COMPANY_NAME = "TarkApp OÜ"
+COMPANY_NAME = "Tark Systems OÜ"
 COMPANY_REG = "16987456"
 BANK_NAME = "AS LHV Pank"
 BANK_IBAN = "EE129900001234567890"
@@ -74,13 +74,13 @@ def build_invoice_pdf(
     Includes Estonian 7-3-1 Viitenumber when provided.
     """
     lines = [
-        ("F2", 20, 50, 770, "TarkApp OU - INVOICE / ARVE"),
+        ("F2", 20, 50, 770, "Tark Systems OU - INVOICE / ARVE"),
         ("F1", 11, 50, 742, f"Invoice No / Arve nr: {invoice_number}"),
         ("F1", 11, 50, 725, f"Issue Date / Kuupaev: {issue_date}"),
         ("F1", 11, 50, 708, f"Due Date / Maksetahtaeg: {due_date}"),
         ("F1", 11, 50, 685, "------------------------------------------------------------------------"),
         ("F2", 12, 50, 665, "Seller / Muuja:"),
-        ("F1", 11, 50, 648, "TarkApp OU (Reg. code: 16987456)"),
+        ("F1", 11, 50, 648, "Tark Systems OU (Reg. code: 16987456)"),
         ("F1", 11, 50, 632, "Tallinn, Estonia | support@tarkapp.ee"),
         ("F2", 12, 50, 602, "Customer / Ostja:"),
         ("F1", 11, 50, 585, f"Email: {customer_email}"),
@@ -90,7 +90,7 @@ def build_invoice_pdf(
         ("F2", 14, 50, 490, f"TOTAL TO PAY / KUULUB TASUMISELE: {amount_eur} EUR"),
         ("F1", 11, 465, 465, "------------------------------------------------------------------------"),
         ("F2", 12, 50, 442, "Payment Details / Makse rekvisiidid (SEPA / Estonia):"),
-        ("F1", 11, 50, 422, f"Recipient / Saaja: TarkApp OU"),
+        ("F1", 11, 50, 422, f"Recipient / Saaja: Tark Systems OU"),
         ("F1", 11, 50, 405, f"Bank / Pank: {BANK_NAME}"),
         ("F2", 11, 50, 388, f"IBAN: {BANK_IBAN}"),
         ("F1", 11, 50, 371, f"SWIFT / BIC: {BANK_SWIFT}"),
@@ -98,10 +98,10 @@ def build_invoice_pdf(
 
     if viitenumber:
         lines.append(("F2", 11, 50, 354, f"Reference No / Viitenumber: {viitenumber}"))
-        lines.append(("F1", 11, 50, 337, f"Payment Explanation / Selgitus: {selgitus}"))
+        lines.append(("F1", 11, 50, 337, f"Payment Explanation / Selgitus: Tarkapp, {invoice_number}"))
         lines.append(("F1", 10, 50, 305, "Thank you for choosing TarkApp! / Taname, et valisite TarkAppi!"))
     else:
-        lines.append(("F2", 11, 50, 354, f"Payment Reference / Selgitus: {selgitus} ({invoice_number})"))
+        lines.append(("F2", 11, 50, 354, f"Payment Reference / Selgitus: Tarkapp, {invoice_number}"))
         lines.append(("F1", 10, 50, 315, "Thank you for choosing TarkApp! / Taname, et valisite TarkAppi!"))
 
     stream_cmds = ["BT"]
@@ -199,7 +199,7 @@ def build_invoice_html(
           {viite_row}
           <tr>
             <td style="padding: 8px 12px; color: #94A3B8;">Пояснение (Selgitus):</td>
-            <td style="padding: 8px 12px; font-weight: 700;">{html.escape(selgitus)} ({html.escape(invoice_number)})</td>
+            <td style="padding: 8px 12px; font-weight: 700;">Tarkapp, {html.escape(invoice_number)}</td>
           </tr>
           <tr>
             <td style="padding: 8px 12px; color: #94A3B8;">Срок оплаты:</td>
@@ -351,14 +351,14 @@ async def send_invoice_to_customer(
     viite_plain = f"Номер ссылки (Viitenumber): {viitenumber}\n" if viitenumber else ""
 
     plain_body = (
-        f"TarkApp OÜ — Счёт на оплату № {invoice_number}\n"
+        f"{COMPANY_NAME} — Счёт на оплату № {invoice_number}\n"
         f"Тариф: {plan['title_ru']}\n"
         f"Сумма: {plan['amount']} EUR\n"
         f"Получатель: {COMPANY_NAME} (Reg: {COMPANY_REG})\n"
         f"IBAN (LHV Pank): {BANK_IBAN}\n"
         f"SWIFT/BIC: {BANK_SWIFT}\n"
         f"{viite_plain}"
-        f"Пояснение к платежу (Selgitus): {plan['selgitus']} ({invoice_number})\n"
+        f"Пояснение к платежу (Selgitus): Tarkapp, {invoice_number}\n"
     )
 
     subject = f"Счёт на оплату TarkApp PRO № {invoice_number} ({plan['amount']} €)"
