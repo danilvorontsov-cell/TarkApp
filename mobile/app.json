@@ -33,7 +33,14 @@
           "cameraPermission": "Разрешите TarkApp доступ к камере для съемки страниц учебников."
         }
       ],
-      "./plugins/withCleartextTraffic.js"
+      "./plugins/withCleartextTraffic.js",
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "tark-systems",
+          "project": "tarkapp-mobile"
+        }
+      ]
     ],
     "extra": {
       "eas": {

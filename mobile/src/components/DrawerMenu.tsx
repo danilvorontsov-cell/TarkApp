@@ -15,6 +15,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Theme, darkTheme } from '../theme/colors';
 import { LicenseStatus } from '../services/api';
 import { SHOW_CUBES_DEMO } from '../config/features';
+import { ThemedAlert } from './ThemedAlert';
+import { sendTestSentryEvent } from '../services/sentry';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 320);
@@ -375,9 +377,21 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
             </TouchableOpacity>
           )}
 
-          <View style={styles.versionContainer}>
+          <TouchableOpacity
+            style={styles.versionContainer}
+            onLongPress={() => {
+              sendTestSentryEvent();
+              ThemedAlert.alert(
+                'Sentry Diagnostics',
+                'Тестовое событие мониторинга отправлено в Sentry (tark-systems / ea0bafc94d).'
+              );
+            }}
+            delayLongPress={700}
+            activeOpacity={0.7}
+            accessibilityLabel="Диагностика Sentry"
+          >
             <Text style={styles.versionText}>TarkApp • v1.2.1 • Tark Systems</Text>
-          </View>
+          </TouchableOpacity>
         </View>
       </Animated.View>
     </View>

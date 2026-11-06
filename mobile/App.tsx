@@ -62,7 +62,7 @@ import {
 import { optimizePageImage, optimizePageImages } from './src/services/imageOptimizer';
 import { PhraseBuilder } from './src/components/PhraseBuilder';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
-import { initSentry } from './src/services/sentry';
+import { initSentry, Sentry, sendTestSentryEvent } from './src/services/sentry';
 import { Theme, darkTheme } from './src/theme/colors';
 import { DrawerMenu, DrawerTabType } from './src/components/DrawerMenu';
 import { ComingSoonCard } from './src/components/ComingSoonCard';
@@ -2992,7 +2992,7 @@ function MainApp() {
   );
 }
 
-export default function App() {
+function App() {
   return (
     <SafeAreaProvider>
       <ErrorBoundary>
@@ -3001,6 +3001,8 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
+
+export default Sentry.wrap(App);
 
 const styles = StyleSheet.create({
   safeArea: {
