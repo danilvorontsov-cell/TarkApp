@@ -559,6 +559,14 @@ def normalize_russian_ordinals_with_dot(text: str) -> str:
     if not text:
         return ""
 
+    time_placeholders = []
+    def mask_time(m):
+        idx = len(time_placeholders)
+        time_placeholders.append(m.group(0))
+        return f"TIMETEMP{idx}TIMETEMP"
+
+    text = re.sub(r'\b([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*(=|[+\-*\/÷·×]))', mask_time, text)
+
     pattern = re.compile(
         r'(?i)(?:(\bв|во|на|о|об|к|ко|до|с|со|от|после|около)\s+)?'
         r'\b(\d+)\.\s*'
@@ -645,6 +653,10 @@ def normalize_russian_ordinals_with_dot(text: str) -> str:
         return f"{prefix}{ord_word}: "
 
     t = pattern_list_item.sub(repl_list_item, t)
+
+    for idx, orig_time in enumerate(time_placeholders):
+        t = t.replace(f"TIMETEMP{idx}TIMETEMP", orig_time)
+
     return t
 
 
@@ -943,9 +955,9 @@ def prepare_speech_text(display_text: str, is_russian_context: bool = True) -> s
     )
 
     t = clean_text_for_speech(t)
-    t = normalize_text_for_speech(t, is_russian_context=True)
     t = normalize_loanwords_and_brands(t)
     t = normalize_time_expressions(t)
+    t = normalize_text_for_speech(t, is_russian_context=True)
     t = normalize_russian_accents_and_yo(t)
 
     for idx, orig_t in enumerate(est_tags):

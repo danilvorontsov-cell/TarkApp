@@ -371,7 +371,7 @@ def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -
             # Русский фрагмент -> ru-RU-SvetlanaNeural
             s_clean = re.sub(r'(?<=[а-яА-ЯёЁ0-9a-zA-Z])\s*/\s*(?=[а-яА-ЯёЁ0-9a-zA-Z])', ' или ', s_clean)
             s_clean = re.sub(r'\s+/\s+', ' или ', s_clean)
-            s_norm = normalize_russian_accents_and_yo(s_clean)
+            s_norm = prepare_speech_text(s_clean)
             esc = _escape_ssml(s_norm)
 
             # Оборачиваем английские бренды в <lang xml:lang="en-US">

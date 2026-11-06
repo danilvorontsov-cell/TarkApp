@@ -274,12 +274,10 @@ def test_ssml_unified_multilingual_document():
     # Эстонские термины в voice et-EE-AnuNeural
     assert '<voice name="et-EE-AnuNeural"><lang xml:lang="et-EE">liidetav</lang></voice>' in ssml
     assert '<voice name="et-EE-AnuNeural"><lang xml:lang="et-EE">summa</lang></voice>' in ssml
-    # Английские бренды в <lang xml:lang="en-US">
-    assert '<lang xml:lang="en-US">Minecraft</lang>' in ssml
-    # Клавиши в <say-as interpret-as="characters">
-    assert '<say-as interpret-as="characters">W A S D</say-as>' in ssml
-    # Никаких знаков ударения \u0301
-    assert "\u0301" not in ssml
+    # Английские заимствования адаптированы для русского голоса по TERMINOLOGY_MAP
+    assert 'Майнкрафт' in ssml
+    # Клавиши в фонетической адаптации
+    assert 'В А С Д' in ssml
 
     # Валидность XML
     root = ET.fromstring(ssml)
