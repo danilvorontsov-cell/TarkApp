@@ -29,6 +29,7 @@ import {
   getTierPolicy,
   UserProfile,
   PageAnalysisResponse,
+  VisualData,
   SavedLessonCard,
   VocabularyItem,
   AGE_SUGGESTIONS,
@@ -1678,6 +1679,13 @@ function MainApp() {
             </View>
           )}
 
+          {/* Section Title: 🎯 Тема урока */}
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionTitleText, isJunior && styles.sectionTitleTextJunior]}>
+              🎯 Тема урока
+            </Text>
+          </View>
+
           {/* Card 1: Task Context / Title - растянуто на всё окно, с мягкой подсветкой фона */}
           <View style={[styles.modularCard, styles.topicTitleCard, isJunior && styles.topicTitleCardJunior]}>
             <Text style={[styles.resultTitle, isJunior && styles.resultTitleJunior]}>
@@ -2192,86 +2200,118 @@ function MainApp() {
               <Text style={styles.listHint}>
                 Нажми на слово, чтобы раскрыть пример предложения и послушать произношение:
               </Text>
-              {savedVocab.map((item, idx) => {
-                const isExpanded = expandedWord === item.est;
-                const isPlaying = playingId === `saved_vocab_${item.est}`;
-                const isItemActive = isPlaying && playbackState === 'playing';
-                const isItemPaused = isPlaying && playbackState === 'paused';
+              {(() => {
+                // Группировка слов по темам уроков
+                const groups: { topicTitle: string; items: typeof savedVocab }[] = [];
+                const map = new Map<string, typeof savedVocab>();
 
-                const isExPlaying = playingId === `saved_ex_${item.est}`;
-                const isExActive = isExPlaying && playbackState === 'playing';
-                const isExPaused = isExPlaying && playbackState === 'paused';
+                for (const item of savedVocab) {
+                  const topic = item.topicTitle ? item.topicTitle.trim() : 'Общие термины';
+                  if (!map.has(topic)) {
+                    map.set(topic, []);
+                  }
+                  map.get(topic)!.push(item);
+                }
 
-                return (
-                  <TouchableOpacity
-                    key={idx}
-                    style={[
-                      styles.vocabCard,
-                      isJunior && styles.vocabCardJunior,
-                      isExpanded && styles.vocabCardExpanded,
-                    ]}
-                    onPress={() => handleWordTap(item)}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.vocabCardTop}>
-                      <View style={styles.vocabEstRow}>
-                        <Text style={[styles.vocabCardEst, isJunior && styles.vocabCardEstJunior]}>
-                          {item.est}
+                for (const [topicTitle, items] of map.entries()) {
+                  groups.push({ topicTitle, items });
+                }
+
+                return groups.map((group, gIdx) => (
+                  <View key={gIdx} style={styles.vocabTopicSection}>
+                    <View style={styles.vocabTopicHeader}>
+                      <Text style={[styles.vocabTopicHeaderTitle, isJunior && styles.vocabTopicHeaderTitleJunior]}>
+                        🎯 Тема: {cleanEstTags(group.topicTitle)}
+                      </Text>
+                      <View style={styles.vocabTopicBadge}>
+                        <Text style={styles.vocabTopicBadgeText}>
+                          {group.items.length} {group.items.length === 1 ? 'слово' : group.items.length < 5 ? 'слова' : 'слов'}
                         </Text>
-                        <TouchableOpacity
-                          style={[
-                            styles.vocabCardSpeaker,
-                            isItemActive && styles.vocabCardSpeakerActive,
-                            isItemPaused && styles.vocabCardSpeakerPaused,
-                          ]}
-                          onPress={() => handlePlayAudio(item.est, 'et', `saved_vocab_${item.est}`)}
-                        >
-                          {loadingAudioId === `saved_vocab_${item.est}` ? (
-                            <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.7 }] }} />
-                          ) : (
-                            <Text style={styles.vocabCardSpeakerIcon}>
-                              {isItemActive ? '⏸' : isItemPaused ? '▶' : '🔊'}
-                            </Text>
-                          )}
-                        </TouchableOpacity>
                       </View>
-                      <TouchableOpacity
-                        style={styles.vocabCardDelete}
-                        onPress={() => handleDeleteVocabWord(item.est)}
-                      >
-                        <Text style={styles.vocabCardDeleteText}>✕</Text>
-                      </TouchableOpacity>
                     </View>
+                    {group.items.map((item, idx) => {
+                      const isExpanded = expandedWord === item.est;
+                      const isPlaying = playingId === `saved_vocab_${item.est}`;
+                      const isItemActive = isPlaying && playbackState === 'playing';
+                      const isItemPaused = isPlaying && playbackState === 'paused';
 
-                    <Text style={styles.vocabCardRu}>{item.ru}</Text>
+                      const isExPlaying = playingId === `saved_ex_${item.est}`;
+                      const isExActive = isExPlaying && playbackState === 'playing';
+                      const isExPaused = isExPlaying && playbackState === 'paused';
 
-                    {isExpanded && item.example ? (
-                      <View style={styles.vocabCardExampleBox}>
-                        <View style={styles.vocabCardExampleHeader}>
-                          <Text style={styles.vocabCardExampleLabel}>Пример в предложении:</Text>
-                          <TouchableOpacity
-                            style={[
-                              styles.vocabCardSpeaker,
-                              isExActive && styles.vocabCardSpeakerActive,
-                              isExPaused && styles.vocabCardSpeakerPaused,
-                            ]}
-                            onPress={() => handlePlayAudio(item.example, 'et', `saved_ex_${item.est}`)}
-                          >
-                            {loadingAudioId === `saved_ex_${item.est}` ? (
-                              <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.7 }] }} />
-                            ) : (
-                              <Text style={styles.vocabCardSpeakerIcon}>
-                                {isExActive ? '⏸' : isExPaused ? '▶' : '🔊'}
+                      return (
+                        <TouchableOpacity
+                          key={`${gIdx}_${idx}`}
+                          style={[
+                            styles.vocabCard,
+                            isJunior && styles.vocabCardJunior,
+                            isExpanded && styles.vocabCardExpanded,
+                          ]}
+                          onPress={() => handleWordTap(item)}
+                          activeOpacity={0.8}
+                        >
+                          <View style={styles.vocabCardTop}>
+                            <View style={styles.vocabEstRow}>
+                              <Text style={[styles.vocabCardEst, isJunior && styles.vocabCardEstJunior]}>
+                                {item.est}
                               </Text>
-                            )}
-                          </TouchableOpacity>
-                        </View>
-                        <Text style={styles.vocabCardExampleText}>«{item.example}»</Text>
-                      </View>
-                    ) : null}
-                  </TouchableOpacity>
-                );
-              })}
+                              <TouchableOpacity
+                                style={[
+                                  styles.vocabCardSpeaker,
+                                  isItemActive && styles.vocabCardSpeakerActive,
+                                  isItemPaused && styles.vocabCardSpeakerPaused,
+                                ]}
+                                onPress={() => handlePlayAudio(item.est, 'et', `saved_vocab_${item.est}`)}
+                              >
+                                {loadingAudioId === `saved_vocab_${item.est}` ? (
+                                  <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.7 }] }} />
+                                ) : (
+                                  <Text style={styles.vocabCardSpeakerIcon}>
+                                    {isItemActive ? '⏸' : isItemPaused ? '▶' : '🔊'}
+                                  </Text>
+                                )}
+                              </TouchableOpacity>
+                            </View>
+                            <TouchableOpacity
+                              style={styles.vocabCardDelete}
+                              onPress={() => handleDeleteVocabWord(item.est)}
+                            >
+                              <Text style={styles.vocabCardDeleteText}>✕</Text>
+                            </TouchableOpacity>
+                          </View>
+
+                          <Text style={styles.vocabCardRu}>{item.ru}</Text>
+
+                          {isExpanded && item.example ? (
+                            <View style={styles.vocabCardExampleBox}>
+                              <View style={styles.vocabCardExampleHeader}>
+                                <Text style={styles.vocabCardExampleLabel}>Пример в предложении:</Text>
+                                <TouchableOpacity
+                                  style={[
+                                    styles.vocabCardSpeaker,
+                                    isExActive && styles.vocabCardSpeakerActive,
+                                    isExPaused && styles.vocabCardSpeakerPaused,
+                                  ]}
+                                  onPress={() => handlePlayAudio(item.example, 'et', `saved_ex_${item.est}`)}
+                                >
+                                  {loadingAudioId === `saved_ex_${item.est}` ? (
+                                    <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.7 }] }} />
+                                  ) : (
+                                    <Text style={styles.vocabCardSpeakerIcon}>
+                                      {isExActive ? '⏸' : isExPaused ? '▶' : '🔊'}
+                                    </Text>
+                                  )}
+                                </TouchableOpacity>
+                              </View>
+                              <Text style={styles.vocabCardExampleText}>«{item.example}»</Text>
+                            </View>
+                          ) : null}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                ));
+              })()}
             </View>
           )}
         </View>
@@ -2687,7 +2727,7 @@ function MainApp() {
             onPress={() => setIsPaywallVisible(true)}
             accessibilityLabel={
               isPro
-                ? `Подписка активна: ${licenseStatus.package_name || 'PRO'}`
+                ? `Подписка активна: ${licenseStatus?.package_name || 'PRO'}`
                 : 'Тариф: Free. Нажмите для выбора тарифа'
             }
             accessibilityRole="button"
@@ -2701,7 +2741,7 @@ function MainApp() {
               ]}
             >
               {isPro
-                ? (licenseStatus.package_name ? `👑 ${licenseStatus.package_name}` : '👑 PRO')
+                ? (licenseStatus?.package_name ? `👑 ${licenseStatus.package_name}` : '👑 PRO')
                 : 'Free'}
             </Text>
           </TouchableOpacity>
@@ -3809,6 +3849,20 @@ const styles = StyleSheet.create({
     borderColor: darkTheme.cardBorder,
     ...Theme.shadow.card,
   },
+  sectionHeaderRow: {
+    marginBottom: 8,
+    paddingHorizontal: 2,
+  },
+  sectionTitleText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
+  },
+  sectionTitleTextJunior: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
+  },
   topicTitleCard: {
     backgroundColor: darkTheme.cardBackground,
     borderColor: darkTheme.cardBorder,
@@ -4441,6 +4495,44 @@ const styles = StyleSheet.create({
   },
   vocabList: {
     gap: 8,
+  },
+  vocabTopicSection: {
+    marginBottom: 16,
+  },
+  vocabTopicHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    marginTop: 6,
+    paddingHorizontal: 4,
+  },
+  vocabTopicHeaderTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
+    flex: 1,
+    marginRight: 8,
+  },
+  vocabTopicHeaderTitleJunior: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: Theme.colors.textPrimary,
+    flex: 1,
+    marginRight: 8,
+  },
+  vocabTopicBadge: {
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  vocabTopicBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#94A3B8',
   },
   vocabCard: {
     backgroundColor: Theme.colors.surface,

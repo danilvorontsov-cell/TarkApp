@@ -6,7 +6,7 @@ export {
   getTierFromGrade,
   getTierPolicy,
 } from '../services/gradePolicy';
-import { SchoolTier } from '../services/gradePolicy';
+import { SchoolTier, getTierFromGrade } from '../services/gradePolicy';
 import { VisualData } from './visual';
 
 export * from './visual';
@@ -25,6 +25,7 @@ export interface VocabularyItem {
   est: string;
   ru: string;
   example: string;
+  topicTitle?: string;
 }
 
 export interface WorkedExample {
@@ -35,6 +36,7 @@ export interface WorkedExample {
 }
 
 export interface PageAnalysisResponse {
+  lesson_id?: string;
   task_title: string;
   theme_explanation: string;
   alternative_explanation?: string;

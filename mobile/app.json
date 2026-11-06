@@ -2,7 +2,7 @@
   "expo": {
     "name": "TarkApp",
     "slug": "tarkapp",
-    "version": "1.0.1",
+    "version": "1.2.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -20,7 +20,7 @@
         "android.permission.RECORD_AUDIO"
       ],
       "package": "ee.tarkapp.mobile",
-      "versionCode": 2
+      "versionCode": 3
     },
     "web": {
       "favicon": "./assets/favicon.png"

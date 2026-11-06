@@ -229,6 +229,7 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
       est: cleanEst,
       ru: cleanRu,
       example: exampleText || 'Быстрый перевод (Kiirtõlge)',
+      topicTitle: 'Быстрый переводчик',
     };
 
     await StorageService.saveVocabularyItem(item);

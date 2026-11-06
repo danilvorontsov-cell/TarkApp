@@ -271,9 +271,9 @@ def test_ssml_unified_multilingual_document():
 
     # Единый голос SvetlanaNeural
     assert "ru-RU-SvetlanaNeural" in ssml or "ru-RU-SvetlanaMultilingualNeural" in ssml
-    # Эстонские термины в <lang xml:lang="et-EE">
-    assert '<lang xml:lang="et-EE">liidetav</lang>' in ssml
-    assert '<lang xml:lang="et-EE">summa</lang>' in ssml
+    # Эстонские термины в voice et-EE-AnuNeural
+    assert '<voice name="et-EE-AnuNeural">liidetav</voice>' in ssml
+    assert '<voice name="et-EE-AnuNeural">summa</voice>' in ssml
     # Английские бренды в <lang xml:lang="en-US">
     assert '<lang xml:lang="en-US">Minecraft</lang>' in ssml
     # Клавиши в <say-as interpret-as="characters">

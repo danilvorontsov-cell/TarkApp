@@ -191,12 +191,19 @@ export const StorageService = {
   async saveVocabularyItem(item: VocabularyItem): Promise<void> {
     try {
       const current = await this.getSavedVocabulary();
-      const exists = current.some(
+      const existingIdx = current.findIndex(
         (v) => v.est.toLowerCase() === item.est.toLowerCase()
       );
-      if (!exists) {
+      if (existingIdx === -1) {
         const updated = [item, ...current];
         const json = JSON.stringify(updated);
+        memoryStore[STORAGE_KEYS.VOCABULARY] = json;
+        try {
+          await AsyncStorage.setItem(STORAGE_KEYS.VOCABULARY, json);
+        } catch {}
+      } else if (!current[existingIdx].topicTitle && item.topicTitle) {
+        current[existingIdx] = { ...current[existingIdx], topicTitle: item.topicTitle };
+        const json = JSON.stringify(current);
         memoryStore[STORAGE_KEYS.VOCABULARY] = json;
         try {
           await AsyncStorage.setItem(STORAGE_KEYS.VOCABULARY, json);
@@ -213,8 +220,11 @@ export const StorageService = {
       const current = await this.getSavedVocabulary();
       const updated = [...current];
       for (const item of items) {
-        if (!updated.some((v) => v.est.toLowerCase() === item.est.toLowerCase())) {
+        const existingIdx = updated.findIndex((v) => v.est.toLowerCase() === item.est.toLowerCase());
+        if (existingIdx === -1) {
           updated.push(item);
+        } else if (!updated[existingIdx].topicTitle && item.topicTitle) {
+          updated[existingIdx] = { ...updated[existingIdx], topicTitle: item.topicTitle };
         }
       }
       const json = JSON.stringify(updated);
@@ -340,9 +350,14 @@ export const StorageService = {
         await AsyncStorage.setItem(STORAGE_KEYS.HISTORY, json);
       } catch {}
 
-      // Automatically accumulate lesson vocabulary in local dictionary
+      // Automatically accumulate lesson vocabulary in local dictionary with lesson topicTitle
       if (card.analysis?.vocabulary) {
-        await this.saveVocabularyItems(card.analysis.vocabulary);
+        const topic = card.analysis?.task_title || card.task_title;
+        const itemsWithTopic = card.analysis.vocabulary.map((v) => ({
+          ...v,
+          topicTitle: v.topicTitle || topic,
+        }));
+        await this.saveVocabularyItems(itemsWithTopic);
       }
     } catch (e) {
       // In-memory fallback

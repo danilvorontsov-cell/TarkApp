@@ -71,7 +71,7 @@ const RenderAutoMathBlocks: React.FC<MathBlocksProps> = ({ visual, isJunior, onA
   const [phase, setPhase] = useState<SwapPhase>('initial');
   const [containerWidth, setContainerWidth] = useState<number>(SCREEN_WIDTH - 64);
   const flightAnim = useRef(new Animated.Value(0)).current;
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
   // Group 1: defaults to 3 blue cubes, Group 2: defaults to 2 green cubes

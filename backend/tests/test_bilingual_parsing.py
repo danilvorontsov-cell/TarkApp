@@ -49,7 +49,7 @@ def test_minecraft_and_est_tag_segmentation():
     assert len(segments) == 2
     assert segments[0] == ("Давай построим в Minecraft", DEFAULT_VOICE)
     assert segments[1] == ("maja", ESTONIAN_VOICE)
-    assert DEFAULT_VOICE == "ru-RU-SvetlanaMultilingualNeural"
+    assert DEFAULT_VOICE == "ru-RU-SvetlanaNeural"
 
 def test_multiple_english_brands_no_tags_stay_intact():
     # Without <est> tags, text with multiple English terms (Minecraft, Roblox, YouTube, W/A/S/D) is not chopped
@@ -125,7 +125,8 @@ def test_build_ssml_with_est_tag():
     assert 'xml:lang="ru-RU"' in ssml
     assert f'<voice name="{DEFAULT_VOICE}">' in ssml
     assert 'Привет! <break time="500ms" /> Запомни слово' in ssml
-    assert '<lang xml:lang="et-EE">klaviatuur</lang>' in ssml
+    assert f'<voice name="{ESTONIAN_VOICE}">' in ssml
+    assert 'klaviatuur' in ssml
     assert 'и повтори. <break time="500ms" />' in ssml
 
 
@@ -200,4 +201,5 @@ def test_target_phrase_ssml_pipeline():
     assert "затем клавишу" in ssml
     assert '<break time="500ms" />' in ssml
     assert f'<voice name="{DEFAULT_VOICE}">' in ssml
-    assert '<lang xml:lang="et-EE">klaviatuur</lang>' in ssml
+    assert f'<voice name="{ESTONIAN_VOICE}">' in ssml
+    assert 'klaviatuur' in ssml

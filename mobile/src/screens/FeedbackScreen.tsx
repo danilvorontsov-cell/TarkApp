@@ -47,7 +47,7 @@ export const FeedbackScreen: React.FC<FeedbackScreenProps> = ({
         (Platform.OS === 'android' ? 'Android Device' : Platform.OS === 'ios' ? 'Apple Device' : 'Unknown');
 
       const osVersion = `${Platform.OS} ${Device.osVersion || Platform.Version || ''}`.trim();
-      const appVersion = Application.nativeApplicationVersion || '1.0.1';
+      const appVersion = Application.nativeApplicationVersion || '1.2.1';
       const lastReqId = getLastRequestId() || undefined;
       const clientTime = new Date().toISOString();
 
@@ -159,7 +159,7 @@ export const FeedbackScreen: React.FC<FeedbackScreenProps> = ({
           onChangeText={setMessage}
           placeholder={
             category === 'bug'
-              ? 'Опишите проблему: какая страница учебника, какое слово или кнопка сработала не так...'
+              ? 'Опишите проблему: какое слово или кнопка сработало не так?'
               : 'Опишите, какую функцию или тему вы хотели бы видеть в TarkApp...'
           }
           placeholderTextColor={darkTheme.textMuted}

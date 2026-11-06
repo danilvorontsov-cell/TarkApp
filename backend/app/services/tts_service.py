@@ -15,7 +15,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # Supported voice mappings for Azure Speech Services
-DEFAULT_VOICE = "ru-RU-SvetlanaMultilingualNeural"
+DEFAULT_VOICE = "ru-RU-SvetlanaNeural"
 ESTONIAN_VOICE = "et-EE-AnuNeural"
 
 VOICE_MAP: Dict[str, str] = {
@@ -945,35 +945,57 @@ def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -
             '</speak>'
         )
 
-    # Иначе: ЕДИНЫЙ многоязычный голос Лии (ru-RU-SvetlanaNeural)
-    root_voice = DEFAULT_VOICE
+    # Иначе: двуязычный / русский документ с явным переключением <voice> между ru-RU и et-EE
     root_lang = "ru-RU"
 
-    processed_blocks = []
-    for seg_text, seg_voice in segments:
+    # Выделяем ключевые эстонские термины из русских фрагментов в отдельные блоки эстонского диктора
+    expanded_segments: List[Tuple[str, str]] = []
+    p_est_kw = re.compile(r'\b(' + '|'.join(re.escape(k) for k in ESTONIAN_CORE_KEYWORDS) + r')\b', re.IGNORECASE)
+
+    for s_text, s_voice in segments:
+        if s_voice == DEFAULT_VOICE:
+            last_pos = 0
+            for m in p_est_kw.finditer(s_text):
+                if m.start() > last_pos:
+                    pre = s_text[last_pos:m.start()]
+                    if pre.strip():
+                        expanded_segments.append((pre, DEFAULT_VOICE))
+                kw = m.group(0)
+                expanded_segments.append((kw, ESTONIAN_VOICE))
+                last_pos = m.end()
+            if last_pos < len(s_text):
+                post = s_text[last_pos:]
+                if post.strip():
+                    expanded_segments.append((post, DEFAULT_VOICE))
+        else:
+            expanded_segments.append((s_text, s_voice))
+
+    final_segments = _stitch_and_clean_segments(expanded_segments, clean_text)
+
+    voice_blocks: List[str] = []
+    for seg_text, seg_voice in final_segments:
         s_clean = seg_text.strip()
         if not s_clean:
             continue
 
         if "et-EE" in seg_voice or seg_voice == "et":
-            # Эстонский фрагмент
+            # Эстонский фрагмент -> et-EE-AnuNeural
             s_clean = re.sub(r'(?<=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])\s*/\s*(?=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])', ' või ', s_clean)
             s_clean = re.sub(r'\s+/\s+', ' või ', s_clean)
             esc = _escape_ssml(s_clean)
-            # Эстонские числа: <say-as interpret-as="cardinal">
+            # Эстонские числительные: <say-as interpret-as="cardinal">
             esc = re.sub(
                 r'\b(\d+)\b(?!\s*-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)',
                 r'<say-as interpret-as="cardinal">\1</say-as>',
                 esc,
             )
-            processed_blocks.append(f'<lang xml:lang="et-EE">{esc}</lang>')
+            esc = add_ssml_sentence_breaks(esc)
+            voice_blocks.append(f'  <voice name="{ESTONIAN_VOICE}">{esc}</voice>')
         else:
-            # Русский контекст
+            # Русский фрагмент -> ru-RU-SvetlanaNeural
             s_clean = re.sub(r'(?<=[а-яА-ЯёЁ0-9a-zA-Z])\s*/\s*(?=[а-яА-ЯёЁ0-9a-zA-Z])', ' или ', s_clean)
             s_clean = re.sub(r'\s+/\s+', ' или ', s_clean)
             s_norm = normalize_russian_accents_and_yo(s_clean)
-
-            # Экранируем русский текст
             esc = _escape_ssml(s_norm)
 
             # Оборачиваем английские бренды в <lang xml:lang="en-US">
@@ -985,24 +1007,19 @@ def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -
             p_wasd = re.compile(r'\b(?:WASD|W,\s*A,\s*S,\s*D|W\s+A\s+S\s+D)\b', re.IGNORECASE)
             esc = p_wasd.sub('<say-as interpret-as="characters">W A S D</say-as>', esc)
 
-            # Автоматическая разметка отдельных эстонских ключевых терминов в русском тексте
-            p_est_kw = re.compile(r'\b(' + '|'.join(re.escape(k) for k in ESTONIAN_CORE_KEYWORDS) + r')\b', re.IGNORECASE)
-            esc = p_est_kw.sub(r'<lang xml:lang="et-EE">\1</lang>', esc)
+            esc = add_ssml_sentence_breaks(esc)
+            voice_blocks.append(f'  <voice name="{DEFAULT_VOICE}">{esc}</voice>')
 
-            processed_blocks.append(esc)
+    if voice_blocks and re.search(r'[.!?:]\s*$', clean_text):
+        last_b = voice_blocks[-1]
+        if not re.search(r'<break\b[^>]*\/>\s*<\/voice>$', last_b):
+            voice_blocks[-1] = re.sub(r'<\/voice>$', r'. <break time="500ms" /></voice>', last_b)
 
-    joined_body = " ".join(processed_blocks)
-    inner_with_breaks = add_ssml_sentence_breaks(joined_body)
-
-    if re.search(r'[.!?:]\s*$', clean_text) and not inner_with_breaks.endswith('/>'):
-        inner_with_breaks = f'{inner_with_breaks}. <break time="500ms" />'
-
+    joined_voices = "\n".join(voice_blocks)
     return (
         f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
         f'xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="{root_lang}">\n'
-        f'  <voice name="{root_voice}">\n'
-        f'    {inner_with_breaks}\n'
-        f'  </voice>\n'
+        f'{joined_voices}\n'
         f'</speak>'
     )
 
