@@ -349,16 +349,6 @@ export const StorageService = {
       try {
         await AsyncStorage.setItem(STORAGE_KEYS.HISTORY, json);
       } catch {}
-
-      // Automatically accumulate lesson vocabulary in local dictionary with lesson topicTitle
-      if (card.analysis?.vocabulary) {
-        const topic = card.analysis?.task_title || card.task_title;
-        const itemsWithTopic = card.analysis.vocabulary.map((v) => ({
-          ...v,
-          topicTitle: v.topicTitle || topic,
-        }));
-        await this.saveVocabularyItems(itemsWithTopic);
-      }
     } catch (e) {
       // In-memory fallback
     }

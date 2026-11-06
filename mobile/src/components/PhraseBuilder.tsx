@@ -44,6 +44,12 @@ interface BankWord {
   isPlaced: boolean;
 }
 
+interface ExampleState {
+  slotsFilled: Record<number, string>;
+  bankWords: BankWord[];
+  selectedSlotId: number | null;
+}
+
 /**
  * Normalizes text for Estonian TTS synthesis:
  * - Extracts clean text / slot values
@@ -105,13 +111,12 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
   useEffect(() => {
     setExamples([template]);
     setCurrentIdx(0);
+    setExamplesState({});
   }, [template]);
 
   const activeTemplate = examples[currentIdx] || template;
 
-  const [selectedSlotId, setSelectedSlotId] = useState<number | null>(null);
-  const [slotsFilled, setSlotsFilled] = useState<Record<number, string>>({});
-  const [bankWords, setBankWords] = useState<BankWord[]>([]);
+  const [examplesState, setExamplesState] = useState<Record<number, ExampleState>>({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Parse activeTemplate into sentences and tokens
@@ -169,44 +174,80 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
     return { sentences: sentenceList, allSlots: slotsList };
   }, [activeTemplate, vocabulary]);
 
-  // Initialize or reset slots and bank words
+  // Initialize slots and bank words for currentIdx if not yet initialized
   useEffect(() => {
-    setSlotsFilled({});
-    setSelectedSlotId(allSlots.length > 0 ? allSlots[0].slotId : null);
     setErrorMessage(null);
 
-    // Build the Word Bank
-    const bank: BankWord[] = [];
+    setExamplesState((prev) => {
+      if (prev[currentIdx]) {
+        return prev;
+      }
 
-    // 1. Add all expected words
-    allSlots.forEach((slot, i) => {
-      bank.push({
-        id: `expected_${slot.slotId}_${i}`,
-        word: slot.expectedWord,
-        isPlaced: false,
-      });
-    });
+      // Build the Word Bank for this example
+      const bank: BankWord[] = [];
 
-    // 2. Add 1-2 distractor words from vocabulary that are NOT already in expected words
-    const expectedLower = new Set(allSlots.map((s) => s.expectedWord.toLowerCase()));
-    let distractorsAdded = 0;
-
-    for (let i = 0; i < vocabulary.length && distractorsAdded < 2; i++) {
-      const vWord = vocabulary[i].est.trim();
-      if (vWord && !expectedLower.has(vWord.toLowerCase())) {
+      // 1. Add all expected words
+      allSlots.forEach((slot, i) => {
         bank.push({
-          id: `distractor_${i}`,
-          word: vWord,
+          id: `expected_${slot.slotId}_${i}`,
+          word: slot.expectedWord,
           isPlaced: false,
         });
-        distractorsAdded++;
-      }
-    }
+      });
 
-    // 3. Shuffle the word bank so words aren't in trivial slot order
-    const shuffled = [...bank].sort(() => Math.random() - 0.5);
-    setBankWords(shuffled);
-  }, [activeTemplate, vocabulary, allSlots]);
+      // 2. Add 1-2 distractor words from vocabulary that are NOT already in expected words
+      const expectedLower = new Set(allSlots.map((s) => s.expectedWord.toLowerCase()));
+      let distractorsAdded = 0;
+
+      for (let i = 0; i < vocabulary.length && distractorsAdded < 2; i++) {
+        const vWord = vocabulary[i].est.trim();
+        if (vWord && !expectedLower.has(vWord.toLowerCase())) {
+          bank.push({
+            id: `distractor_${i}`,
+            word: vWord,
+            isPlaced: false,
+          });
+          distractorsAdded++;
+        }
+      }
+
+      // 3. Shuffle the word bank so words aren't in trivial slot order
+      const shuffled = [...bank].sort(() => Math.random() - 0.5);
+
+      return {
+        ...prev,
+        [currentIdx]: {
+          slotsFilled: {},
+          bankWords: shuffled,
+          selectedSlotId: allSlots.length > 0 ? allSlots[0].slotId : null,
+        },
+      };
+    });
+  }, [currentIdx, allSlots, vocabulary]);
+
+  const currentExampleState = examplesState[currentIdx];
+  const slotsFilled = currentExampleState?.slotsFilled || {};
+  const bankWords = currentExampleState?.bankWords || [];
+  const selectedSlotId =
+    currentExampleState?.selectedSlotId !== undefined
+      ? currentExampleState.selectedSlotId
+      : allSlots.length > 0
+      ? allSlots[0].slotId
+      : null;
+
+  const setSelectedSlotId = (slotId: number | null) => {
+    setExamplesState((prev) => {
+      const curr = prev[currentIdx];
+      if (!curr) return prev;
+      return {
+        ...prev,
+        [currentIdx]: {
+          ...curr,
+          selectedSlotId: slotId,
+        },
+      };
+    });
+  };
 
   // If no slots exist, render plain template
   if (allSlots.length === 0) {
@@ -284,21 +325,28 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
     }
 
     // Successful placement!
-    setSlotsFilled((prev) => ({
-      ...prev,
-      [targetSlot!.slotId]: item.word,
-    }));
+    const newSlotsFilled = {
+      ...slotsFilled,
+      [targetSlot.slotId]: item.word,
+    };
 
-    // Mark word as placed in the bank
-    setBankWords((prev) =>
-      prev.map((bw) => (bw.id === item.id ? { ...bw, isPlaced: true } : bw))
+    const newBankWords = bankWords.map((bw) =>
+      bw.id === item.id ? { ...bw, isPlaced: true } : bw
     );
 
     // Auto-advance selection to next empty slot
     const nextEmpty = allSlots.find(
-      (s) => s.slotId !== targetSlot!.slotId && !slotsFilled[s.slotId]
+      (s) => s.slotId !== targetSlot!.slotId && !newSlotsFilled[s.slotId]
     );
-    setSelectedSlotId(nextEmpty ? nextEmpty.slotId : null);
+
+    setExamplesState((prev) => ({
+      ...prev,
+      [currentIdx]: {
+        slotsFilled: newSlotsFilled,
+        bankWords: newBankWords,
+        selectedSlotId: nextEmpty ? nextEmpty.slotId : null,
+      },
+    }));
   };
 
   // Remove word from slot and return it to the bank
@@ -312,31 +360,42 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
     setErrorMessage(null);
 
     // Free the slot
-    setSlotsFilled((prev) => {
-      const updated = { ...prev };
-      delete updated[slotId];
-      return updated;
-    });
+    const newSlotsFilled = { ...slotsFilled };
+    delete newSlotsFilled[slotId];
 
     // Return the word to available bank
-    setBankWords((prev) => {
-      let returned = false;
-      return prev.map((bw) => {
-        if (!returned && bw.isPlaced && bw.word.toLowerCase() === placedWord.toLowerCase()) {
-          returned = true;
-          return { ...bw, isPlaced: false };
-        }
-        return bw;
-      });
+    let returned = false;
+    const newBankWords = bankWords.map((bw) => {
+      if (!returned && bw.isPlaced && bw.word.toLowerCase() === placedWord.toLowerCase()) {
+        returned = true;
+        return { ...bw, isPlaced: false };
+      }
+      return bw;
     });
 
-    setSelectedSlotId(slotId);
+    setExamplesState((prev) => ({
+      ...prev,
+      [currentIdx]: {
+        slotsFilled: newSlotsFilled,
+        bankWords: newBankWords,
+        selectedSlotId: slotId,
+      },
+    }));
   };
 
   const handleResetSlots = () => {
-    setSlotsFilled({});
-    setBankWords((prev) => prev.map((bw) => ({ ...bw, isPlaced: false })));
-    setSelectedSlotId(allSlots.length > 0 ? allSlots[0].slotId : null);
+    setExamplesState((prev) => {
+      const curr = prev[currentIdx];
+      const initialBank = curr?.bankWords.map((bw) => ({ ...bw, isPlaced: false })) || [];
+      return {
+        ...prev,
+        [currentIdx]: {
+          slotsFilled: {},
+          bankWords: initialBank,
+          selectedSlotId: allSlots.length > 0 ? allSlots[0].slotId : null,
+        },
+      };
+    });
     setErrorMessage(null);
   };
 
@@ -476,12 +535,13 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
                       isComplete && styles.slotComplete,
                     ]}
                     onPress={() => {
-                      if (!isFilled) {
+                      if (isFilled) {
+                        handleRemoveFromSlot(token.slotId);
+                      } else {
                         setSelectedSlotId(token.slotId);
                       }
                     }}
-                    disabled={isFilled}
-                    activeOpacity={isFilled ? 1 : 0.7}
+                    activeOpacity={0.7}
                   >
                     <Text
                       style={[

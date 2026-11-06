@@ -479,6 +479,43 @@ def normalize_roman_numerals(text: str) -> str:
     return t
 
 
+RUSSIAN_UNITS = [
+    "ноль", "один", "два", "три", "четыре", "пять",
+    "шесть", "семь", "восемь", "девять", "десять",
+    "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать",
+    "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать"
+]
+RUSSIAN_TENS = [
+    "", "", "двадцать", "тридцать", "сорок", "пятьдесят",
+    "шестьдесят", "семьдесят", "восемьдесят", "девяносто"
+]
+RUSSIAN_HUNDREDS = [
+    "", "сто", "двести", "триста", "четыреста", "пятьсот",
+    "шестьсот", "семьсот", "восемьсот", "девятьсот"
+]
+
+
+def int_to_russian_nominative(n: int) -> str:
+    """Возвращает число 0-999 в именительном падеже русскими словами."""
+    if n < 0:
+        return f"минус {int_to_russian_nominative(-n)}"
+    if n < 20:
+        return RUSSIAN_UNITS[n]
+    if n < 100:
+        ten = n // 10
+        rem = n % 10
+        if rem == 0:
+            return RUSSIAN_TENS[ten]
+        return f"{RUSSIAN_TENS[ten]} {RUSSIAN_UNITS[rem]}"
+    if n < 1000:
+        hundred = n // 100
+        rem = n % 100
+        if rem == 0:
+            return RUSSIAN_HUNDREDS[hundred]
+        return f"{RUSSIAN_HUNDREDS[hundred]} {int_to_russian_nominative(rem)}"
+    return str(n)
+
+
 def normalize_math_expressions(text: str) -> str:
     """
     Нормализует математические переменные и знаки в русском контексте.
@@ -500,6 +537,31 @@ def normalize_math_expressions(text: str) -> str:
         return f"___TIME_STAMP_{idx}___"
 
     t = re.sub(r'\b([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*(=|[+\-*\/÷·×]))', mask_time, t)
+
+    # Нормализация сложения изолированных чисел (например, "9 + 3" -> "девять плюс три")
+    def repl_addition(m):
+        n1 = int(m.group(1))
+        n2 = int(m.group(2))
+        return f"{int_to_russian_nominative(n1)} плюс {int_to_russian_nominative(n2)}"
+
+    t = re.sub(r'\b(\d{1,3})\s*\+\s*(\d{1,3})\b', repl_addition, t)
+
+    # Нормализация изолированных перечислений цифр через "и" ("4 и 3", "2, 3 и 4") в именительный падеж
+    def repl_digits_and_3(m):
+        n1 = int(m.group(1))
+        n2 = int(m.group(2))
+        n3 = int(m.group(3))
+        return f"{int_to_russian_nominative(n1)}, {int_to_russian_nominative(n2)} и {int_to_russian_nominative(n3)}"
+
+    t = re.sub(r'\b(\d{1,3}),\s*(\d{1,3})\s+и\s+(\d{1,3})\b', repl_digits_and_3, t)
+
+    def repl_digits_and(m):
+        n1 = int(m.group(1))
+        n2 = int(m.group(2))
+        return f"{int_to_russian_nominative(n1)} и {int_to_russian_nominative(n2)}"
+
+    t = re.sub(r'\b(\d{1,3})\s+и\s+(\d{1,3})\b', repl_digits_and, t)
+
 
     t = re.sub(r'(?i)знак\s*[«"“„]?\s*[:÷]\s*[»"”]?|(?<=\()[:÷](?=\))', 'знак «разделить» ', t)
     t = re.sub(r'(?i)знак\s*[«"“„]?\s*[*·×]\s*[»"”]?|(?<=\()[*·×](?=\))', 'знак «умножить» ', t)
@@ -526,6 +588,21 @@ def normalize_math_expressions(text: str) -> str:
 
     for var, rep in MATH_VAR_MAP.items():
         t = re.sub(r'\b' + var + r'\b', rep, t)
+
+    # Изолированные цифры после "плюс" во избежание родительного падежа ("плюс трёх")
+    t = re.sub(
+        r'\b(плюс)\s+(\d{1,3})\b',
+        lambda m: f"{m.group(1)} {int_to_russian_nominative(int(m.group(2)))}",
+        t
+    )
+
+    # Нормализация цифр после арифметических терминов и глаголов ("складывать 4", "слагаемые 4 и 3")
+    t = re.sub(
+        r'(?i)\b(складыва[а-яё]*|прибавля[а-яё]*|вычита[а-яё]*|умножа[а-яё]*|дели[а-яё]*|числа|чисел|цифры|цифр|слагаемые|слагаемых|множители|множителей)\s+(\d{1,3})\b',
+        lambda m: f"{m.group(1)} {int_to_russian_nominative(int(m.group(2)))}",
+        t
+    )
+
 
     t = re.sub(r'\b(плюс|минус|равно|разделить на|умножить на)\s+[aA]\b', r'\1 а', t)
     t = re.sub(r'\b[aA]\s+(плюс|минус|равно|разделить на|умножить на)\b', r'а \1', t)
@@ -700,8 +777,24 @@ def normalize_russian_accents_and_yo(text: str) -> str:
     t = re.sub(r'(?i)\bпрежде\s+всего\b', 'прежде всего', t)
     t = re.sub(r'(?i)\bвот\s+и\s+все\b', 'вот и всё', t)
     t = re.sub(r'(?i)\bвсе\s+(готово|верно|правильно|получилось|сходится)\b', r'всё \1', t)
-    # ПОЛНОЕ УДАЛЕНИЕ принудительных знаков ударения (\u0301)
-    t = t.replace('\u0301', '')
+    # Омограф «шага»: «в два ша́га», «за три ша́га», «в 2 ша́га»
+    def repl_shaga(m):
+        prefix = m.group(1)
+        word = m.group(2)
+        prefix = re.sub(r'\b2\b', 'два', prefix)
+        prefix = re.sub(r'\b3\b', 'три', prefix)
+        prefix = re.sub(r'\b4\b', 'четыре', prefix)
+        capitalized = word[0].isupper()
+        shaga_stressed = "Ша\u0301га" if capitalized else "ша\u0301га"
+        return f"{prefix}{shaga_stressed}"
+
+    t = re.sub(
+        r'(?i)\b((?:(?:в|во|за|на|до|через|всего|ровно)\s+)?(?:два|две|три|четыре|два-три|2|3|4)\s+)(шага)\b',
+        repl_shaga,
+        t,
+    )
+    # ПОЛНОЕ УДАЛЕНИЕ принудительных знаков ударения (\u0301), кроме 'ша́га'
+    t = re.sub(r'(?<![шШ][аА])\u0301', '', t)
     return t
 
 

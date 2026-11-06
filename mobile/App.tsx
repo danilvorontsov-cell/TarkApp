@@ -173,6 +173,20 @@ export function cleanEstTags(text?: string | null): string {
   return text.replace(/<\s*\/?\s*est(?:\s+[^>]*)?>/gi, '');
 }
 
+/**
+ * Calculates the start timestamp (in ms) of the current study day.
+ * The educational study day begins at 03:00 local time.
+ * If current time is between 00:00 and 02:59, it still belongs to the previous calendar day's 03:00 study cycle.
+ */
+export const getStudyDayStart = (now = new Date()): number => {
+  const d = new Date(now);
+  if (d.getHours() < 3) {
+    d.setDate(d.getDate() - 1);
+  }
+  d.setHours(3, 0, 0, 0);
+  return d.getTime();
+};
+
 function MainApp() {
   const insets = useSafeAreaInsets();
   const [currentTab, setCurrentTab] = useState<TabType>('study');
@@ -279,11 +293,10 @@ function MainApp() {
       StorageService.getHistory().then((h) => {
         setHistory(h);
         if (isRegistered) {
-          // Pre-fill today's session lessons from local history only for registered users
-          const startOfToday = new Date();
-          startOfToday.setHours(0, 0, 0, 0);
+          // Pre-fill today's study session lessons from local history only for registered users
+          const studyDayStart = getStudyDayStart();
           const todayItems: SessionLesson[] = h
-            .filter((c) => c.timestamp >= startOfToday.getTime())
+            .filter((c) => c.timestamp >= studyDayStart)
             .map((c) => ({
               id: c.id,
               title: c.task_title,
@@ -307,6 +320,13 @@ function MainApp() {
             setIsSaved(true);
             // Start background prefetch for latest today lesson
             AudioQueueManager.prefetchLessonAudio(todayItems[0].analysis, API_BASE_URL, saved.grade);
+          } else {
+            // New study day (after 03:00): Clean start ("Сделай фото для разбора")
+            setSessionLessons([]);
+            setAnalysis(null);
+            setCapturedImages([]);
+            setCapturedImageUri(null);
+            setIsSaved(false);
           }
         } else {
           // Guest mode starts with clean slate
@@ -314,6 +334,7 @@ function MainApp() {
           setAnalysis(null);
           setCapturedImages([]);
           setCapturedImageUri(null);
+          setIsSaved(false);
         }
       });
     });
@@ -362,10 +383,53 @@ function MainApp() {
     const appStateSub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'background' || nextState === 'inactive') {
         AudioQueueManager.pause();
+      } else if (nextState === 'active') {
+        // Daily session reset check at 03:00 boundary
+        const studyDayStart = getStudyDayStart();
+        setSessionLessons((prev) => {
+          const validToday = prev.filter((l) => l.timestamp >= studyDayStart);
+          if (validToday.length === 0 && prev.length > 0) {
+            setAnalysis(null);
+            setCapturedImages([]);
+            setCapturedImageUri(null);
+            setIsSaved(false);
+            return [];
+          } else if (validToday.length !== prev.length) {
+            if (validToday.length > 0) {
+              setAnalysis(validToday[0].analysis);
+              setCapturedImageUri(validToday[0].imageUri);
+              const restoredImages = (validToday[0].imageUris && validToday[0].imageUris.length > 0)
+                ? validToday[0].imageUris.map((u) => ({ uri: u, mimeType: 'image/jpeg' }))
+                : validToday[0].imageUri
+                ? [{ uri: validToday[0].imageUri, mimeType: 'image/jpeg' }]
+                : [];
+              setCapturedImages(restoredImages);
+            }
+            return validToday;
+          }
+          return prev;
+        });
       }
     });
 
+    // Periodic check for 03:00 educational day rollover while app remains open
+    const checkStudyDayTimer = setInterval(() => {
+      const studyDayStart = getStudyDayStart();
+      setSessionLessons((prev) => {
+        const validToday = prev.filter((l) => l.timestamp >= studyDayStart);
+        if (validToday.length === 0 && prev.length > 0) {
+          setAnalysis(null);
+          setCapturedImages([]);
+          setCapturedImageUri(null);
+          setIsSaved(false);
+          return [];
+        }
+        return prev;
+      });
+    }, 60000);
+
     return () => {
+      clearInterval(checkStudyDayTimer);
       appStateSub.remove();
       unsubAudio();
       stopTts();
@@ -687,9 +751,11 @@ function MainApp() {
       imageUris: allUris,
     };
 
-    // Do not auto-save to history to prevent cluttering; user manually clicks "Сохранить в историю"
-    const alreadySaved = await StorageService.isLessonSaved(data.task_title);
-    setIsSaved(alreadySaved);
+    // Auto-save newly analyzed lesson to history (archive)
+    await StorageService.saveLessonToHistory(card);
+    const updatedHistory = await StorageService.getHistory();
+    setHistory(updatedHistory);
+    setIsSaved(true);
 
     // Update today's session lessons list
     const newSessionItem: SessionLesson = {
@@ -1189,11 +1255,9 @@ function MainApp() {
       setIsSaved(true);
       const updatedHistory = await StorageService.getHistory();
       setHistory(updatedHistory);
-      const updatedVocab = await StorageService.getSavedVocabulary();
-      setSavedVocab(updatedVocab);
       ThemedAlert.alert(
         '⭐ Сохранено в историю!',
-        'Разбор урока и все новые слова сохранены в историю и словарик устройства.'
+        'Разбор урока сохранен в историю.'
       );
     } catch (err: any) {
       ThemedAlert.alert('Ошибка сохранения', 'Не удалось сохранить урок в историю.');
@@ -1257,6 +1321,29 @@ function MainApp() {
     await StorageService.removeVocabularyItem(estTerm);
     const updated = await StorageService.getSavedVocabulary();
     setSavedVocab(updated);
+  };
+
+  const handleToggleVocabBookmark = async (v: VocabularyItem) => {
+    try {
+      const isSavedInVocab = savedVocab.some(
+        (sv) => sv.est.toLowerCase().trim() === v.est.toLowerCase().trim()
+      );
+      if (isSavedInVocab) {
+        await StorageService.removeVocabularyItem(v.est.trim());
+      } else {
+        const itemToSave: VocabularyItem = {
+          est: v.est.trim(),
+          ru: v.ru.trim(),
+          example: v.example?.trim(),
+          topicTitle: v.topicTitle || (analysis ? analysis.task_title : undefined),
+        };
+        await StorageService.saveVocabularyItem(itemToSave);
+      }
+      const updated = await StorageService.getSavedVocabulary();
+      setSavedVocab(updated);
+    } catch (e) {
+      console.warn('Error toggling vocab bookmark:', e);
+    }
   };
 
   const handleClearAllData = () => {
@@ -1857,6 +1944,10 @@ function MainApp() {
                 const isExPlaying = playingId === `vocab_ex_${idx}`;
                 const isExActive = isExPlaying && playbackState === 'playing';
                 const isExPaused = isExPlaying && playbackState === 'paused';
+
+                const isVocabSaved = savedVocab.some(
+                  (sv) => sv.est.toLowerCase().trim() === v.est.toLowerCase().trim()
+                );
                 return (
                   <View key={idx} style={styles.vocabItemCard}>
                     <View style={styles.vocabPillRow}>
@@ -1881,6 +1972,19 @@ function MainApp() {
                         </TouchableOpacity>
                       </View>
                       <Text style={styles.vocabRuText}>— {cleanEstTags(v.ru)}</Text>
+                      <TouchableOpacity
+                        style={[
+                          styles.vocabBookmarkBtn,
+                          isVocabSaved && styles.vocabBookmarkBtnActive,
+                        ]}
+                        onPress={() => handleToggleVocabBookmark(v)}
+                        accessibilityLabel={isVocabSaved ? 'Удалить из словарика' : 'Сохранить в словарик'}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Text style={[styles.vocabBookmarkIcon, isVocabSaved && styles.vocabBookmarkIconActive]}>
+                          {isVocabSaved ? '⭐' : '☆'}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
 
                     {v.example ? (
@@ -4309,6 +4413,23 @@ const styles = StyleSheet.create({
     color: Theme.colors.textSecondary,
     marginLeft: 10,
     flexShrink: 1,
+  },
+  vocabBookmarkBtn: {
+    marginLeft: 'auto',
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: 'transparent',
+  },
+  vocabBookmarkBtnActive: {
+    backgroundColor: '#FEF3C7',
+  },
+  vocabBookmarkIcon: {
+    fontSize: 16,
+    color: '#9CA3AF',
+  },
+  vocabBookmarkIconActive: {
+    fontSize: 16,
+    color: '#D97706',
   },
   vocabExampleBox: {
     flexDirection: 'row',

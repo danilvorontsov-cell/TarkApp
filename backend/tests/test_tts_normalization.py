@@ -301,3 +301,32 @@ def test_estonian_numerals_ssml_cardinal():
     assert '<say-as interpret-as="cardinal">5-ga</say-as>' not in ssml_case
 
 
+
+
+def test_homograph_shaga_accent():
+    from app.services.tts_service import normalize_russian_accents_and_yo, build_ssml
+
+    # Омограф «ша́га»: устойчивые выражения сохраняют явное ударение \u0301 на 'а'
+    res_dva = normalize_russian_accents_and_yo("Решение в два шага")
+    assert "в два ша\u0301га" in res_dva
+
+    res_tri = normalize_russian_accents_and_yo("Сделай за три шага")
+    assert "за три ша\u0301га" in res_tri
+
+    res_num = normalize_russian_accents_and_yo("за 2 шага")
+    assert "за два ша\u0301га" in res_num
+
+    ssml = build_ssml("Решение задачи в два шага.")
+    assert "в два ша\u0301га" in ssml
+
+
+def test_isolated_digits_and_math_nominative():
+    from app.services.tts_service import normalize_text_for_speech, normalize_math_expressions
+
+    # «4 и 3» -> именительный падеж «четыре и три» вместо ошибочного родительного («четырёх и трёх»)
+    assert "четыре и три" in normalize_text_for_speech("Нужно складывать 4 и 3")
+    assert "четыре и три" in normalize_math_expressions("4 и 3")
+
+    # «9 + 3» -> именительный падеж «девять плюс три»
+    assert "девять плюс три" in normalize_math_expressions("9 + 3")
+    assert "девять плюс три" in normalize_text_for_speech("Пример: 9 + 3")
