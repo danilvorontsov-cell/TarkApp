@@ -35,6 +35,14 @@ export interface WorkedExample {
   note?: string;
 }
 
+export interface LessonSpeechLayer {
+  voice_prompt_script: string;
+  theme_explanation: string;
+  alternative_explanation?: string | null;
+  how_to_answer: string;
+  worked_example?: string | null;
+}
+
 export interface PageAnalysisResponse {
   lesson_id?: string;
   task_title: string;
@@ -47,6 +55,12 @@ export interface PageAnalysisResponse {
   answer_template: string;
   voice_prompt_script: string;
   is_acceptable?: boolean;
+  speech_layer?: LessonSpeechLayer;
+  voice_prompt_script_speech?: string;
+  theme_explanation_speech?: string;
+  alternative_explanation_speech?: string;
+  how_to_answer_speech?: string;
+  worked_example_speech?: string;
 }
 
 export interface SavedLessonCard {

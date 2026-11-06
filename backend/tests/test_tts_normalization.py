@@ -272,8 +272,8 @@ def test_ssml_unified_multilingual_document():
     # Единый голос SvetlanaNeural
     assert "ru-RU-SvetlanaNeural" in ssml or "ru-RU-SvetlanaMultilingualNeural" in ssml
     # Эстонские термины в voice et-EE-AnuNeural
-    assert '<voice name="et-EE-AnuNeural">liidetav</voice>' in ssml
-    assert '<voice name="et-EE-AnuNeural">summa</voice>' in ssml
+    assert '<voice name="et-EE-AnuNeural"><lang xml:lang="et-EE">liidetav</lang></voice>' in ssml
+    assert '<voice name="et-EE-AnuNeural"><lang xml:lang="et-EE">summa</lang></voice>' in ssml
     # Английские бренды в <lang xml:lang="en-US">
     assert '<lang xml:lang="en-US">Minecraft</lang>' in ssml
     # Клавиши в <say-as interpret-as="characters">
@@ -330,3 +330,80 @@ def test_isolated_digits_and_math_nominative():
     # «9 + 3» -> именительный падеж «девять плюс три»
     assert "девять плюс три" in normalize_math_expressions("9 + 3")
     assert "девять плюс три" in normalize_text_for_speech("Пример: 9 + 3")
+
+
+def test_terminology_phonetic_adaptation():
+    from app.services.tts_normalizer import prepare_speech_text, normalize_loanwords_and_brands
+
+    text = "Мы играем в Roblox и строим в Minecraft из LEGO, смотрим YouTube и учим IT, жми WASD."
+    speech = prepare_speech_text(text)
+    assert "Роблокс" in speech
+    assert "Майнкрафт" in speech
+    assert "Лего" in speech
+    assert "Ютуб" in speech
+    assert "АйТи" in speech
+    assert "В А С Д" in speech
+
+
+def test_time_normalization():
+    from app.services.tts_normalizer import prepare_speech_text, normalize_time_expressions
+
+    assert "девять ноль-ноль" in prepare_speech_text("Урок начинается в 09:00")
+    assert "четырнадцать тридцать" in prepare_speech_text("Обед в 14:30")
+    assert "десять ноль пять" in prepare_speech_text("Встреча в 10:05")
+
+    # Math division with colons is NOT converted to time
+    math_div = prepare_speech_text("15 : 3 = 5")
+    assert "разделить на" in math_div
+    assert "ноль" not in math_div
+
+
+def test_display_and_speech_layers_separation():
+    from app.models.page_analysis import PageAnalysisResponse, VocabularyItem, WorkedExample
+
+    resp = PageAnalysisResponse(
+        task_title="Урок математики",
+        theme_explanation="В Roblox мы собираем 4 и 3 блока в 09:00",
+        vocabulary=[VocabularyItem(est="liidetav", ru="слагаемое", example="Liidetav on number.")],
+        worked_example=WorkedExample(
+            title="Пример решения (Näidis)",
+            given="Дано: 4 и 3",
+            steps=["1. Сложи 4 и 3 = 7", "2. Ответ: 7"]
+        ),
+        how_to_answer="Реши задание в два шага",
+        answer_template="Summa on [7]",
+        voice_prompt_script="Привет! Мы играем в Minecraft и решаем пример 9 + 3 в 09:00!"
+    )
+
+    # 1. Display layer retains original numbers, time and brands for clean UI
+    assert "Roblox" in resp.theme_explanation
+    assert "4 и 3" in resp.theme_explanation
+    assert "09:00" in resp.theme_explanation
+    assert "Minecraft" in resp.voice_prompt_script
+    assert "9 + 3" in resp.voice_prompt_script
+
+    # 2. Speech layer is phonetically prepared for Azure TTS
+    assert resp.speech_layer is not None
+    assert "Роблокс" in resp.speech_layer.theme_explanation
+    assert "четыре и три" in resp.speech_layer.theme_explanation
+    assert "девять ноль-ноль" in resp.speech_layer.theme_explanation
+    assert "Майнкрафт" in resp.speech_layer.voice_prompt_script
+    assert "девять плюс три" in resp.speech_layer.voice_prompt_script
+    assert "в два ша\u0301га" in resp.speech_layer.how_to_answer
+    assert "Первое" in resp.speech_layer.worked_example
+
+
+def test_estonian_terms_bilingual_preservation_not_transcribed():
+    from app.services.tts_service import build_ssml, parse_bilingual_segments, DEFAULT_VOICE, ESTONIAN_VOICE
+
+    text = "Термин <est>liidetav</est> означает слагаемое, а <est>summa</est> — сумму."
+    segments = parse_bilingual_segments(text)
+
+    # Estonian terms are isolated for et-EE-AnuNeural voice
+    assert any(s[0] == "liidetav" and s[1] == ESTONIAN_VOICE for s in segments)
+    assert any(s[0] == "summa" and s[1] == ESTONIAN_VOICE for s in segments)
+
+    # SSML switches voices and wraps Estonian terms in native Estonian tag
+    ssml = build_ssml(text)
+    assert '<voice name="et-EE-AnuNeural"><lang xml:lang="et-EE">liidetav</lang></voice>' in ssml
+    assert '<voice name="et-EE-AnuNeural"><lang xml:lang="et-EE">summa</lang></voice>' in ssml

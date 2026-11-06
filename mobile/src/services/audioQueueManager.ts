@@ -182,10 +182,11 @@ class AudioQueueManagerClass {
     const isVocabAudio = policy ? policy.vocabAudioEnabled : true;
 
     // 1. Priority 1: Partner prompt (voice_prompt_script)
-    if (isFullAudio && analysis.voice_prompt_script && analysis.voice_prompt_script.trim()) {
+    const promptText = analysis.speech_layer?.voice_prompt_script || analysis.voice_prompt_script_speech || analysis.voice_prompt_script;
+    if (isFullAudio && promptText && promptText.trim()) {
       this.upsertItem({
         id: 'voice_prompt',
-        text: analysis.voice_prompt_script,
+        text: promptText,
         lang: 'ru',
         bilingual: false,
         priority: 1,
@@ -194,7 +195,7 @@ class AudioQueueManagerClass {
       // Senior voice shares the exact same text
       this.upsertItem({
         id: 'senior_voice',
-        text: analysis.voice_prompt_script,
+        text: promptText,
         lang: 'ru',
         bilingual: false,
         priority: 1,
@@ -202,10 +203,11 @@ class AudioQueueManagerClass {
     }
 
     // 2. Priority 2: Theme explanation (theme_explanation) with bilingual stitching
-    if (isFullAudio && analysis.theme_explanation && analysis.theme_explanation.trim()) {
+    const themeText = analysis.speech_layer?.theme_explanation || analysis.theme_explanation_speech || analysis.theme_explanation;
+    if (isFullAudio && themeText && themeText.trim()) {
       this.upsertItem({
         id: 'theme_explanation',
-        text: analysis.theme_explanation,
+        text: themeText,
         lang: 'ru',
         bilingual: true,
         priority: 2,
@@ -213,10 +215,11 @@ class AudioQueueManagerClass {
     }
 
     // 2b. Priority 2: Alternative explanation (alt_explanation) with bilingual stitching
-    if (isFullAudio && analysis.alternative_explanation && analysis.alternative_explanation.trim()) {
+    const altText = analysis.speech_layer?.alternative_explanation || analysis.alternative_explanation_speech || analysis.alternative_explanation;
+    if (isFullAudio && altText && altText.trim()) {
       this.upsertItem({
         id: 'alt_explanation',
-        text: analysis.alternative_explanation,
+        text: altText,
         lang: 'ru',
         bilingual: true,
         priority: 2,
@@ -224,10 +227,11 @@ class AudioQueueManagerClass {
     }
 
     // 3. Priority 3: How to answer (how_to_answer) with bilingual stitching
-    if (isFullAudio && analysis.how_to_answer && analysis.how_to_answer.trim()) {
+    const howText = analysis.speech_layer?.how_to_answer || analysis.how_to_answer_speech || analysis.how_to_answer;
+    if (isFullAudio && howText && howText.trim()) {
       this.upsertItem({
         id: 'how_to_answer',
-        text: analysis.how_to_answer,
+        text: howText,
         lang: 'ru',
         bilingual: true,
         priority: 3,
@@ -235,7 +239,16 @@ class AudioQueueManagerClass {
     }
 
     // 3b. Priority 3: Worked example (worked_example) with bilingual stitching
-    if (isFullAudio && analysis.worked_example) {
+    const workedSpeech = analysis.speech_layer?.worked_example || analysis.worked_example_speech;
+    if (isFullAudio && workedSpeech && workedSpeech.trim()) {
+      this.upsertItem({
+        id: 'worked_example',
+        text: workedSpeech,
+        lang: 'ru',
+        bilingual: true,
+        priority: 3,
+      });
+    } else if (isFullAudio && analysis.worked_example) {
       const we = analysis.worked_example;
       const ORDINAL_STEP_WORDS: Record<number, string> = {
         1: 'Первое',

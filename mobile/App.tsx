@@ -1815,14 +1815,18 @@ function MainApp() {
                       ? styles.voiceHeroPlayButtonPaused
                       : null),
                 ]}
-                onPress={() =>
+                onPress={() => {
+                  const speechPrompt =
+                    analysis.speech_layer?.voice_prompt_script ||
+                    analysis.voice_prompt_script_speech ||
+                    analysis.voice_prompt_script;
                   handlePlayAudio(
-                    analysis.voice_prompt_script,
+                    speechPrompt,
                     'ru',
                     isJunior ? 'voice_prompt' : 'senior_voice',
                     true
-                  )
-                }
+                  );
+                }}
                 activeOpacity={0.85}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
@@ -1871,8 +1875,12 @@ function MainApp() {
                   ]}
                   onPress={() => {
                     const targetText = showAlternativeExplanation
-                      ? analysis.alternative_explanation!
-                      : analysis.theme_explanation;
+                      ? (analysis.speech_layer?.alternative_explanation ||
+                         analysis.alternative_explanation_speech ||
+                         analysis.alternative_explanation!)
+                      : (analysis.speech_layer?.theme_explanation ||
+                         analysis.theme_explanation_speech ||
+                         analysis.theme_explanation);
                     const targetId = showAlternativeExplanation ? 'alt_explanation' : 'theme_explanation';
                     handlePlayAudio(targetText, 'ru', targetId, true);
                   }}
@@ -2040,25 +2048,31 @@ function MainApp() {
                           : null),
                     ]}
                     onPress={() => {
-                      const we = analysis.worked_example!;
-                      const ORDINAL_STEP_WORDS: Record<number, string> = {
-                        1: 'Первое',
-                        2: 'Второе',
-                        3: 'Третье',
-                        4: 'Четвертое',
-                        5: 'Пятое',
-                        6: 'Шестое',
-                        7: 'Седьмое',
-                        8: 'Восьмое',
-                        9: 'Девятое',
-                        10: 'Десятое',
-                      };
-                      const formattedSteps = we.steps.map((step, sIdx) => {
-                        const clean = step.replace(/^\d+[\.\)]\s*/, '').trim();
-                        const prefix = ORDINAL_STEP_WORDS[sIdx + 1] || `${sIdx + 1}-е`;
-                        return `${prefix}: ${clean}`;
-                      });
-                      const naidisAudioText = `${we.given}. Шаги решения: ${formattedSteps.join('. ')}. ${we.note || ''}`.trim();
+                      const workedSpeech =
+                        analysis.speech_layer?.worked_example ||
+                        analysis.worked_example_speech;
+                      let naidisAudioText = workedSpeech;
+                      if (!naidisAudioText) {
+                        const we = analysis.worked_example!;
+                        const ORDINAL_STEP_WORDS: Record<number, string> = {
+                          1: 'Первое',
+                          2: 'Второе',
+                          3: 'Третье',
+                          4: 'Четвертое',
+                          5: 'Пятое',
+                          6: 'Шестое',
+                          7: 'Седьмое',
+                          8: 'Восьмое',
+                          9: 'Девятое',
+                          10: 'Десятое',
+                        };
+                        const formattedSteps = we.steps.map((step, sIdx) => {
+                          const clean = step.replace(/^\d+[\.\)]\s*/, '').trim();
+                          const prefix = ORDINAL_STEP_WORDS[sIdx + 1] || `${sIdx + 1}-е`;
+                          return `${prefix}: ${clean}`;
+                        });
+                        naidisAudioText = `${we.given}. Шаги решения: ${formattedSteps.join('. ')}. ${we.note || ''}`.trim();
+                      }
                       handlePlayAudio(naidisAudioText, 'ru', 'worked_example', true);
                     }}
                     activeOpacity={0.85}
@@ -2127,9 +2141,13 @@ function MainApp() {
                         ? styles.sectionAudioBtnPaused
                         : null),
                   ]}
-                  onPress={() =>
-                    handlePlayAudio(analysis.how_to_answer, 'ru', 'how_to_answer', true)
-                  }
+                  onPress={() => {
+                    const howSpeech =
+                      analysis.speech_layer?.how_to_answer ||
+                      analysis.how_to_answer_speech ||
+                      analysis.how_to_answer;
+                    handlePlayAudio(howSpeech, 'ru', 'how_to_answer', true);
+                  }}
                   activeOpacity={0.85}
                   accessibilityLabel="Озвучить решение"
                 >

@@ -174,6 +174,14 @@ class WorkedExample(BaseModel):
     )
 
 
+class LessonSpeechLayer(BaseModel):
+    voice_prompt_script: str = Field(..., description="Фонетически подготовленный текст голосового приветствия для Azure TTS")
+    theme_explanation: str = Field(..., description="Фонетически подготовленный текст объяснения темы")
+    alternative_explanation: Optional[str] = Field(default=None, description="Фонетически подготовленный текст альтернативного объяснения")
+    how_to_answer: str = Field(..., description="Фонетически подготовленный текст шагов решения")
+    worked_example: Optional[str] = Field(default=None, description="Фонетически подготовленный текст примера решения")
+
+
 class PageAnalysisResponse(BaseModel):
     task_title: str = Field(
         ...,
@@ -231,6 +239,46 @@ class PageAnalysisResponse(BaseModel):
         default=None,
         description="Осталось секунд для бесплатного дополнения разворота (до 300)"
     )
+
+
+    speech_layer: Optional[LessonSpeechLayer] = Field(
+        default=None,
+        description="Слой фонетически подготовленных текстов для Azure TTS (разделение Display и Speech слоев)"
+    )
+    voice_prompt_script_speech: Optional[str] = Field(default=None, description="Speech-слой для voice_prompt_script")
+    theme_explanation_speech: Optional[str] = Field(default=None, description="Speech-слой для theme_explanation")
+    alternative_explanation_speech: Optional[str] = Field(default=None, description="Speech-слой для alternative_explanation")
+    how_to_answer_speech: Optional[str] = Field(default=None, description="Speech-слой для how_to_answer")
+    worked_example_speech: Optional[str] = Field(default=None, description="Speech-слой для worked_example")
+
+    @model_validator(mode="after")
+    def populate_speech_layer(self) -> "PageAnalysisResponse":
+        try:
+            from app.services.tts_normalizer import prepare_speech_text, prepare_worked_example_speech
+
+            v_speech = self.voice_prompt_script_speech or prepare_speech_text(self.voice_prompt_script)
+            th_speech = self.theme_explanation_speech or prepare_speech_text(self.theme_explanation)
+            alt_speech = self.alternative_explanation_speech or (prepare_speech_text(self.alternative_explanation) if self.alternative_explanation else None)
+            how_speech = self.how_to_answer_speech or prepare_speech_text(self.how_to_answer)
+            ex_speech = self.worked_example_speech or (prepare_worked_example_speech(self.worked_example) if self.worked_example else None)
+
+            self.voice_prompt_script_speech = v_speech
+            self.theme_explanation_speech = th_speech
+            self.alternative_explanation_speech = alt_speech
+            self.how_to_answer_speech = how_speech
+            self.worked_example_speech = ex_speech
+
+            if self.speech_layer is None:
+                self.speech_layer = LessonSpeechLayer(
+                    voice_prompt_script=v_speech,
+                    theme_explanation=th_speech,
+                    alternative_explanation=alt_speech,
+                    how_to_answer=how_speech,
+                    worked_example=ex_speech,
+                )
+        except Exception:
+            pass
+        return self
 
 
 class AppendPageJsonRequest(BaseModel):
