@@ -532,7 +532,7 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                       </View>
 
                       <View style={styles.ibanDetailRow}>
-                        <Text style={styles.ibanDetailLabel}>IBAN (LHV Pank):</Text>
+                        <Text style={styles.ibanDetailLabel}>IBAN (Coop Pank):</Text>
                         <TouchableOpacity
                           onPress={() => copyToClipboard(ibanAccount, 'IBAN')}
                           style={styles.copyableRow}

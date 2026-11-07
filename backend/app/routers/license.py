@@ -246,7 +246,7 @@ def activate_access_key(
     "/invoice",
     response_model=InvoiceResponse,
     summary="Генерация и отправка официального PDF e-счёта на email",
-    description="Формирует счёт (PDF + HTML) с реквизитами LHV Pank и отправляет на указанный email через SMTP или Resend API.",
+    description="Формирует счёт (PDF + HTML) с реквизитами Coop Pank и отправляет на указанный email через SMTP или Resend API.",
 )
 @safe_limit("5/minute")
 async def request_invoice_email(

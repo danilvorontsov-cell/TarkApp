@@ -5,8 +5,8 @@ export const DEFAULT_TRIAL_DAYS = 14;
 
 export const DEFAULT_BANK_DETAILS: BankDetails = {
   recipient_name: 'Tark Systems OÜ',
-  iban: 'EE129900001234567890',
-  swift_bic: 'LHVBEE22',
+  iban: 'EE000000000000000000',
+  swift_bic: 'CPNKEE2X',
 };
 
 export const DEFAULT_PLANS: PlanItem[] = [

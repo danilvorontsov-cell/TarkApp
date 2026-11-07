@@ -112,8 +112,8 @@ class InvoiceResponse(BaseModel):
     amount: str
     currency: str = "EUR"
     recipient: str = "Tark Systems OÜ"
-    iban: str = "EE129900001234567890"
-    swift_bic: str = "LHVBEE22"
+    iban: str = "EE000000000000000000"
+    swift_bic: str = "CPNKEE2X"
     explanation: str
     pdf_download_url: str
     success: bool = True

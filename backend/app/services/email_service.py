@@ -48,9 +48,9 @@ PLAN_ALIASES: Dict[str, str] = {
 
 COMPANY_NAME = "Tark Systems OÜ"
 COMPANY_REG = "16987456"
-BANK_NAME = "AS LHV Pank"
-BANK_IBAN = "EE129900001234567890"
-BANK_SWIFT = "LHVBEE22"
+BANK_NAME = "Coop Pank"
+BANK_IBAN = "EE000000000000000000"
+BANK_SWIFT = "CPNKEE2X"
 
 
 def _escape_pdf_text(text: str) -> str:
@@ -182,7 +182,7 @@ def build_invoice_html(
           <p style="margin: 0; font-size: 22px; font-weight: 900; color: #FFFFFF;">Сумма к оплате: {html.escape(amount_eur)} €</p>
         </div>
 
-        <h3 style="font-size: 15px; color: #F8FAFC; margin-bottom: 10px;">Реквизиты для перевода (LHV Pank):</h3>
+        <h3 style="font-size: 15px; color: #F8FAFC; margin-bottom: 10px;">Реквизиты для перевода (Coop Pank):</h3>
         <table style="width: 100%; border-collapse: collapse; font-size: 14px; color: #E2E8F0; background-color: #1E252B; border-radius: 12px; padding: 12px;">
           <tr>
             <td style="padding: 8px 12px; color: #94A3B8;">Получатель (Saaja):</td>
@@ -355,7 +355,7 @@ async def send_invoice_to_customer(
         f"Тариф: {plan['title_ru']}\n"
         f"Сумма: {plan['amount']} EUR\n"
         f"Получатель: {COMPANY_NAME} (Reg: {COMPANY_REG})\n"
-        f"IBAN (LHV Pank): {BANK_IBAN}\n"
+        f"IBAN (Coop Pank): {BANK_IBAN}\n"
         f"SWIFT/BIC: {BANK_SWIFT}\n"
         f"{viite_plain}"
         f"Пояснение к платежу (Selgitus): Tarkapp, {invoice_number}\n"

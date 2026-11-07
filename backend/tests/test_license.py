@@ -343,7 +343,7 @@ def test_invoice_endpoint_validates_email_and_generates_pdf(setup_db, monkeypatc
         due_date="04.11.2026",
     )
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"EE129900001234567890" in pdf_bytes
+    assert b"EE000000000000000000" in pdf_bytes
     assert b"9.99 EUR" in pdf_bytes
 
     # 3. When neither SMTP nor Resend is configured, returns 200 with email_sent=False (never 500)
@@ -369,7 +369,7 @@ def test_invoice_endpoint_validates_email_and_generates_pdf(setup_db, monkeypatc
     assert data["currency"] == "EUR"
     assert data["recipient"] == "Tark Systems OÜ"
     assert data["explanation"] == f"Tarkapp, {data['invoice_number']}"
-    assert data["iban"] == "EE129900001234567890"
+    assert data["iban"] == "EE000000000000000000"
     assert "pdf_download_url" in data
 
     # 4. Download PDF
