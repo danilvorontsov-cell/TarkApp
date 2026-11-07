@@ -197,10 +197,10 @@ def test_russian_accents_and_yo_normalization():
     assert normalize_russian_accents_and_yo("вот и все") == "вот и всё"
     assert normalize_russian_accents_and_yo("прежде всего") == "прежде всего"
 
-    # 2. ПОЛНОЕ УДАЛЕНИЕ принудительных знаков ударения (\u0301) — нейросеть Azure Лия знает ударения сама
-    norm = normalize_russian_accents_and_yo("Мы вычитаем и складываем слагаемое.")
+    # 2. ПОЛНОЕ УДАЛЕНИЕ принудительных знаков ударения (\u0301) на обычных словах без омографов
+    norm = normalize_russian_accents_and_yo("Мы изучаем и складываем слагаемое.")
     assert "\u0301" not in norm
-    assert "вычитаем" in norm
+    assert "изучаем" in norm
     assert "слагаемое" in norm
 
     norm_math = normalize_russian_accents_and_yo("Сложение, вычитание, умножение и деление: делитель и делимое.")
@@ -335,7 +335,7 @@ def test_terminology_phonetic_adaptation():
 
     text = "Мы играем в Roblox и строим в Minecraft из LEGO, смотрим YouTube и учим IT, жми WASD."
     speech = prepare_speech_text(text)
-    assert "Роблокс" in speech
+    assert "Ро\u0301блокс" in speech
     assert "Майнкрафт" in speech
     assert "Лего" in speech
     assert "Ютуб" in speech
@@ -382,7 +382,7 @@ def test_display_and_speech_layers_separation():
 
     # 2. Speech layer is phonetically prepared for Azure TTS
     assert resp.speech_layer is not None
-    assert "Роблокс" in resp.speech_layer.theme_explanation
+    assert "Ро\u0301блокс" in resp.speech_layer.theme_explanation
     assert "четыре и три" in resp.speech_layer.theme_explanation
     assert "девять ноль-ноль" in resp.speech_layer.theme_explanation
     assert "Майнкрафт" in resp.speech_layer.voice_prompt_script
@@ -405,3 +405,61 @@ def test_estonian_terms_bilingual_preservation_not_transcribed():
     ssml = build_ssml(text)
     assert '<voice name="et-EE-AnuNeural"><lang xml:lang="et-EE">liidetav</lang></voice>' in ssml
     assert '<voice name="et-EE-AnuNeural"><lang xml:lang="et-EE">summa</lang></voice>' in ssml
+
+
+def test_custom_phonetic_map_accents():
+    from app.services.tts_normalizer import prepare_speech_text, apply_custom_phonetic_map
+    from app.services.tts_service import build_ssml
+
+    # 1. Велопутешествие
+    res_velo = prepare_speech_text("Завтра мы едем в велопутешествие на весь день.")
+    assert "велопутеше\u0301ствие" in res_velo
+
+    res_velo_case = prepare_speech_text("Велопутешествием все очень довольны.")
+    assert "Велопутеше\u0301ствием" in res_velo_case
+
+    # 2. Вычитаем
+    res_vych = prepare_speech_text("Из десяти вычитаем четыре.")
+    assert "вычита\u0301ем" in res_vych
+
+    res_vych_form = prepare_speech_text("Вычитаемое равно двум.")
+    assert "Вычита\u0301емое" in res_vych_form
+
+    # 3. Roblox / Роблокс с ударением на 'о́'
+    res_roblox = prepare_speech_text("Мы играем в Roblox.")
+    assert "Ро\u0301блокс" in res_roblox
+
+    res_roblox_ru = prepare_speech_text("В Роблоксе строим мост.")
+    assert "Ро\u0301блоксе" in res_roblox_ru
+
+    # 4. SSML integration
+    ssml = build_ssml("В Roblox мы вычитаем числа и планируем велопутешествие.")
+    assert "Ро\u0301блокс" in ssml
+    assert "вычита\u0301ем" in ssml
+    assert "велопутеше\u0301ствие" in ssml
+
+
+def test_estonian_measurement_units_normalization():
+    from app.services.tts_normalizer import normalize_text_for_estonian_tts
+    from app.services.tts_service import build_ssml
+
+    # km -> kilomeetrit / kilomeeter
+    assert "15 kilomeetrit" in normalize_text_for_estonian_tts("Ta sõitis 15 km rattaga.")
+    assert "kilomeetrit" in normalize_text_for_estonian_tts("Mitu km on tee pikkus?")
+    assert "1 kilomeeter" in normalize_text_for_estonian_tts("Distants on 1 km.")
+    assert "5 kilomeetrist" in normalize_text_for_estonian_tts("Lõik on 5 km-st pikem.")
+
+    # cm -> sentimeetrit / sentimeeter
+    assert "25 sentimeetrit" in normalize_text_for_estonian_tts("Nöör on 25 cm pikk.")
+    assert "1 sentimeeter" in normalize_text_for_estonian_tts("Paksus on 1 cm.")
+    assert "sentimeetrit" in normalize_text_for_estonian_tts("Ühik: cm")
+
+    # m -> meetrit / meeter
+    assert "500 meetrit" in normalize_text_for_estonian_tts("Kõrgus on 500 m.")
+    assert "1 meeter" in normalize_text_for_estonian_tts("Laius on 1 m.")
+    # переменная m в математике не заменяется
+    assert "m + 5" in normalize_text_for_estonian_tts("Arvuta: m + 5 = 10")
+
+    # Bilingual SSML integration
+    ssml = build_ssml("Расстояние составляет <est>15 km</est>.")
+    assert "kilomeetrit" in ssml

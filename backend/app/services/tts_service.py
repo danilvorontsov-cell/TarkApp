@@ -54,6 +54,8 @@ def _store_in_memory_cache(cache: Dict[str, bytes], key: str, data: bytes) -> No
 # Re-export normalization architecture from dedicated tts_normalizer module
 from app.services.tts_normalizer import (
     TERMINOLOGY_MAP,
+    CUSTOM_PHONETIC_MAP,
+    apply_custom_phonetic_map,
     ENGLISH_BRANDS,
     normalize_loanwords_and_brands,
     normalize_time_expressions,
@@ -65,6 +67,7 @@ from app.services.tts_normalizer import (
     normalize_russian_ordinals_with_dot,
     normalize_russian_accents_and_yo,
     normalize_text_for_estonian_tts,
+    normalize_estonian_measurement_units,
     clean_text_for_speech,
     prepare_speech_text,
     normalize_text_for_speech,

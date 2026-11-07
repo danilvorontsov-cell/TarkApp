@@ -21,7 +21,8 @@ from typing import Dict, List, Optional, Tuple
 
 TERMINOLOGY_MAP: Dict[str, str] = {
     # Популярные игры, бренды и платформы
-    "roblox": "Роблокс",
+    "roblox": "Ро\u0301блокс",
+    "роблокс": "Ро\u0301блокс",
     "minecraft": "Майнкрафт",
     "lego": "Лего",
     "youtube": "Ютуб",
@@ -61,6 +62,92 @@ TERMINOLOGY_MAP: Dict[str, str] = {
 ENGLISH_BRANDS = [
     "Lego Mindstorms", "Mindstorms", "Minecraft", "Roblox", "Scratch", "Python"
 ]
+
+# ==============================================================================
+# 1.1. ПРИОРИТЕТНЫЙ СЛОВАРЬ ТОЧНОЙ ФОНЕТИКИ (Custom Phonetic Map)
+# ==============================================================================
+
+CUSTOM_PHONETIC_MAP: Dict[str, str] = {
+    # Сложные слова и омографы (форсированное ударение \u0301)
+    "велопутешествие": "велопутеше\u0301ствие",
+    "велопутешествия": "велопутеше\u0301ствия",
+    "велопутешествию": "велопутеше\u0301ствию",
+    "велопутешествием": "велопутеше\u0301ствием",
+    "велопутешествии": "велопутеше\u0301ствии",
+    "велопутешествий": "велопутеше\u0301ствий",
+    "велопутешествиям": "велопутеше\u0301ствиям",
+    "велопутешествиями": "велопутеше\u0301ствиями",
+    "велопутешествиях": "велопутеше\u0301ствиях",
+
+    # Математические действия: «вычитаем» (форсированное ударение \u0301)
+    "вычитаем": "вычита\u0301ем",
+    "вычитаемый": "вычита\u0301емый",
+    "вычитаемая": "вычита\u0301емая",
+    "вычитаемое": "вычита\u0301емое",
+    "вычитаемого": "вычита\u0301емого",
+    "вычитаемому": "вычита\u0301емому",
+    "вычитаемым": "вычита\u0301емым",
+    "вычитаемом": "вычита\u0301емом",
+    "вычитаемые": "вычита\u0301емые",
+    "вычитаемых": "вычита\u0301емых",
+
+    # Иностранные бренды: ударение на первую букву
+    "roblox": "Ро\u0301блокс",
+    "роблокс": "Ро\u0301блокс",
+    "роблокса": "Ро\u0301блокса",
+    "роблоксу": "Ро\u0301блоксу",
+    "роблоксом": "Ро\u0301блоксом",
+    "роблоксе": "Ро\u0301блоксе",
+}
+
+
+def apply_custom_phonetic_map(text: str) -> str:
+    """
+    Применяет явный приоритетный словарь фонетических замен перед отправкой в Azure TTS:
+    - «велопутешествие» -> «велопутеше́ствие»
+    - «вычитаем» -> «вычита́ем»
+    - «Roblox» / «Роблокс» -> «Ро́блокс» (ударение на первую гласную)
+    Сохраняет регистр первой буквы (Заглавная / строчная).
+    """
+    if not text:
+        return ""
+
+    t = text
+
+    # 1. Полнословные и регулярные паттерны
+    # Велопутешествие и падежные формы
+    def repl_velo(m):
+        w = m.group(0)
+        stem = "Велопутеше\u0301ств" if w[0].isupper() else "велопутеше\u0301ств"
+        return f"{stem}{m.group(1)}"
+
+    t = re.sub(r'(?i)\bвелопутешеств([а-яё]+)\b', repl_velo, t)
+
+    # Вычитаем / вычитаемое
+    def repl_vych(m):
+        w = m.group(0)
+        stem = "Вычита\u0301" if w[0].isupper() else "вычита\u0301"
+        return f"{stem}{m.group(1)}"
+
+    t = re.sub(r'(?i)\bвычита([ею][а-яё]*)\b', repl_vych, t)
+
+    # Roblox / Роблокс с ударением на 'о́'
+    def repl_roblox(m):
+        ending = m.group(1) or ""
+        return f"Ро\u0301блокс{ending}"
+
+    t = re.sub(r'(?i)\b(?:roblox|роблокс)([а-яё]*)\b', repl_roblox, t)
+
+    # 2. Прямые совпадения из словаря CUSTOM_PHONETIC_MAP
+    for word_lower, replacement in CUSTOM_PHONETIC_MAP.items():
+        pattern = re.compile(rf'\b{re.escape(word_lower)}\b', re.IGNORECASE)
+        def repl_exact(m, rep=replacement):
+            if m.group(0)[0].isupper():
+                return rep[0].upper() + rep[1:]
+            return rep[0].lower() + rep[1:]
+        t = pattern.sub(repl_exact, t)
+
+    return t
 
 
 def normalize_loanwords_and_brands(text: str) -> str:
@@ -728,8 +815,9 @@ def normalize_russian_accents_and_yo(text: str) -> str:
         t,
     )
 
-    # Сохраняем знак ударения \u0301 только на 'ша́га'
-    t = re.sub(r'(?<![шШ][аА])\u0301', '', t)
+    # Сохраняем знак ударения \u0301 только на гласных буквах
+    t = re.sub(r'(?<![аеёиоуыэюяАЕЁИОУЫЭЮЯ])\u0301', '', t)
+    t = apply_custom_phonetic_map(t)
     return t
 
 
@@ -771,9 +859,55 @@ ESTONIAN_CORE_KEYWORDS = {
 }
 
 
+def normalize_estonian_measurement_units(text: str) -> str:
+    """
+    Нормализует сокращения единиц измерения в эстонском тексте:
+    - km -> kilomeetrit (1 km -> 1 kilomeeter, 5 km-st -> 5 kilomeetrist).
+    - cm -> sentimeetrit (1 cm -> 1 sentimeeter).
+    - mm -> millimeetrit (1 mm -> 1 millimeeter).
+    - dm -> detsimeetrit (1 dm -> 1 detsimeeter).
+    - m -> meetrit (1 m -> 1 meeter, 500 m -> 500 meetrit, исключая мат. переменные).
+    """
+    if not text:
+        return ""
+
+    t = text
+
+    # 1. km (kilomeetrit / kilomeeter)
+    t = re.sub(r'\b1\s*km\b', '1 kilomeeter', t, flags=re.IGNORECASE)
+    t = re.sub(r'\b(\d+)\s*km-(ga|st|sse|le|lt|s|na|ks)\b', r'\1 kilomeetri\2', t, flags=re.IGNORECASE)
+    t = re.sub(r'\b(\d+)\s*km\b', r'\1 kilomeetrit', t, flags=re.IGNORECASE)
+    t = re.sub(r'\bkm\b', 'kilomeetrit', t, flags=re.IGNORECASE)
+
+    # 2. cm (sentimeetrit / sentimeeter)
+    t = re.sub(r'\b1\s*cm\b', '1 sentimeeter', t, flags=re.IGNORECASE)
+    t = re.sub(r'\b(\d+)\s*cm-(ga|st|sse|le|lt|s|na|ks)\b', r'\1 sentimeetri\2', t, flags=re.IGNORECASE)
+    t = re.sub(r'\b(\d+)\s*cm\b', r'\1 sentimeetrit', t, flags=re.IGNORECASE)
+    t = re.sub(r'\bcm\b', 'sentimeetrit', t, flags=re.IGNORECASE)
+
+    # 3. mm (millimeetrit / millimeeter)
+    t = re.sub(r'\b1\s*mm\b', '1 millimeeter', t, flags=re.IGNORECASE)
+    t = re.sub(r'\b(\d+)\s*mm\b', r'\1 millimeetrit', t, flags=re.IGNORECASE)
+    t = re.sub(r'\bmm\b', 'millimeetrit', t, flags=re.IGNORECASE)
+
+    # 4. dm (detsimeetrit / detsimeeter)
+    t = re.sub(r'\b1\s*dm\b', '1 detsimeeter', t, flags=re.IGNORECASE)
+    t = re.sub(r'\b(\d+)\s*dm\b', r'\1 detsimeetrit', t, flags=re.IGNORECASE)
+    t = re.sub(r'\bdm\b', 'detsimeetrit', t, flags=re.IGNORECASE)
+
+    # 5. m (meetrit / meeter) - не заменяем если знак равенства или арифметика переменной (m + 5 = 10)
+    t = re.sub(r'\b1\s*m-(ga|st|sse|le|lt|s|na|ks)\b', r'1 meetri\1', t, flags=re.IGNORECASE)
+    t = re.sub(r'\b(\d+)\s*m-(ga|st|sse|le|lt|s|na|ks)\b', r'\1 meetri\2', t, flags=re.IGNORECASE)
+    t = re.sub(r'\b1\s*m\b(?!\s*(=|[+\-*\/÷·×]))', '1 meeter', t, flags=re.IGNORECASE)
+    t = re.sub(r'\b(\d+)\s*m\b(?!\s*(=|[+\-*\/÷·×]))', r'\1 meetrit', t, flags=re.IGNORECASE)
+
+    return t
+
+
 def normalize_text_for_estonian_tts(text: str) -> str:
     """
     Нормализует эстонский текст:
+    - Единицы измерения (km -> kilomeetrit, cm -> sentimeetrit, m -> meetrit).
     - Порядковые числительные с точкой (1. klass -> esimene klass, 4. klassis -> neljandas klassis).
     - Для номеров без существительных (Harjutus 5.) срезает точку -> Harjutus 5.
     - Удаляет крестики и спецсимволы умножения (×, ✕, ✖, *).
@@ -782,6 +916,8 @@ def normalize_text_for_estonian_tts(text: str) -> str:
     """
     if not text:
         return ""
+
+    text = normalize_estonian_measurement_units(text)
 
     est_ord_pattern = re.compile(
         r'\b(\d+)\.\s*(klass[a-zõäöü]*|harjutus[a-zõäöü]*|ülesan[a-zõäöü]*|osa[a-zõäöü]*)\b',
@@ -959,6 +1095,7 @@ def prepare_speech_text(display_text: str, is_russian_context: bool = True) -> s
     t = normalize_time_expressions(t)
     t = normalize_text_for_speech(t, is_russian_context=True)
     t = normalize_russian_accents_and_yo(t)
+    t = apply_custom_phonetic_map(t)
 
     for idx, orig_t in enumerate(est_tags):
         t = t.replace(f"ESTTAGPLACEHOLDER{idx}ESTTAG", orig_t)

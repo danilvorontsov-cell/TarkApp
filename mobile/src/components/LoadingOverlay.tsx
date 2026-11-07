@@ -4,7 +4,6 @@ import {
   View,
   Text,
   Modal,
-  ActivityIndicator,
   Animated,
   Easing,
   Dimensions,
@@ -134,11 +133,6 @@ export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
                   ]}
                 />
               </View>
-
-              {/* Mint Spinner #66F6CF */}
-              <View style={styles.spinnerWrapper}>
-                <ActivityIndicator size="large" color="#66F6CF" />
-              </View>
             </View>
 
             {/* Clear, High-Contrast Typography */}
@@ -240,14 +234,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.9,
     shadowRadius: 5,
     elevation: 4,
-  },
-  spinnerWrapper: {
-    position: 'absolute',
-    bottom: -2,
-    right: -2,
-    backgroundColor: '#1E252B',
-    borderRadius: 14,
-    padding: 2,
   },
   loadingTitle: {
     fontSize: 18,

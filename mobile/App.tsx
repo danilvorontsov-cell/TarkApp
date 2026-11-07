@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
@@ -216,6 +216,14 @@ function MainApp() {
   const [isSaved, setIsSaved] = useState(false);
   const [history, setHistory] = useState<SavedLessonCard[]>([]);
   const [savedVocab, setSavedVocab] = useState<VocabularyItem[]>([]);
+  const areLessonTermsSaved = useMemo(() => {
+    if (!analysis?.vocabulary || analysis.vocabulary.length === 0) return false;
+    return analysis.vocabulary.every((v) =>
+      savedVocab.some(
+        (sv) => sv.est.toLowerCase().trim() === v.est.toLowerCase().trim()
+      )
+    );
+  }, [analysis?.vocabulary, savedVocab]);
   const [expandedWord, setExpandedWord] = useState<string | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
   const [isAvatarModalVisible, setIsAvatarModalVisible] = useState<boolean>(false);
@@ -1223,44 +1231,28 @@ function MainApp() {
     setIsAvatarModalVisible(true);
   };
 
-  const handleSaveCard = async () => {
+  const handleSaveLessonTermsToVocab = async () => {
     if (!analysis) return;
+    if (!analysis.vocabulary || analysis.vocabulary.length === 0) {
+      ThemedAlert.alert('Словарик', 'В этом уроке нет терминов для сохранения.');
+      return;
+    }
     try {
-      const now = new Date();
-      const months = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
-      const dateFormatted = `${now.getDate()} ${months[now.getMonth()]}, ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-      let taskType = 'Koolitöö';
-      const titleLower = analysis.task_title.toLowerCase();
-      if (titleLower.startsWith('avastus:')) {
-        taskType = 'Maailma Avastaja';
-      } else if (titleLower.includes('loodus') || titleLower.includes('looma') || titleLower.includes('ilm')) {
-        taskType = 'Loodusõpetus';
-      }
-
-      const card: SavedLessonCard = {
-        id: `card_${Date.now()}`,
-        timestamp: Date.now(),
-        dateFormatted,
-        grade: profile.grade,
-        tier: profile.tier,
-        task_title: analysis.task_title,
-        task_type: taskType,
-        analysis,
-        imageUri: capturedImages[0]?.uri || undefined,
-        imageUris: capturedImages.map((img) => img.uri),
-      };
-
-      await StorageService.saveLessonToHistory(card);
-      setIsSaved(true);
-      const updatedHistory = await StorageService.getHistory();
-      setHistory(updatedHistory);
+      const itemsToSave: VocabularyItem[] = analysis.vocabulary.map((v) => ({
+        est: v.est.trim(),
+        ru: v.ru.trim(),
+        example: v.example?.trim(),
+        topicTitle: v.topicTitle || analysis.task_title,
+      }));
+      await StorageService.saveVocabularyItems(itemsToSave);
+      const updated = await StorageService.getSavedVocabulary();
+      setSavedVocab(updated);
       ThemedAlert.alert(
-        '⭐ Сохранено в историю!',
-        'Разбор урока сохранен в историю.'
+        '📚 Термины сохранены!',
+        `Термины урока «${cleanEstTags(analysis.task_title)}» успешно добавлены в твой словарик.`
       );
     } catch (err: any) {
-      ThemedAlert.alert('Ошибка сохранения', 'Не удалось сохранить урок в историю.');
+      ThemedAlert.alert('Ошибка сохранения', 'Не удалось сохранить термины в словарик.');
     }
   };
 
@@ -1766,15 +1758,11 @@ function MainApp() {
             </View>
           )}
 
-          {/* Section Title: 🎯 Тема урока */}
-          <View style={styles.sectionHeaderRow}>
-            <Text style={[styles.sectionTitleText, isJunior && styles.sectionTitleTextJunior]}>
+          {/* Card 1: Task Context / Title - единый контейнер темы урока */}
+          <View style={[styles.modularCard, styles.topicTitleCard, isJunior && styles.topicTitleCardJunior]}>
+            <Text style={[styles.sectionTitleText, isJunior && styles.sectionTitleTextJunior, { marginBottom: 8 }]}>
               🎯 Тема урока
             </Text>
-          </View>
-
-          {/* Card 1: Task Context / Title - растянуто на всё окно, с мягкой подсветкой фона */}
-          <View style={[styles.modularCard, styles.topicTitleCard, isJunior && styles.topicTitleCardJunior]}>
             <Text style={[styles.resultTitle, isJunior && styles.resultTitleJunior]}>
               {cleanEstTags(analysis.task_title)}
             </Text>
@@ -2209,23 +2197,28 @@ function MainApp() {
             </View>
           )}
 
-          {/* Card 7: Save Card Button */}
+          {/* Card 7: Save Lesson Terms to Vocabulary Button */}
           <TouchableOpacity
             style={[
               styles.saveCardButton,
-              isSaved && styles.saveCardButtonSaved,
+              areLessonTermsSaved && styles.saveCardButtonSaved,
             ]}
-            onPress={handleSaveCard}
-            disabled={isSaved}
+            onPress={handleSaveLessonTermsToVocab}
+            disabled={areLessonTermsSaved}
             activeOpacity={0.85}
+            accessibilityLabel={
+              areLessonTermsSaved
+                ? 'Термины сохранены в словарике'
+                : 'Сохранить термины в словарик'
+            }
           >
             <Text
               style={[
                 styles.saveCardButtonText,
-                isSaved && styles.saveCardButtonTextSaved,
+                areLessonTermsSaved && styles.saveCardButtonTextSaved,
               ]}
             >
-              {isSaved ? '✓ Карточка сохранена в истории' : '⭐ Сохранить в историю'}
+              {areLessonTermsSaved ? '✓ Термины сохранены в словарике' : 'Сохранить термины в словарик'}
             </Text>
           </TouchableOpacity>
 
