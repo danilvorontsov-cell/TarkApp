@@ -46,11 +46,22 @@ PLAN_ALIASES: Dict[str, str] = {
     "school_year": "year",
 }
 
-COMPANY_NAME = "Tark Systems OÜ"
-COMPANY_REG = "16987456"
-BANK_NAME = "Coop Pank"
-BANK_IBAN = "EE000000000000000000"
-BANK_SWIFT = "CPNKEE2X"
+COMPANY_NAME = settings.COMPANY_NAME
+COMPANY_REG = settings.COMPANY_REG
+BANK_NAME = settings.BANK_NAME
+BANK_IBAN = settings.BANK_IBAN
+BANK_SWIFT = settings.BANK_SWIFT
+
+
+def get_bank_requisites() -> Dict[str, str]:
+    """Reads live bank requisites from settings (.env) without dummy placeholder IBANs."""
+    return {
+        "company_name": (settings.COMPANY_NAME or "Tark Systems OÜ").strip(),
+        "company_reg": (settings.COMPANY_REG or "16987456").strip(),
+        "bank_name": (settings.BANK_NAME or "Coop Pank").strip(),
+        "iban": (settings.BANK_IBAN or "").strip(),
+        "swift": (settings.BANK_SWIFT or "CPNKEE2X").strip(),
+    }
 
 
 def _escape_pdf_text(text: str) -> str:
@@ -73,6 +84,7 @@ def build_invoice_pdf(
     Generates a clean, valid single-page PDF 1.4 invoice in pure Python without external C libraries.
     Includes Estonian 7-3-1 Viitenumber when provided.
     """
+    req = get_bank_requisites()
     lines = [
         ("F2", 20, 50, 770, "Tark Systems OU - INVOICE / ARVE"),
         ("F1", 11, 50, 742, f"Invoice No / Arve nr: {invoice_number}"),
@@ -80,7 +92,7 @@ def build_invoice_pdf(
         ("F1", 11, 50, 708, f"Due Date / Maksetahtaeg: {due_date}"),
         ("F1", 11, 50, 685, "------------------------------------------------------------------------"),
         ("F2", 12, 50, 665, "Seller / Muuja:"),
-        ("F1", 11, 50, 648, "Tark Systems OU (Reg. code: 16987456)"),
+        ("F1", 11, 50, 648, f"Tark Systems OU (Reg. code: {req['company_reg']})"),
         ("F1", 11, 50, 632, "Tallinn, Estonia | support@tarkapp.ee"),
         ("F2", 12, 50, 602, "Customer / Ostja:"),
         ("F1", 11, 50, 585, f"Email: {customer_email}"),
@@ -90,10 +102,10 @@ def build_invoice_pdf(
         ("F2", 14, 50, 490, f"TOTAL TO PAY / KUULUB TASUMISELE: {amount_eur} EUR"),
         ("F1", 11, 465, 465, "------------------------------------------------------------------------"),
         ("F2", 12, 50, 442, "Payment Details / Makse rekvisiidid (SEPA / Estonia):"),
-        ("F1", 11, 50, 422, f"Recipient / Saaja: Tark Systems OU"),
-        ("F1", 11, 50, 405, f"Bank / Pank: {BANK_NAME}"),
-        ("F2", 11, 50, 388, f"IBAN: {BANK_IBAN}"),
-        ("F1", 11, 50, 371, f"SWIFT / BIC: {BANK_SWIFT}"),
+        ("F1", 11, 50, 422, "Recipient / Saaja: Tark Systems OU"),
+        ("F1", 11, 50, 405, f"Bank / Pank: {req['bank_name']}"),
+        ("F2", 11, 50, 388, f"IBAN: {req['iban'] or 'По запросу / On request'}"),
+        ("F1", 11, 50, 371, f"SWIFT / BIC: {req['swift']}"),
     ]
 
     if viitenumber:
@@ -156,6 +168,7 @@ def build_invoice_html(
     viitenumber: str = "",
 ) -> str:
     """Builds a styled HTML email for the invoice."""
+    req = get_bank_requisites()
     viite_row = ""
     if viitenumber:
         viite_row = f"""
@@ -182,19 +195,19 @@ def build_invoice_html(
           <p style="margin: 0; font-size: 22px; font-weight: 900; color: #FFFFFF;">Сумма к оплате: {html.escape(amount_eur)} €</p>
         </div>
 
-        <h3 style="font-size: 15px; color: #F8FAFC; margin-bottom: 10px;">Реквизиты для перевода (Coop Pank):</h3>
+        <h3 style="font-size: 15px; color: #F8FAFC; margin-bottom: 10px;">Реквизиты для перевода ({html.escape(req['bank_name'])}):</h3>
         <table style="width: 100%; border-collapse: collapse; font-size: 14px; color: #E2E8F0; background-color: #1E252B; border-radius: 12px; padding: 12px;">
           <tr>
             <td style="padding: 8px 12px; color: #94A3B8;">Получатель (Saaja):</td>
-            <td style="padding: 8px 12px; font-weight: 700;">{COMPANY_NAME} (Reg: {COMPANY_REG})</td>
+            <td style="padding: 8px 12px; font-weight: 700;">{html.escape(req['company_name'])} (Reg: {html.escape(req['company_reg'])})</td>
           </tr>
           <tr>
             <td style="padding: 8px 12px; color: #94A3B8;">IBAN:</td>
-            <td style="padding: 8px 12px; font-weight: 800; color: #5FEDC5;">{BANK_IBAN}</td>
+            <td style="padding: 8px 12px; font-weight: 800; color: #5FEDC5;">{html.escape(req['iban'])}</td>
           </tr>
           <tr>
             <td style="padding: 8px 12px; color: #94A3B8;">SWIFT / BIC:</td>
-            <td style="padding: 8px 12px; font-weight: 600;">{BANK_SWIFT}</td>
+            <td style="padding: 8px 12px; font-weight: 600;">{html.escape(req['swift'])}</td>
           </tr>
           {viite_row}
           <tr>
@@ -350,13 +363,14 @@ async def send_invoice_to_customer(
 
     viite_plain = f"Номер ссылки (Viitenumber): {viitenumber}\n" if viitenumber else ""
 
+    req = get_bank_requisites()
     plain_body = (
-        f"{COMPANY_NAME} — Счёт на оплату № {invoice_number}\n"
+        f"{req['company_name']} — Счёт на оплату № {invoice_number}\n"
         f"Тариф: {plan['title_ru']}\n"
         f"Сумма: {plan['amount']} EUR\n"
-        f"Получатель: {COMPANY_NAME} (Reg: {COMPANY_REG})\n"
-        f"IBAN (Coop Pank): {BANK_IBAN}\n"
-        f"SWIFT/BIC: {BANK_SWIFT}\n"
+        f"Получатель: {req['company_name']} (Reg: {req['company_reg']})\n"
+        f"IBAN ({req['bank_name']}): {req['iban']}\n"
+        f"SWIFT/BIC: {req['swift']}\n"
         f"{viite_plain}"
         f"Пояснение к платежу (Selgitus): Tarkapp, {invoice_number}\n"
     )

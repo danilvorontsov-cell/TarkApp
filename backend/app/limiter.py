@@ -4,22 +4,47 @@ import logging
 from typing import Any, Callable, Optional
 from fastapi import Request
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 from app.config import settings
 
 logger = logging.getLogger("tarkapp.limiter")
 
 
+def get_remote_address(request: Request) -> str:
+    """
+    Извлекает реальный IP-адрес пользователя с учетом доверенных заголовков Nginx:
+    1. Заголовок 'X-Real-IP'
+    2. Первый адрес из списка 'X-Forwarded-For'
+    3. Fallback к прямому request.client.host (или '127.0.0.1')
+    """
+    x_real_ip = request.headers.get("x-real-ip")
+    if x_real_ip and x_real_ip.strip():
+        return x_real_ip.strip().split(",")[0].strip()
+
+    x_forwarded_for = request.headers.get("x-forwarded-for")
+    if x_forwarded_for and x_forwarded_for.strip():
+        return x_forwarded_for.split(",")[0].strip()
+
+    if request.client and request.client.host:
+        return request.client.host
+
+    return "127.0.0.1"
+
+
 def get_device_or_ip(request: Request) -> str:
     """
     Key function for slowapi:
-    Prefers 'X-Device-ID' header for device-level quotas,
-    falling back to client IP address if the header is absent.
+    Combines client IP address and device_id (from 'X-Device-ID' header or 'device_id' query param)
+    as f"{ip}:{device_id}", closing header-rotation rate-limit bypasses while isolating devices behind NAT.
     """
-    device_id = request.headers.get("x-device-id")
-    if device_id and device_id.strip():
-        return f"dev:{device_id.strip()}"
-    return f"ip:{get_remote_address(request)}"
+    ip = get_remote_address(request) or "unknown"
+    raw_dev = request.headers.get("x-device-id")
+    if not raw_dev:
+        try:
+            raw_dev = request.query_params.get("device_id")
+        except Exception:
+            raw_dev = ""
+    device_id = (raw_dev or "").strip() or "anon"
+    return f"{ip}:{device_id}"
 
 
 limiter = Limiter(

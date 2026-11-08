@@ -4,9 +4,9 @@ import re
 import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from fastapi import HTTPException, status as http_status
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -15,9 +15,43 @@ from app.models.license import Device, AccessKey, Invoice
 
 logger = logging.getLogger("tarkapp.license")
 
+BETA_TRIAL_DURATION_DAYS: int = 14
+BETA_DEFAULT_FREE_REVIEWS: int = 20
+PROD_TRIAL_DURATION_DAYS: int = 5
+PROD_DEFAULT_FREE_REVIEWS: int = 10
 TRIAL_DURATION_DAYS: int = 14
 DEFAULT_FREE_REVIEWS: int = 20
 KEY_CHAR_SET: str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+DEVICE_ID_REGEX = re.compile(r"^[a-zA-Z0-9._-]{16,64}$")
+
+# 22 compromised access keys that were previously committed to repository history
+REVOKED_COMPROMISED_KEYS = frozenset(
+    {
+        "TARK-3ZME-TA4W",
+        "TARK-EP49-KRDZ",
+        "TARK-THTA-DNKB",
+        "TARK-EPUY-5S9Z",
+        "TARK-SXE7-H99K",
+        "TARK-A5F3-VVJF",
+        "TARK-28ZJ-V62B",
+        "TARK-PL9Q-C9J7",
+        "TARK-X6SN-65V4",
+        "TARK-HUYT-77W6",
+        "TARK-9MTJ-U48J",
+        "TARK-MVQY-GXKV",
+        "TARK-GEH3-TSLH",
+        "TARK-97E7-WYH6",
+        "TARK-MFSC-8KB4",
+        "TARK-CY6K-GQRV",
+        "TARK-Z8TU-S7VK",
+        "TARK-P3DL-7QVN",
+        "TARK-D7AG-U9F2",
+        "TARK-H2TD-X3Y6",
+        "TARK-3RCF-UEYV",
+        "TARK-BEXZ-ZZ7Y",
+    }
+)
 
 PLAN_DURATIONS: Dict[str, int] = {
     "month_1": 30,
@@ -38,71 +72,135 @@ PLAN_TITLES: Dict[str, str] = {
 }
 
 
-def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
+def validate_device_id(device_id: Optional[str]) -> str:
     """
-    Checks or registers a device by device_id.
-    - If device is not in database, automatically grants a 14-day trial period and 20 free reviews/day.
-    - Compares trial_expires_at against server UTC time (cannot be spoofed by phone time changes).
-    - Automatically resets daily free review quota (20 reviews per day) when date changes.
-    - Returns status dictionary: { allowed, is_active, has_key, free_reviews_left, max_free_reviews, days_left, expires_at, device_id, activated_key }.
+    Validates X-Device-ID strictly against ^[a-zA-Z0-9._-]{16,64}$.
+    Prevents arbitrary / malformed / SQLi / short / oversized device IDs from creating DB rows.
     """
     clean_id = (device_id or "").strip()
-    if not clean_id:
-        clean_id = "unknown-device"
+    if not DEVICE_ID_REGEX.match(clean_id):
+        logger.warning(f"[LICENSE] Rejected invalid X-Device-ID format (len={len(clean_id)}).")
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "INVALID_DEVICE_ID",
+                "message": "Некорректный идентификатор устройства X-Device-ID (ожидается 16–64 допустимых символа).",
+            },
+        )
+    return clean_id
+
+
+class TrialPolicy(tuple):
+    def __new__(cls, duration_days: int, daily_reviews: int):
+        return super().__new__(cls, (duration_days, daily_reviews))
+
+    @property
+    def duration_days(self) -> int:
+        return self[0]
+
+    @property
+    def daily_reviews(self) -> int:
+        return self[1]
+
+    @property
+    def days(self) -> int:
+        return self[0]
+
+    @property
+    def daily_limit(self) -> int:
+        return self[1]
+
+
+def _get_trial_policy() -> Tuple[int, int]:
+    """
+    Returns (duration_days, daily_reviews) based on settings.TRIAL_MODE:
+    - "production": PROD_TRIAL_DAYS (5 days), PROD_DAILY_REVIEWS (10 reviews/day)
+    - "closed_beta" (default): BETA_TRIAL_DAYS (14 days), BETA_DAILY_REVIEWS (20 reviews/day)
+    """
+    mode = (getattr(settings, "TRIAL_MODE", "closed_beta") or "closed_beta").strip().lower()
+    if mode == "production":
+        duration_days = getattr(settings, "PROD_TRIAL_DAYS", PROD_TRIAL_DURATION_DAYS)
+        daily_reviews = getattr(settings, "PROD_DAILY_REVIEWS", PROD_DEFAULT_FREE_REVIEWS)
+        return TrialPolicy(duration_days, daily_reviews)
+    duration_days = getattr(settings, "BETA_TRIAL_DAYS", BETA_TRIAL_DURATION_DAYS)
+    daily_reviews = getattr(settings, "BETA_DAILY_REVIEWS", BETA_DEFAULT_FREE_REVIEWS)
+    return TrialPolicy(duration_days, daily_reviews)
+
+
+def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
+    """
+    Checks or registers a device by validated device_id.
+    - Enforces ^[a-zA-Z0-9._-]{16,64}$ before reading/creating Device rows.
+    - Supports both "closed_beta" (14d, 20/day) and "production" (5d, 10/day) via settings.TRIAL_MODE.
+    """
+    clean_id = validate_device_id(device_id)
+    duration_days, daily_limit = _get_trial_policy()
 
     now = datetime.utcnow()
     today_str = now.strftime("%Y-%m-%d")
     device = db.query(Device).filter(Device.device_id == clean_id).first()
 
     if not device:
-        # First seen: create new device with 14-day trial and 20 free reviews per day
-        expires_at = now + timedelta(days=TRIAL_DURATION_DAYS)
+        expires_at = now + timedelta(days=duration_days)
         device = Device(
             device_id=clean_id,
             first_seen_at=now,
             trial_expires_at=expires_at,
             has_active_access=True,
             activated_key=None,
-            free_reviews_left=DEFAULT_FREE_REVIEWS,
-            max_free_reviews=DEFAULT_FREE_REVIEWS,
+            free_reviews_left=daily_limit,
+            max_free_reviews=daily_limit,
             last_review_date=today_str,
         )
         db.add(device)
         db.commit()
         db.refresh(device)
+        mode = getattr(settings, "TRIAL_MODE", "closed_beta")
         logger.info(
-            f"[LICENSE] Registered new device {clean_id} with 14-day trial until {expires_at.isoformat()}Z "
-            f"and {DEFAULT_FREE_REVIEWS} free reviews per day."
+            f"[LICENSE] Registered new device {clean_id} in mode={mode} until {expires_at.isoformat()}Z "
+            f"with {daily_limit} free reviews (trial_days={duration_days})."
         )
 
-    is_allowed = bool(device.trial_expires_at > now)
+    is_allowed = bool(device.trial_expires_at and device.trial_expires_at > now)
     has_key = bool(device.activated_key and device.activated_key.strip() and is_allowed)
 
-    # Keep has_active_access in sync
     if device.has_active_access != is_allowed:
         device.has_active_access = is_allowed
         db.commit()
 
-    # Daily reset: if on trial and calendar date changed (or newly migrated), reset quota to 20
     device_last_date = getattr(device, "last_review_date", None)
     device_max_reviews = getattr(device, "max_free_reviews", None)
-    needs_max_sync = device_max_reviews is None or device_max_reviews < DEFAULT_FREE_REVIEWS
+    is_trial_active = bool(device.trial_expires_at and device.trial_expires_at >= now)
 
-    if not has_key and (device_last_date != today_str or needs_max_sync):
-        device.free_reviews_left = DEFAULT_FREE_REVIEWS
-        device.max_free_reviews = DEFAULT_FREE_REVIEWS
-        device.last_review_date = today_str
-        db.commit()
-        db.refresh(device)
-        logger.info(
-            f"[LICENSE] Reset daily free reviews quota for device {clean_id} to {DEFAULT_FREE_REVIEWS}/{DEFAULT_FREE_REVIEWS} (date={today_str})"
-        )
-    elif needs_max_sync:
-        device.max_free_reviews = DEFAULT_FREE_REVIEWS
-        db.commit()
-        db.refresh(device)
+    if not has_key:
+        if is_trial_active:
+            # При смене даты (last_review_date < today) и условии, что срок действия триала не истек (trial_expires_at >= now):
+            # сбрасывать free_reviews_left до значения суточного лимита текущего режима (10 для prod, 20 для beta).
+            date_changed = (device_last_date is None) or (device_last_date < today_str) or (device_last_date != today_str)
+            needs_max_sync = device_max_reviews is None or device_max_reviews != daily_limit
+            if date_changed:
+                device.free_reviews_left = daily_limit
+                device.max_free_reviews = daily_limit
+                device.last_review_date = today_str
+                db.commit()
+                db.refresh(device)
+                logger.info(
+                    f"[LICENSE] Reset daily free reviews quota for device {clean_id} to {daily_limit}/{daily_limit} (date={today_str})"
+                )
+            elif needs_max_sync:
+                device.max_free_reviews = daily_limit
+                if device.free_reviews_left is not None and device.free_reviews_left > daily_limit:
+                    device.free_reviews_left = daily_limit
+                db.commit()
+                db.refresh(device)
+        else:
+            # Если срок триала истек (trial_expires_at < now): сброс не производить.
+            if device_max_reviews is None or device_max_reviews != daily_limit:
+                device.max_free_reviews = daily_limit
+                db.commit()
+                db.refresh(device)
 
-    delta = device.trial_expires_at - now
+    delta = device.trial_expires_at - now if device.trial_expires_at else timedelta(0)
     if delta.total_seconds() > 0:
         days_left = max(1, math.ceil(delta.total_seconds() / 86400))
     else:
@@ -137,18 +235,15 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
                 package_name = "12 месяцев"
             else:
                 package_name = "PRO"
-    else:
-        # Guarantee None for trial devices without an active key
-        package_name = None
 
     return {
         "allowed": is_allowed,
         "is_active": is_allowed,
         "has_key": has_key,
         "free_reviews_left": device.free_reviews_left,
-        "max_free_reviews": getattr(device, "max_free_reviews", DEFAULT_FREE_REVIEWS) or DEFAULT_FREE_REVIEWS,
+        "max_free_reviews": getattr(device, "max_free_reviews", daily_limit) or daily_limit,
         "days_left": days_left,
-        "expires_at": device.trial_expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expires_at": device.trial_expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if device.trial_expires_at else "",
         "device_id": device.device_id,
         "activated_key": device.activated_key if has_key else None,
         "package_name": package_name if has_key else None,
@@ -158,33 +253,29 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
 def verify_review_allowance(device_id: str, db: Session) -> Dict[str, Any]:
     """
     Verifies if device is permitted to request a textbook page analysis.
-    - If device has an active paid/promo key -> unlimited access allowed.
-    - If device is on trial: checks free_reviews_left > 0.
-      Raises HTTP 403 REVIEWS_LIMIT_REACHED if free reviews ran out.
-    - Raises HTTP 403 TRIAL_EXPIRED if 14-day trial expired.
     """
-    clean_id = (device_id or "").strip()
+    clean_id = validate_device_id(device_id)
     status_data = check_device_access(clean_id, db)
+    _, max_reviews = _get_trial_policy()
 
-    # 1. Check general expiration
     if not status_data["allowed"]:
         raise HTTPException(
             status_code=http_status.HTTP_403_FORBIDDEN,
             detail={"error": "TRIAL_EXPIRED", "message": "Срок действия пробного периода завершен"},
         )
 
-    # 2. If device has activated key, unlimited reviews are granted
     if status_data["has_key"]:
         return status_data
 
-    # 3. Trial mode: check remaining free reviews
     if status_data["free_reviews_left"] <= 0:
-        logger.warning(f"[LICENSE] Device {clean_id} reached 0 free reviews daily limit ({DEFAULT_FREE_REVIEWS}/{DEFAULT_FREE_REVIEWS}).")
+        mode = getattr(settings, "TRIAL_MODE", "closed_beta")
+        logger.warning(f"[LICENSE] Device {clean_id} reached 0 free reviews limit (mode={mode}).")
+        limit_msg = f"Бесплатные разборы на сегодня закончились ({max_reviews}/{max_reviews}). Введите ключ доступа или возвращайтесь завтра."
         raise HTTPException(
             status_code=http_status.HTTP_403_FORBIDDEN,
             detail={
                 "error": "REVIEWS_LIMIT_REACHED",
-                "message": f"Бесплатные разборы на сегодня закончились ({DEFAULT_FREE_REVIEWS}/{DEFAULT_FREE_REVIEWS}). Введите ключ доступа или возвращайтесь завтра.",
+                "message": limit_msg,
             },
         )
 
@@ -193,45 +284,77 @@ def verify_review_allowance(device_id: str, db: Session) -> Dict[str, Any]:
 
 def deduct_review_attempt(device_id: str, db: Session) -> int:
     """
-    Deducts 1 free review attempt upon SUCCESSFUL lesson analysis generation.
-    Does NOT deduct if an active key is present or if an error occurred.
+    Atomically deducts 1 review attempt with a single SQL UPDATE.
+    Eliminates Check-Then-Act TOCTOU race conditions.
+
+    If device has an active paid / PRO license (is_unlimited), reviews are not decremented,
+    only total_reviews_used is incremented.
+
+    If device is on free/trial allowance, decrements free_reviews_left only if > 0.
+    If rowcount == 0, raises 403 REVIEWS_LIMIT_REACHED.
     """
     clean_id = (device_id or "").strip()
     if not clean_id:
         return 0
 
-    device = db.query(Device).filter(Device.device_id == clean_id).first()
-    if not device:
-        return 0
-
     now = datetime.utcnow()
-    has_key = bool(device.activated_key and device.activated_key.strip() and device.trial_expires_at > now)
 
-    # Paid / Promo key users enjoy unlimited reviews without deduction
-    if has_key:
-        return device.free_reviews_left
+    with db.transaction():
+        device = db.query(Device).filter(Device.device_id == clean_id).first()
+        if not device:
+            return 0
 
-    # Deduct 1 review for trial users
-    if device.free_reviews_left > 0:
-        device.free_reviews_left -= 1
-        db.commit()
-        db.refresh(device)
-        logger.info(
-            f"[LICENSE] Deducted 1 review attempt for device {clean_id}. "
-            f"Remaining: {device.free_reviews_left}/{DEFAULT_FREE_REVIEWS}"
+        # Check if device has an active paid/unlimited license
+        is_allowed = bool(device.trial_expires_at and device.trial_expires_at > now)
+        has_key = bool(device.activated_key and device.activated_key.strip() and is_allowed)
+        is_unlimited = has_key
+
+        if is_unlimited:
+            # For paid subscriptions and unlimited licenses, preserve free reviews balance without decrement
+            db.execute(
+                text(
+                    "UPDATE devices "
+                    "SET total_reviews_used = coalesce(total_reviews_used, 0) + 1 "
+                    "WHERE device_id = :device_id"
+                ),
+                {"device_id": clean_id},
+            )
+            return device.free_reviews_left
+
+        # Free / trial tier: atomic decrement with strict condition free_reviews_left > 0
+        result = db.execute(
+            text(
+                "UPDATE devices "
+                "SET free_reviews_left = free_reviews_left - 1, "
+                "    total_reviews_used = coalesce(total_reviews_used, 0) + 1 "
+                "WHERE device_id = :device_id AND free_reviews_left > 0"
+            ),
+            {"device_id": clean_id},
         )
 
-    return device.free_reviews_left
+        if result.rowcount == 0:
+            logger.warning(
+                f"[LICENSE] Atomic deduction rejected for device '{clean_id}': free_reviews_left <= 0 (TOCTOU blocked)."
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "REVIEWS_LIMIT_REACHED",
+                    "message": "Бесплатные разборы на сегодня закончились. Введите ключ доступа или возвращайтесь завтра.",
+                },
+            )
+
+        # Read remaining count
+        remaining = db.execute(
+            text("SELECT free_reviews_left FROM devices WHERE device_id = :device_id"),
+            {"device_id": clean_id},
+        ).scalar()
+        logger.info(f"[LICENSE] Atomically deducted 1 review for {clean_id}. Remaining: {remaining}")
+        return remaining if remaining is not None else 0
 
 
 def normalize_key_code(code: str) -> str:
-    """
-    Normalizes key code:
-    - Strips whitespace, invisible unicode characters, and converts to uppercase
-    - Converts unicode hyphens/dashes to standard ASCII '-'
-    - Removes internal spaces around hyphens and stray spaces
-    - If key was entered without hyphens (e.g. TARKA7B2C9D4), formats as TARK-A7B2-C9D4
-    """
+    """Normalizes key code to canonical uppercase TARK-XXXX-XXXX format."""
     if not code:
         return ""
     s = str(code).strip().upper()
@@ -243,11 +366,52 @@ def normalize_key_code(code: str) -> str:
     return s
 
 
+def revoke_compromised_keys(db: Session) -> int:
+    """
+    Marks the 22 compromised repository keys as is_used = True (is_used = 1)
+    so they can never be redeemed on any device.
+    """
+    now = datetime.utcnow()
+    revoked_count = 0
+    try:
+        for code in REVOKED_COMPROMISED_KEYS:
+            existing = db.query(AccessKey).filter(func.upper(AccessKey.key_code) == code).first()
+            if existing:
+                if not existing.is_used:
+                    existing.is_used = True
+                    existing.used_by_device = existing.used_by_device or "REVOKED_REPO_KEY"
+                    existing.used_at = existing.used_at or now
+                    revoked_count += 1
+            else:
+                db.add(
+                    AccessKey(
+                        key_code=code,
+                        duration_days=30,
+                        is_used=True,
+                        used_by_device="REVOKED_REPO_KEY",
+                        created_at=now,
+                        used_at=now,
+                    )
+                )
+                revoked_count += 1
+        if revoked_count > 0:
+            db.commit()
+            logger.info(f"[LICENSE] Marked {revoked_count} compromised repository keys as used/revoked.")
+    except Exception as exc:
+        logger.warning(f"[LICENSE] Could not revoke compromised keys: {exc}")
+        db.rollback()
+    return revoked_count
+
+
 def sync_keys_from_file(db: Session, file_path: Optional[str] = None) -> int:
     """
-    Syncs access keys from generated_keys.txt into the database.
-    Ensures all keys present in the file exist in the access_keys table with is_used=False.
+    Syncs access keys from generated_keys.txt into the database ONLY in non-production environments,
+    excluding any revoked repository keys.
     """
+    if settings.APP_ENV == "production":
+        logger.info("[LICENSE] Skipping sync_keys_from_file in production environment.")
+        return 0
+
     candidates = [
         Path(file_path) if file_path else None,
         Path("generated_keys.txt"),
@@ -264,6 +428,8 @@ def sync_keys_from_file(db: Session, file_path: Optional[str] = None) -> int:
         for line in content.splitlines():
             cleaned = normalize_key_code(line)
             if not cleaned or cleaned.startswith("#") or len(cleaned) < 4:
+                continue
+            if cleaned in REVOKED_COMPROMISED_KEYS:
                 continue
             existing = db.query(AccessKey).filter(func.upper(AccessKey.key_code) == cleaned).first()
             if not existing:
@@ -289,10 +455,6 @@ def sync_keys_from_file(db: Session, file_path: Optional[str] = None) -> int:
 def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
     """
     Activates an access promo key for a given device.
-    - Validates key existence and unused status.
-    - Extends device access: adds duration_days to existing expiry if active, or to now if expired.
-    - Marks key as used and binds to device.
-    - Unlocks unlimited reviews.
     """
     clean_dev_id = (device_id or "").strip()
     if not clean_dev_id:
@@ -302,26 +464,29 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
     if not clean_key:
         raise ValueError("Код ключа не может быть пустым")
 
-    now = datetime.utcnow()
+    if clean_key in REVOKED_COMPROMISED_KEYS:
+        logger.warning(f"[LICENSE] Blocked activation of revoked key {clean_key} by device '{clean_dev_id}'")
+        raise ValueError("Этот ключ доступа уже был активирован ранее или отозван.")
 
-    # Ensure device exists (or registers it)
+    now = datetime.utcnow()
+    duration_days, max_reviews = _get_trial_policy()
+
     device = db.query(Device).filter(Device.device_id == clean_dev_id).first()
     if not device:
         device = Device(
             device_id=clean_dev_id,
             first_seen_at=now,
-            trial_expires_at=now + timedelta(days=TRIAL_DURATION_DAYS),
+            trial_expires_at=now + timedelta(days=duration_days),
             has_active_access=True,
             activated_key=None,
-            free_reviews_left=DEFAULT_FREE_REVIEWS,
-            max_free_reviews=DEFAULT_FREE_REVIEWS,
+            free_reviews_left=max_reviews,
+            max_free_reviews=max_reviews,
             last_review_date=now.strftime("%Y-%m-%d"),
         )
         db.add(device)
         db.commit()
         db.refresh(device)
 
-    # Check access key (exact match or case-insensitive or dash-flexible)
     key_obj = db.query(AccessKey).filter(func.upper(AccessKey.key_code) == clean_key).first()
     if not key_obj:
         clean_raw = clean_key.replace("-", "")
@@ -330,8 +495,7 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
                 key_obj = candidate
                 break
 
-    # If key still not found, try syncing from generated_keys.txt in case keys were just deployed
-    if not key_obj:
+    if not key_obj and settings.APP_ENV != "production":
         sync_keys_from_file(db)
         key_obj = db.query(AccessKey).filter(func.upper(AccessKey.key_code) == clean_key).first()
         if not key_obj:
@@ -357,7 +521,6 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
     else:
         package_name = f"{duration} дн."
 
-    # If key was already activated by THIS device, confirm access gracefully without error
     if key_obj.is_used and key_obj.used_by_device == device.device_id:
         logger.info(f"[LICENSE] Key {clean_key} is already active for device {clean_dev_id}.")
         device.has_active_access = True
@@ -375,34 +538,30 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
             "is_active": True,
             "has_key": True,
             "free_reviews_left": device.free_reviews_left,
-            "max_free_reviews": DEFAULT_FREE_REVIEWS,
+            "max_free_reviews": max_reviews,
             "days_left": days_left,
             "expires_at": expires_str,
             "package_name": package_name,
         }
 
-    if key_obj.is_used:
-        logger.warning(
-            f"[LICENSE] Key {clean_key} already used by device '{key_obj.used_by_device}' (attempted by '{clean_dev_id}')"
-        )
-        raise ValueError("Этот ключ доступа уже был активирован ранее.")
+    with db.transaction():
+        if key_obj.is_used:
+            logger.warning(
+                f"[LICENSE] Key {clean_key} already used by device '{key_obj.used_by_device}' (attempted by '{clean_dev_id}')"
+            )
+            raise ValueError("Этот ключ доступа уже был активирован ранее.")
 
-    # Extend trial/access
-    if device.trial_expires_at > now:
-        device.trial_expires_at = device.trial_expires_at + timedelta(days=duration)
-    else:
-        device.trial_expires_at = now + timedelta(days=duration)
+        if device.trial_expires_at > now:
+            device.trial_expires_at = device.trial_expires_at + timedelta(days=duration)
+        else:
+            device.trial_expires_at = now + timedelta(days=duration)
 
-    device.has_active_access = True
-    device.activated_key = key_obj.key_code
+        device.has_active_access = True
+        device.activated_key = key_obj.key_code
 
-    # Mark key as used and bind to current device
-    key_obj.is_used = True
-    key_obj.used_by_device = device.device_id
-    key_obj.used_at = now
-
-    db.commit()
-    db.refresh(device)
+        key_obj.is_used = True
+        key_obj.used_by_device = device.device_id
+        key_obj.used_at = now
 
     delta = device.trial_expires_at - now
     days_left = max(1, math.ceil(delta.total_seconds() / 86400))
@@ -419,7 +578,7 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
         "is_active": True,
         "has_key": True,
         "free_reviews_left": device.free_reviews_left,
-        "max_free_reviews": getattr(device, "max_free_reviews", DEFAULT_FREE_REVIEWS) or DEFAULT_FREE_REVIEWS,
+        "max_free_reviews": getattr(device, "max_free_reviews", max_reviews) or max_reviews,
         "days_left": days_left,
         "expires_at": expires_str,
         "package_name": package_name,
@@ -432,14 +591,7 @@ def grant_plan_access(
     db: Session,
     reference_info: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Grants or extends device subscription based on PLAN_DURATIONS matrix:
-    - "month_1": 30 days
-    - "semester": 150 days (5 months)
-    - "school_year": 270 days (9 months)
-    - "full_year": 365 days (12 months)
-    Adds duration to existing trial_expires_at if currently active, or from now.
-    """
+    """Grants or extends device subscription based on PLAN_DURATIONS matrix."""
     clean_dev_id = (device_id or "").strip()
     if not clean_dev_id:
         raise ValueError("Device ID не может быть пустым")
@@ -447,6 +599,7 @@ def grant_plan_access(
     resolved_plan_id = (plan_id or "school_year").strip().lower()
     duration = PLAN_DURATIONS.get(resolved_plan_id, 30)
     package_name = PLAN_TITLES.get(resolved_plan_id, "PRO")
+    duration_days, max_reviews = _get_trial_policy()
 
     now = datetime.utcnow()
     device = db.query(Device).filter(Device.device_id == clean_dev_id).first()
@@ -458,8 +611,8 @@ def grant_plan_access(
             trial_expires_at=expires_at,
             has_active_access=True,
             activated_key=reference_info or f"PLAN-{resolved_plan_id.upper()}",
-            free_reviews_left=DEFAULT_FREE_REVIEWS,
-            max_free_reviews=DEFAULT_FREE_REVIEWS,
+            free_reviews_left=max_reviews,
+            max_free_reviews=max_reviews,
             last_review_date=now.strftime("%Y-%m-%d"),
         )
         db.add(device)
@@ -499,8 +652,9 @@ def confirm_invoice_payment(
     db: Session,
 ) -> Dict[str, Any]:
     """
-    Confirms an invoice payment: marks invoice as paid and grants subscription access.
-    Matches either by invoice_number (e.g. INV-2026-1001) or viitenumber (e.g. 202610011).
+    Confirms an invoice payment idempotently:
+    Executes atomic UPDATE ... WHERE invoice_number = :num AND is_paid = 0 and checks rowcount == 1.
+    If the invoice was already paid, returns current subscription status WITHOUT stacking extra days.
     """
     query_str = (invoice_number_or_viitenumber or "").strip()
     if not query_str:
@@ -520,11 +674,48 @@ def confirm_invoice_payment(
         raise ValueError(f"Инвойс с номером/viitenumber '{query_str}' не найден")
 
     now = datetime.utcnow()
-    inv.is_paid = True
-    inv.paid_at = now
-    db.commit()
+    update_result = db.execute(
+        text(
+            "UPDATE invoices SET is_paid = 1, paid_at = :now "
+            "WHERE invoice_number = :num AND (is_paid = 0 OR is_paid IS NULL)"
+        ),
+        {"now": now, "num": inv.invoice_number},
+    )
 
-    device_id = inv.device_id or "paid-device"
+    if update_result.rowcount != 1:
+        db.commit()
+        db.refresh(inv)
+        device_id = (inv.device_id or "paid-device-000001").strip()
+        dev = db.query(Device).filter(Device.device_id == device_id).first()
+        resolved_plan_id = (inv.plan_id or "school_year").strip().lower()
+        package_name = PLAN_TITLES.get(resolved_plan_id, "PRO")
+        if dev and dev.trial_expires_at:
+            delta = dev.trial_expires_at - now
+            days_left = max(0, math.ceil(delta.total_seconds() / 86400)) if delta.total_seconds() > 0 else 0
+            expires_str = dev.trial_expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+            is_active = bool(dev.trial_expires_at > now)
+        else:
+            days_left = PLAN_DURATIONS.get(resolved_plan_id, 30)
+            expires_str = (now + timedelta(days=days_left)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            is_active = True
+
+        logger.info(f"[LICENSE] Idempotent confirm_invoice_payment skipped duplicate grant for {inv.invoice_number}.")
+        return {
+            "success": True,
+            "already_paid": True,
+            "message": f"Инвойс {inv.invoice_number} уже был оплачен ранее. Повторное начисление дней не требуется.",
+            "invoice_number": inv.invoice_number,
+            "viitenumber": inv.viitenumber,
+            "is_active": is_active,
+            "days_left": days_left,
+            "expires_at": expires_str,
+            "package_name": package_name,
+        }
+
+    db.commit()
+    db.refresh(inv)
+
+    device_id = (inv.device_id or "paid-device-000001").strip()
     grant_res = grant_plan_access(
         device_id=device_id,
         plan_id=inv.plan_id,
@@ -534,6 +725,7 @@ def confirm_invoice_payment(
 
     return {
         "success": True,
+        "already_paid": False,
         "message": f"Оплата инвойса {inv.invoice_number} (Viitenumber: {inv.viitenumber}) подтверждена. Доступ активирован на {grant_res['duration_days']} дн.",
         "invoice_number": inv.invoice_number,
         "viitenumber": inv.viitenumber,
@@ -542,6 +734,42 @@ def confirm_invoice_payment(
         "expires_at": grant_res["expires_at"],
         "package_name": grant_res["package_name"],
     }
+
+
+def delete_device_and_data(device_id: str, db: Session) -> Dict[str, Any]:
+    """
+    GDPR Right-to-be-Forgotten erasure for a specific device_id:
+    - Deletes any private invoice PDF files associated with this device_id
+    - Anonymizes/removes Invoice PII records for this device_id
+    - Detaches AccessKey bindings (preserving is_used=True so consumed keys cannot be reused)
+    """
+    clean_id = validate_device_id(device_id)
+    invoices = db.query(Invoice).filter(Invoice.device_id == clean_id).all()
+    deleted_pdfs = 0
+    for inv in invoices:
+        if inv.pdf_path:
+            try:
+                p = Path(inv.pdf_path)
+                if p.exists() and p.is_file():
+                    p.unlink()
+                    deleted_pdfs += 1
+            except Exception as err:
+                logger.warning(f"[GDPR] Failed removing PDF {inv.pdf_path}: {err}")
+        db.delete(inv)
+
+    db.query(AccessKey).filter(AccessKey.used_by_device == clean_id).update(
+        {"used_by_device": "DELETED_GDPR"},
+        synchronize_session=False,
+    )
+
+    # Clear activated key PII binding on Device while keeping anti-abuse quota state intact
+    dev = db.query(Device).filter(Device.device_id == clean_id).first()
+    if dev:
+        dev.activated_key = None
+
+    db.commit()
+    logger.info(f"[GDPR] Deleted PII & {len(invoices)} invoices ({deleted_pdfs} PDFs) for device {clean_id}.")
+    return {"success": True, "deleted_invoices": len(invoices), "deleted_pdfs": deleted_pdfs}
 
 
 # ==========================================
@@ -581,9 +809,8 @@ def generate_access_keys(
             attempts += 1
             code = generate_key_code(prefix)
 
-            # Ensure global uniqueness
             existing = db.query(AccessKey).filter(AccessKey.key_code == code).first()
-            if existing or code in created_keys:
+            if existing or code in created_keys or code in REVOKED_COMPROMISED_KEYS:
                 continue
 
             key_obj = AccessKey(
@@ -606,14 +833,7 @@ def generate_access_keys(
 
 
 def get_keys_stats(db: Optional[Session] = None) -> Dict[str, Any]:
-    """
-    Returns administrative statistics:
-    - total registered devices
-    - total keys
-    - free (unused) keys
-    - active keys (used and access hasn't expired yet)
-    - expired keys (used and access has expired)
-    """
+    """Returns administrative statistics."""
     should_close = False
     if db is None:
         db = SessionLocal()
@@ -666,11 +886,7 @@ def list_access_keys(
     filter_status: Optional[str] = None,
     db: Optional[Session] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Returns a structured list of access keys with calculated status (free | active | expired),
-    bound device_id, activation date, and expiration date.
-    Optional filter_status can be 'active', 'free', or 'expired'.
-    """
+    """Returns a structured list of access keys with calculated status (free | active | expired)."""
     should_close = False
     if db is None:
         db = SessionLocal()

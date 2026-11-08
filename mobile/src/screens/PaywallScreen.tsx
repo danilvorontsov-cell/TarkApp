@@ -25,8 +25,8 @@ import {
   API_BASE_URL,
   resolveBaseUrl,
 } from '../services/api';
-import { DEFAULT_PLANS, DEFAULT_BANK_DETAILS } from '../utils/subscription';
-import { ThemedAlert } from '../components/ThemedAlert';
+import { DEFAULT_PLANS, DEFAULT_BANK_DETAILS, ENABLE_DIRECT_INVOICE } from '../utils/subscription';
+import { ThemedAlert, ThemedAlertContainer } from '../components/ThemedAlert';
 
 export type SubscriptionPlan = 'year' | 'semester' | 'month' | 'full_year' | 'school_year' | 'month_1' | string;
 
@@ -112,6 +112,11 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
   };
 
   const handleCtaPress = () => {
+    if (!ENABLE_DIRECT_INVOICE) {
+      onClose();
+      onOpenKeyActivation();
+      return;
+    }
     if (invoiceData && invoiceData.amount && invoiceData.amount !== activePlan.price) {
       setInvoiceData(null);
     }
@@ -254,16 +259,18 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
             </Text>
           </View>
 
-          {/* Closed Beta Info Banner */}
-          <View style={styles.closedBetaBanner}>
-            <View style={styles.closedBetaHeaderRow}>
-              <Text style={styles.closedBetaIcon}>🔒</Text>
-              <Text style={styles.closedBetaTitle}>Пилотный запуск (Closed Beta)</Text>
+          {/* Closed Beta Info Banner (shown only when direct invoice feature flag is enabled) */}
+          {ENABLE_DIRECT_INVOICE && (
+            <View style={styles.closedBetaBanner}>
+              <View style={styles.closedBetaHeaderRow}>
+                <Text style={styles.closedBetaIcon}>🔒</Text>
+                <Text style={styles.closedBetaTitle}>Пилотный запуск (Closed Beta)</Text>
+              </View>
+              <Text style={styles.closedBetaText}>
+                Доступ оформляется по безналичному счёту (Arve). Укажите ваш email — на него придёт счёт, а после поступления банковской оплаты система автоматически отправит ключ доступа на вашу почту.
+              </Text>
             </View>
-            <Text style={styles.closedBetaText}>
-              Доступ оформляется по безналичному счёту (Arve). Укажите ваш email — на него придёт счёт, а после поступления банковской оплаты система автоматически отправит ключ доступа на вашу почту.
-            </Text>
-          </View>
+          )}
 
           {/* Section B: Pricing Cards (1 Free + 4 Paid Tiers ordered by duration & price) */}
           <View style={styles.plansContainer}>
@@ -397,7 +404,9 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
                 style={styles.ctaButton}
               >
                 <Text style={styles.ctaButtonText}>
-                  {activePlan.title.startsWith('Оформить') || activePlan.title.startsWith('Попробовать')
+                  {!ENABLE_DIRECT_INVOICE
+                    ? 'Активировать доступ PRO'
+                    : activePlan.title.startsWith('Оформить') || activePlan.title.startsWith('Попробовать')
                     ? `${activePlan.title} — ${activePlan.price} €`
                     : `Оформить ${activePlan.title} — ${activePlan.price} €`}
                 </Text>
@@ -429,13 +438,8 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
           </View>
         </ScrollView>
 
-        {/* Modal: Payment Options & IBAN Invoice Details */}
-        <Modal
-          visible={isInvoiceModalVisible}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setIsInvoiceModalVisible(false)}
-        >
+        {/* Overlay: Payment Options & IBAN Invoice Details (Non-Modal View to avoid iOS nested Modal deadlocks) */}
+        {ENABLE_DIRECT_INVOICE && isInvoiceModalVisible && (
           <View style={styles.invoiceModalOverlay}>
             <View style={styles.invoiceModalCard}>
               <View style={styles.invoiceModalHeader}>
@@ -678,7 +682,8 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
               </ScrollView>
             </View>
           </View>
-        </Modal>
+        )}
+        {visible && <ThemedAlertContainer />}
       </SafeAreaView>
     </LinearGradient>
   </Modal>
@@ -1030,13 +1035,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // Modal: Invoice & IBAN
+  // Overlay: Invoice & IBAN
   invoiceModalOverlay: {
-    flex: 1,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0, 0, 0, 0.8)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 18,
+    zIndex: 9990,
+    elevation: 9990,
   },
   invoiceModalCard: {
     backgroundColor: darkTheme.cardBackground,

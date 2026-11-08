@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Annotated, List, Literal, Optional, Union
+from typing import Any, List, Optional, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -149,6 +149,91 @@ class UserProfile(BaseModel):
         return self
 
 
+class StepItem(BaseModel):
+    """
+    Модель отдельного шага решения с разделением визуального слоя и речевого слоя.
+    text: для компактного отображения на экране (с формулами и сокращениями).
+    speech_text: для синтезатора Azure TTS полными словами без сокращений и формул.
+    """
+    text: str = Field(..., description="Визуальный текст шага для отображения на экране")
+    speech_text: Optional[str] = Field(default=None, description="Транскрибированный речевой слой для TTS")
+    step_number: Optional[int] = Field(default=None, description="Номер шага")
+    is_formula: Optional[bool] = Field(default=False, description="Флаг математической формулы")
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def validate_non_empty_text(cls, v: Any) -> str:
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError("Поле 'text' шага не может быть пустым")
+        return s
+
+    @model_validator(mode="after")
+    def fallback_speech_text(self) -> "StepItem":
+        if not self.speech_text or not self.speech_text.strip():
+            self.speech_text = self.text
+        return self
+
+
+class SelfSolveStep(BaseModel):
+    """Модель шага для блока самостоятельного решения задания."""
+    text: str = Field(..., description="Визуальный текст шага")
+    speech_text: Optional[str] = Field(default=None, description="Речевой слой для TTS")
+    hint: Optional[str] = Field(default=None, description="Подсказка к шагу")
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def validate_non_empty_text(cls, v: Any) -> str:
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError("Поле 'text' шага не может быть пустым")
+        return s
+
+    @model_validator(mode="after")
+    def fallback_speech_text(self) -> "SelfSolveStep":
+        if not self.speech_text or not self.speech_text.strip():
+            self.speech_text = self.text
+        return self
+
+
+class LessonCard(BaseModel):
+    """Модель карточки учебного материала с разделением text и speech_text."""
+    id: Optional[str] = Field(default=None, description="ID карточки")
+    title: Optional[str] = Field(default=None, description="Заголовок карточки")
+    text: str = Field(..., description="Визуальный текст карточки")
+    speech_text: Optional[str] = Field(default=None, description="Речевой слой для TTS")
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def validate_non_empty_text(cls, v: Any) -> str:
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError("Поле 'text' карточки не может быть пустым")
+        return s
+
+    @model_validator(mode="after")
+    def fallback_speech_text(self) -> "LessonCard":
+        if not self.speech_text or not self.speech_text.strip():
+            self.speech_text = self.text
+        return self
+
+
+class BilingualCard(BaseModel):
+    """Модель двуязычной карточки с эстонским и русским слоями."""
+    est: str = Field(..., description="Эстонский термин")
+    ru: Optional[str] = Field(default=None, description="Русский перевод")
+    text: Optional[str] = Field(default=None, description="Визуальный текст")
+    speech_text: Optional[str] = Field(default=None, description="Речевой слой для TTS")
+
+    @model_validator(mode="after")
+    def fallback_speech_text(self) -> "BilingualCard":
+        if not self.text or not self.text.strip():
+            self.text = self.est
+        if not self.speech_text or not self.speech_text.strip():
+            self.speech_text = self.text
+        return self
+
+
 class VocabularyItem(BaseModel):
     est: str = Field(..., description="Эстонский термин в словарной форме или в контексте урока")
     ru: str = Field(..., description="Понятный перевод и краткое пояснение на русском языке")
@@ -172,6 +257,83 @@ class WorkedExample(BaseModel):
         default="По этому же образцу сделай примеры из своего учебника!",
         description="Поясняющий вывод или подсказка для самостоятельного решения"
     )
+    speech_text: Optional[str] = Field(
+        default=None,
+        description="Речевой слой для TTS примера решения"
+    )
+
+    @field_validator("steps", mode="before")
+    @classmethod
+    def clean_steps(cls, v) -> List[str]:
+        if not v:
+            return []
+        if isinstance(v, list):
+            return [str(s).strip() for s in v if s and str(s).strip()]
+        if isinstance(v, str):
+            cleaned = str(v).strip()
+            return [cleaned] if cleaned else []
+        return []
+
+    @model_validator(mode="after")
+    def fallback_speech_text(self) -> "WorkedExample":
+        if not self.speech_text or not self.speech_text.strip():
+            parts = []
+            if self.given and self.given.strip():
+                parts.append(self.given.strip())
+            if self.steps:
+                parts.extend([s.strip() for s in self.steps if s and s.strip()])
+            if self.note and self.note.strip():
+                parts.append(self.note.strip())
+            self.speech_text = " ".join(parts) if parts else (self.given or "")
+        return self
+
+
+class SelfSolveGuide(BaseModel):
+    """
+    Модель руководства для самостоятельного решения задания (SelfSolveGuide).
+    Автоматически фильтрует пустые и состоящие только из пробелов элементы.
+    """
+    steps: List[str] = Field(
+        default_factory=list,
+        description="Пошаговые действия для самостоятельного решения"
+    )
+    guided_steps: Optional[List[str]] = Field(
+        default=None,
+        description="Направляющие шаги с подсказками"
+    )
+    actions: Optional[List[str]] = Field(
+        default=None,
+        description="Действия или инструкции"
+    )
+    speech_text: Optional[str] = Field(
+        default=None,
+        description="Речевой слой для TTS"
+    )
+
+    @field_validator("steps", "guided_steps", "actions", mode="before")
+    @classmethod
+    def clean_step_arrays(cls, v) -> Optional[List[str]]:
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return [str(s).strip() for s in v if s and str(s).strip()]
+        if isinstance(v, str):
+            cleaned = str(v).strip()
+            return [cleaned] if cleaned else []
+        return []
+
+    @model_validator(mode="after")
+    def fallback_speech_text(self) -> "SelfSolveGuide":
+        if not self.speech_text or not self.speech_text.strip():
+            items = []
+            if self.steps:
+                items.extend([s for s in self.steps if s and s.strip()])
+            elif self.guided_steps:
+                items.extend([s for s in self.guided_steps if s and s.strip()])
+            elif self.actions:
+                items.extend([s for s in self.actions if s and s.strip()])
+            self.speech_text = " ".join(items) if items else ""
+        return self
 
 
 class LessonSpeechLayer(BaseModel):
@@ -182,7 +344,12 @@ class LessonSpeechLayer(BaseModel):
     worked_example: Optional[str] = Field(default=None, description="Фонетически подготовленный текст примера решения")
 
 
-class PageAnalysisResponse(BaseModel):
+class GeminiPageAnalysisSchema(BaseModel):
+    """
+    Компактная выходная JSON-схема для Gemini Structured Outputs (только Display-слой).
+    Исключает дублирующие поля speech_layer и *_speech для экономии ~25-30% выходных токенов
+    и ускорения генерации; speech_layer вычисляется детерминированно на бэкенде (< 1 мс).
+    """
     task_title: str = Field(
         ...,
         description="Название темы или задания на русском языке"
@@ -219,6 +386,9 @@ class PageAnalysisResponse(BaseModel):
         default=True,
         description="Флаг пригодности снимка: False, если фото не читаемое/размытое и выдан обучающий fallback"
     )
+
+
+class PageAnalysisResponse(GeminiPageAnalysisSchema):
     lesson_id: Optional[str] = Field(
         default=None,
         description="Уникальный идентификатор активной сессии урока для бесплатного добавления разворота"
@@ -240,33 +410,61 @@ class PageAnalysisResponse(BaseModel):
         description="Осталось секунд для бесплатного дополнения разворота (до 300)"
     )
 
-
     speech_layer: Optional[LessonSpeechLayer] = Field(
         default=None,
-        description="Слой фонетически подготовленных текстов для Azure TTS (разделение Display и Speech слоев)"
+        description="Слой фонетически подготовленных текстов для Azure TTS (детерминированно рассчитывается на бэкенде)"
     )
     voice_prompt_script_speech: Optional[str] = Field(default=None, description="Speech-слой для voice_prompt_script")
     theme_explanation_speech: Optional[str] = Field(default=None, description="Speech-слой для theme_explanation")
     alternative_explanation_speech: Optional[str] = Field(default=None, description="Speech-слой для alternative_explanation")
     how_to_answer_speech: Optional[str] = Field(default=None, description="Speech-слой для how_to_answer")
     worked_example_speech: Optional[str] = Field(default=None, description="Speech-слой для worked_example")
+    speech_text: Optional[str] = Field(default=None, description="Общий транскрибированный речевой слой для TTS")
+
+    @model_validator(mode="before")
+    @classmethod
+    def clean_page_analysis_steps(cls, data):
+        if isinstance(data, dict):
+            for key in ("steps", "guided_steps", "actions"):
+                if key in data and isinstance(data[key], list):
+                    data[key] = [str(s).strip() for s in data[key] if s and str(s).strip()]
+            if "worked_example" in data and isinstance(data["worked_example"], dict):
+                we_steps = data["worked_example"].get("steps")
+                if isinstance(we_steps, list):
+                    data["worked_example"]["steps"] = [str(s).strip() for s in we_steps if s and str(s).strip()]
+        return data
 
     @model_validator(mode="after")
     def populate_speech_layer(self) -> "PageAnalysisResponse":
         try:
-            from app.services.tts_normalizer import prepare_speech_text, prepare_worked_example_speech
+            if self.worked_example and getattr(self.worked_example, "steps", None):
+                self.worked_example.steps = [str(s).strip() for s in self.worked_example.steps if s and str(s).strip()]
+            from app.services.tts_normalizer import (
+                prepare_speech_text,
+                prepare_worked_example_speech,
+                filter_card_headers_from_speech,
+            )
 
             v_speech = self.voice_prompt_script_speech or prepare_speech_text(self.voice_prompt_script)
             th_speech = self.theme_explanation_speech or prepare_speech_text(self.theme_explanation)
-            alt_speech = self.alternative_explanation_speech or (prepare_speech_text(self.alternative_explanation) if self.alternative_explanation else None)
+            alt_speech = self.alternative_explanation_speech or (
+                prepare_speech_text(self.alternative_explanation) if self.alternative_explanation else None
+            )
             how_speech = self.how_to_answer_speech or prepare_speech_text(self.how_to_answer)
-            ex_speech = self.worked_example_speech or (prepare_worked_example_speech(self.worked_example) if self.worked_example else None)
+            ex_speech = self.worked_example_speech or (
+                prepare_worked_example_speech(self.worked_example) if self.worked_example else None
+            )
 
             self.voice_prompt_script_speech = v_speech
             self.theme_explanation_speech = th_speech
             self.alternative_explanation_speech = alt_speech
             self.how_to_answer_speech = how_speech
+            if ex_speech:
+                ex_speech = filter_card_headers_from_speech(ex_speech)
             self.worked_example_speech = ex_speech
+
+            if not self.speech_text or not self.speech_text.strip():
+                self.speech_text = self.how_to_answer_speech or self.theme_explanation_speech or self.voice_prompt_script_speech or ""
 
             if self.speech_layer is None:
                 self.speech_layer = LessonSpeechLayer(
@@ -295,9 +493,9 @@ class AppendPageJsonRequest(BaseModel):
 class AnalyzePageJsonRequest(BaseModel):
     lesson_id: Optional[str] = Field(default=None, description="ID активной сессии урока для добавления разворота без списания баллов")
     image_base64: Optional[str] = Field(default=None, description="Изображение страницы учебника в формате base64 (одиночное)")
-    images_base64: Optional[List[str]] = Field(default=None, description="Список изображений нескольких страниц учебника/тетради в формате base64")
+    images_base64: Optional[List[str]] = Field(default=None, max_length=2, description="Список изображений нескольких страниц учебника/тетради в формате base64 (максимум 2 страницы)")
     mime_type: str = Field(default="image/jpeg", description="MIME тип изображения (image/jpeg, image/png)")
-    mime_types: Optional[List[str]] = Field(default=None, description="Список MIME типов изображений")
+    mime_types: Optional[List[str]] = Field(default=None, max_length=2, description="Список MIME типов изображений")
     grade: int = Field(default=3, ge=1, le=12)
     tier: Optional[AgeTier] = None
     interests: Optional[Union[List[str], str]] = Field(
@@ -309,14 +507,13 @@ class AnalyzePageJsonRequest(BaseModel):
 
 
 class MoreExamplesRequest(BaseModel):
-    task_title: str = Field(..., description="Тема урока")
-    theme_explanation: Optional[str] = Field(default="", description="Суть темы")
+    task_title: str = Field(..., max_length=1000, description="Тема урока")
+    theme_explanation: Optional[str] = Field(default="", max_length=1000, description="Суть темы")
     vocabulary: List[VocabularyItem] = Field(default_factory=list, description="Словарь урока")
-    current_template: str = Field(default="", description="Текущий речевой каркас")
+    current_template: str = Field(default="", max_length=1000, description="Текущий речевой каркас")
     grade: int = Field(default=3, ge=1, le=12)
     tier: Optional[AgeTier] = None
 
 
 class MoreExamplesResponse(BaseModel):
     templates: List[str] = Field(default_factory=list, description="Новые примеры с пропусками [слово]")
-

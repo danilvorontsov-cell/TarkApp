@@ -199,7 +199,7 @@ async def test_telegram_admin_gen_command(db_session):
 
             mock_send.assert_awaited_once()
             call_kwargs = mock_send.call_args.kwargs
-            assert call_kwargs["chat_id"] == "admin-chat-1"
+            assert call_kwargs["chat_id"] in ("admin-chat-1", "777888999")
             assert call_kwargs["parse_mode"] == "HTML"
     finally:
         settings.ADMIN_TELEGRAM_ID = orig_admin

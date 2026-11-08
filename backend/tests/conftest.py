@@ -1,7 +1,11 @@
+import _thread
+import threading
 import pytest
 from app.config import settings
 
 settings.APP_ENV = "test"
+if not settings.TELEGRAM_WEBHOOK_SECRET:
+    settings.TELEGRAM_WEBHOOK_SECRET = "test-webhook-secret"
 
 from app.main import app
 from app.database import init_db
@@ -11,6 +15,37 @@ from app.auth import get_current_user, CurrentUser
 
 # Initialize database tables for all test runs
 init_db()
+
+
+def pytest_addoption(parser):
+    """Registers --timeout CLI option when pytest-timeout plugin is not installed."""
+    try:
+        parser.addoption(
+            "--timeout",
+            action="store",
+            type=float,
+            default=None,
+            help="Per-test execution timeout in seconds (offline builtin fallback).",
+        )
+    except ValueError:
+        # Option already registered by pytest-timeout plugin
+        pass
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    """Enforces per-test --timeout when specified on the command line."""
+    timeout_sec = item.config.getoption("--timeout", default=None)
+    timer = None
+    if timeout_sec and timeout_sec > 0:
+        timer = threading.Timer(float(timeout_sec), _thread.interrupt_main)
+        timer.daemon = True
+        timer.start()
+    try:
+        yield
+    finally:
+        if timer is not None:
+            timer.cancel()
 
 
 @pytest.fixture(autouse=True)
@@ -31,9 +66,11 @@ def mock_telegram_polling(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def mock_azure_speech_synthesizer(monkeypatch):
-    """Mocks Azure Speech SDK SSML synthesis to prevent external network calls in unit tests."""
+    """Mocks Azure Speech SDK SSML synthesis with a valid MP3 buffer (> 800 bytes, ID3 + MPEG sync frames)."""
     def fake_synthesize(ssml: str) -> bytes:
-        return (b"\xff\xfb\x90\x44" * 350) + ssml.encode("utf-8")[:200]
+        id3_header = b"ID3\x04\x00\x00\x00\x00\x00\x00"
+        mpeg_frames = b"\xff\xfb\x90\x44" * 350
+        return id3_header + mpeg_frames + ssml.encode("utf-8")[:200]
 
     monkeypatch.setattr(tts_service, "_synthesize_azure_ssml", fake_synthesize)
 

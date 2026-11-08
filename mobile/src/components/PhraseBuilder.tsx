@@ -52,41 +52,68 @@ interface ExampleState {
 
 /**
  * Normalizes text for Estonian TTS synthesis:
- * - Extracts clean text / slot values
- * - Eliminates stray cross / multiplication marks (×, ✕, ✖, *)
- * - Eliminates brackets and placeholder markers
- * - Eliminates dots directly following integer numbers (e.g. "12." -> "12")
- *   so cardinal numbers (12 -> kaksteist) are NOT mistakenly read as ordinals (kahdestoistkümnes).
- * - Separates punctuation directly in contact with numbers
- * - Normalizes whitespace
+ * - Protects time (14:30), decimal fractions (3,5 -> 3 koma 5), and ordinary fractions (1/2 -> üks kahendik)
+ *   before punctuation/math regexes
+ * - Verbalizes Estonian math signs (+ -> pluss, - -> miinus, = -> võrdub) while preserving numeral cases (5-ga)
+ * - Preserves ordinal dots before lowercase Estonian nouns (15. harjutus) while detaching sentence-final dots (12. -> 12)
  */
 export const normalizeTextForTTS = (text: string): string => {
   if (!text) return '';
 
-  let normalized = text;
+  let normalized = text.replace(/<\/?est>/gi, ' ');
 
-  // 1. Remove multiplication and cross symbols (×, ✕, ✖, *)
+  // 1. Protect 24h time expressions (e.g. 14:30) from colon splitting
+  normalized = normalized.replace(/\b(\d{1,2}):(\d{2})\b/g, '__TIME_$1_$2__');
+
+  // 2. Verbalize decimal fractions (e.g. 3,5 -> 3 koma 5) before comma splitting
+  normalized = normalized.replace(/(\d+),(\d+)/g, '$1 koma $2');
+
+  // 3. Verbalize ordinary fractions before slash/punctuation rules
+  normalized = normalized
+    .replace(/\b1\s*\/\s*2\b/g, ' üks kahendik ')
+    .replace(/\b1\s*\/\s*3\b/g, ' üks kolmandik ')
+    .replace(/\b2\s*\/\s*3\b/g, ' kaks kolmandikku ')
+    .replace(/\b1\s*\/\s*4\b/g, ' üks neljandik ')
+    .replace(/\b3\s*\/\s*4\b/g, ' kolm neljandikku ')
+    .replace(/\b1\s*\/\s*5\b/g, ' üks viiendik ');
+
+  // 4. Preserve Estonian numeral case endings (5-ga, 10-ni, 3-st) before minus verbalization
+  normalized = normalized.replace(
+    /(\d+)[-–—]+(?=(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)/gi,
+    '__ESTCASE_$1__'
+  );
+
+  // 5. Verbalize Estonian math signs (+ -> pluss, - -> miinus, = -> võrdub)
+  normalized = normalized.replace(/\+/g, ' pluss ');
+  normalized = normalized.replace(/=/g, ' võrdub ');
+  normalized = normalized.replace(/(\d+)\s*[-–—]\s*(\d+)/g, '$1 miinus $2');
+  normalized = normalized.replace(/(^|\s)[-–—](\d+)\b/g, '$1miinus $2');
+
+  // Restore Estonian numeral case hyphens
+  normalized = normalized.replace(/__ESTCASE_(\d+)__/g, '$1-');
+
+  // 6. Remove multiplication and cross symbols (×, ✕, ✖, *)
   normalized = normalized.replace(/[\u00d7\u2715\u2716*]/g, ' ');
 
-  // 2. Remove brackets, braces, parentheses
+  // 7. Remove brackets, braces, parentheses, and placeholder underscores
   normalized = normalized.replace(/[\[\]{}()]/g, ' ');
-
-  // 3. Remove placeholder underscores
   normalized = normalized.replace(/_{2,}/g, ' ');
 
-  // 4. Detach / remove dots directly after numbers so "12." is not synthesized as ordinal ("kaheteistkümnes")
-  normalized = normalized.replace(/(\b\d+)\s*\.(?!\d)/g, '$1 ');
+  // 8. Detach sentence-final dots after numbers ("12." -> "12") while keeping ordinals ("15. harjutus")
+  normalized = normalized.replace(/(\b\d+)\.(?!\d|\s+[a-zõäöüšž])/g, '$1 ');
 
-  // 5. Separate other punctuation directly in contact with numbers
+  // 9. Separate other punctuation directly in contact with numbers
   normalized = normalized.replace(/(\d+)([,!?;:])/g, '$1 $2');
   normalized = normalized.replace(/([,!?;:])(\d+)/g, '$1 $2');
 
-  // 6. Separate hyphens/dashes attached to numbers, preserving Estonian numeral case endings (5-ga, 10-ni, 3-st, etc.)
-  normalized = normalized.replace(/(\d+)[-–—]+(?=(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)/gi, '$1-');
+  // 10. Separate remaining non-case dashes attached to numbers
   normalized = normalized.replace(/(\d+)[-–—]+(?!(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)/gi, '$1 ');
   normalized = normalized.replace(/[-–—]+(\d+)/g, ' $1');
 
-  // 7. Collapse excess spaces
+  // 11. Restore protected time tokens
+  normalized = normalized.replace(/__TIME_(\d{1,2})_(\d{2})__/g, '$1:$2');
+
+  // 12. Collapse excess spaces
   return normalized.replace(/\s+/g, ' ').trim();
 };
 
@@ -249,7 +276,7 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
     });
   };
 
-  // If no slots exist, render plain template
+  // If no slots exist, render plain template with unified full-width top-of-card audio button
   if (allSlots.length === 0) {
     const isPlaying = playingId === 'answer_template';
     const isPlayingActive = isPlaying && playbackState === 'playing';
@@ -261,27 +288,34 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
           <Text style={[styles.title, isJunior && styles.titleJunior]}>
             ✏️ Эстонский каркас ответа:
           </Text>
-          <TouchableOpacity
-            style={[styles.audioBtn, isPlayingActive && styles.audioBtnActive]}
-            onPress={() => onPlayAudio(normalizeTextForTTS(template), 'et', 'answer_template')}
-            disabled={isLoading}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              {isLoading && (
-                <ActivityIndicator size="small" color="#92400E" style={{ marginRight: 6 }} />
-              )}
-              <Text style={styles.audioBtnText}>
-                {isLoading
-                  ? 'Загрузка...'
-                  : isPlayingActive
-                  ? '⏸ Пауза'
-                  : isPlayingPaused
-                  ? '▶ Продолжить'
-                  : '▶ Озвучить (et)'}
-              </Text>
-            </View>
-          </TouchableOpacity>
         </View>
+        <TouchableOpacity
+          style={[
+            styles.unifiedAudioBtn,
+            isPlayingActive && styles.unifiedAudioBtnActive,
+            isPlayingPaused && styles.unifiedAudioBtnPaused,
+          ]}
+          onPress={() => onPlayAudio(normalizeTextForTTS(template), 'et', 'answer_template')}
+          disabled={isLoading}
+          activeOpacity={0.85}
+        >
+          <View style={styles.listenBtnContent}>
+            {isLoading ? (
+              <>
+                <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.unifiedAudioBtnText}>ЗАГРУЗКА ЗВУКА...</Text>
+              </>
+            ) : (
+              <Text style={styles.unifiedAudioBtnText}>
+                {isPlayingActive
+                  ? '⏸ ПАУЗА'
+                  : isPlayingPaused
+                  ? '▶ ПРОДОЛЖИТЬ'
+                  : '▶ ОЗВУЧИТЬ'}
+              </Text>
+            )}
+          </View>
+        </TouchableOpacity>
         <Text style={[styles.plainText, isJunior && styles.plainTextJunior]}>
           {template.replace(/\[|\]/g, '')}
         </Text>
@@ -484,12 +518,15 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
     >
       {/* Header */}
       <View style={styles.headerRow}>
-        <Text style={[styles.title, isJunior && styles.titleJunior]}>
+        <Text
+          style={[styles.title, isJunior && styles.titleJunior]}
+          numberOfLines={2}
+        >
           ✏️ Собери ответ на эстонском{examples.length > 1 ? ` (${currentIdx + 1}/${examples.length})` : ''}:
         </Text>
         {Object.keys(slotsFilled).length > 0 && (
-          <TouchableOpacity style={styles.resetBtn} onPress={handleResetSlots}>
-            <Text style={styles.resetBtnText}>↺ Сбросить</Text>
+          <TouchableOpacity style={styles.resetBtn} onPress={handleResetSlots} activeOpacity={0.75}>
+            <Text style={styles.resetBtnText} numberOfLines={1}>↻ Сброс</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -499,6 +536,37 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
           ? '🎉 Отлично! Все слова подобраны верно. Послушай правильное произношение:'
           : 'Подбирай подходящие по смыслу слова для каждого пропуска:'}
       </Text>
+
+      {/* Unified Full-Width Audio Button at Top of Card when Complete */}
+      {isComplete && (
+        <TouchableOpacity
+          style={[
+            styles.unifiedAudioBtn,
+            isCompletedPlaying && playbackState === 'playing' && styles.unifiedAudioBtnActive,
+            isCompletedPlaying && playbackState === 'paused' && styles.unifiedAudioBtnPaused,
+          ]}
+          onPress={() => onPlayAudio(getAssembledPhrase(), 'et', 'answer_template_completed')}
+          disabled={isCompletedLoading}
+          activeOpacity={0.85}
+        >
+          <View style={styles.listenBtnContent}>
+            {isCompletedLoading ? (
+              <>
+                <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 8 }} />
+                <Text style={styles.unifiedAudioBtnText}>ЗАГРУЗКА ЗВУКА...</Text>
+              </>
+            ) : (
+              <Text style={styles.unifiedAudioBtnText}>
+                {isCompletedPlaying && playbackState === 'playing'
+                  ? '⏸ ПАУЗА'
+                  : isCompletedPlaying && playbackState === 'paused'
+                  ? '▶ ПРОДОЛЖИТЬ'
+                  : '▶ ПОСЛУШАТЬ СВОЙ ОТВЕТ'}
+              </Text>
+            )}
+          </View>
+        </TouchableOpacity>
+      )}
 
       {/* Sentences Container with Fixed-Line Layout (No Jumping) */}
       <View style={styles.sentencesCard}>
@@ -592,39 +660,6 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
         )}
       </View>
 
-      {/* Audio Playback Button when Complete */}
-      {isComplete && (
-        <View style={styles.completeActionBox}>
-          <TouchableOpacity
-            style={[
-              styles.listenCompletedBtn,
-              isJunior && styles.listenCompletedBtnJunior,
-              isCompletedPlaying && playbackState === 'playing' && styles.listenCompletedBtnActive,
-            ]}
-            onPress={() => onPlayAudio(getAssembledPhrase(), 'et', 'answer_template_completed')}
-            disabled={isCompletedLoading}
-            activeOpacity={0.8}
-          >
-            <View style={styles.listenBtnContent}>
-              {isCompletedLoading ? (
-                <>
-                  <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 8 }} />
-                  <Text style={styles.listenCompletedBtnText}>Загрузка аудио...</Text>
-                </>
-              ) : (
-                <Text style={styles.listenCompletedBtnText}>
-                  {isCompletedPlaying && playbackState === 'playing'
-                    ? '⏸ Пауза'
-                    : isCompletedPlaying && playbackState === 'paused'
-                    ? '▶ Продолжить'
-                    : '▶ Послушать свой ответ'}
-                </Text>
-              )}
-            </View>
-          </TouchableOpacity>
-        </View>
-      )}
-
       {/* More Examples Section */}
       <View style={styles.moreExamplesContainer}>
         <TouchableOpacity
@@ -705,12 +740,17 @@ const styles = StyleSheet.create({
     borderColor: Theme.colors.slotSuccessBorder,
   },
   headerRow: {
+    width: '100%',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 8,
     marginBottom: 6,
   },
   title: {
+    flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
     fontSize: 16,
     fontWeight: '800',
     color: Theme.colors.textPrimary,
@@ -721,6 +761,8 @@ const styles = StyleSheet.create({
     color: Theme.colors.textPrimary,
   },
   resetBtn: {
+    flexShrink: 0,
+    alignSelf: 'center',
     backgroundColor: Theme.colors.surfaceAlt,
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -731,7 +773,30 @@ const styles = StyleSheet.create({
   resetBtnText: {
     fontSize: 12,
     color: Theme.colors.textSecondary,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  unifiedAudioBtn: {
+    width: '100%',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: Theme.radius.button,
+    backgroundColor: Theme.colors.voiceButton,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    ...Theme.shadow.chip,
+  },
+  unifiedAudioBtnActive: {
+    backgroundColor: Theme.colors.voiceButtonPressed,
+  },
+  unifiedAudioBtnPaused: {
+    backgroundColor: '#D97706',
+  },
+  unifiedAudioBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+    letterSpacing: 0.3,
   },
   subtitleHint: {
     fontSize: 13,

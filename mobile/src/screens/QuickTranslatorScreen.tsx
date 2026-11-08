@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -16,7 +16,15 @@ import { Theme, darkTheme } from '../theme/colors';
 import { quickTranslate, QuickTranslateResponse } from '../services/api';
 import { optimizePageImage } from '../services/imageOptimizer';
 import { StorageService } from '../services/storage';
-import { playTts, stopTts } from '../services/audioPlayer';
+import {
+  playTts,
+  stopTts,
+  pauseTts,
+  resumeTts,
+  subscribePlaybackState,
+  PlaybackState,
+} from '../services/audioPlayer';
+import { normalizeTextForTTS } from '../components/PhraseBuilder';
 import { VocabularyItem } from '../types';
 import { ThemedAlert } from '../components/ThemedAlert';
 
@@ -36,7 +44,20 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
   const [result, setResult] = useState<QuickTranslateResponse | null>(null);
   const [isCopied, setIsCopied] = useState(false);
   const [isSavedToVocab, setIsSavedToVocab] = useState(false);
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [audioPlaybackState, setAudioPlaybackState] = useState<PlaybackState>('idle');
+
+  useEffect(() => {
+    const unsubscribe = subscribePlaybackState((state, playingId) => {
+      if (playingId === 'quick_translator') {
+        setAudioPlaybackState(state);
+      } else {
+        setAudioPlaybackState('idle');
+      }
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   // Переключение направления перевода
   const handleSwapLanguages = () => {
@@ -109,7 +130,7 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
     setIsSavedToVocab(false);
     setIsCopied(false);
     stopTts();
-    setIsPlayingAudio(false);
+    setAudioPlaybackState('idle');
   };
 
   // Снимок текста через камеру
@@ -126,7 +147,7 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
 
       const photo = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
-        allowsEditing: false,
+        allowsEditing: true,
         quality: 1,
       });
 
@@ -169,11 +190,14 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
     return { estText: res.translated_text, ruText: res.original_text };
   };
 
-  // Озвучивание
+  // Озвучивание (с поддержкой паузы/продолжения и внешних системных прерываний)
   const handleToggleVoice = async () => {
-    if (isPlayingAudio) {
-      stopTts();
-      setIsPlayingAudio(false);
+    if (audioPlaybackState === 'playing') {
+      await pauseTts();
+      return;
+    }
+    if (audioPlaybackState === 'paused') {
+      await resumeTts();
       return;
     }
 
@@ -181,20 +205,21 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
 
     // Озвучиваем эстонское слово для тренировки произношения (kiirhääldus)
     const { estText } = getLanguagePairs(result);
-    const cleanEstText = (estText || '').replace(/<\/?[^>]+(>|$)/g, '').trim();
+    const cleanEstText = normalizeTextForTTS(
+      (estText || '').replace(/<\/?[^>]+(>|$)/g, '').trim()
+    );
     if (!cleanEstText) return;
 
     try {
-      setIsPlayingAudio(true);
       const player = await playTts(cleanEstText, 'et', 'quick_translator', {
-        onFinish: () => setIsPlayingAudio(false),
-        onError: () => setIsPlayingAudio(false),
+        onFinish: () => setAudioPlaybackState('idle'),
+        onError: () => setAudioPlaybackState('idle'),
       });
       if (!player) {
-        setIsPlayingAudio(false);
+        setAudioPlaybackState('idle');
       }
     } catch {
-      setIsPlayingAudio(false);
+      setAudioPlaybackState('idle');
     }
   };
 
@@ -364,6 +389,26 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
             ) : null}
           </View>
 
+          {/* Unified Full-Width Audio Button at Top of Card */}
+          <TouchableOpacity
+            style={[
+              styles.unifiedAudioBtn,
+              audioPlaybackState === 'playing' && styles.unifiedAudioBtnActive,
+              audioPlaybackState === 'paused' && styles.unifiedAudioBtnPaused,
+            ]}
+            onPress={handleToggleVoice}
+            activeOpacity={0.85}
+            accessibilityLabel="Озвучить перевод на эстонском"
+          >
+            <Text style={styles.unifiedAudioBtnText}>
+              {audioPlaybackState === 'playing'
+                ? '⏸ ПАУЗА'
+                : audioPlaybackState === 'paused'
+                ? '▶ ПРОДОЛЖИТЬ'
+                : '▶ ОЗВУЧИТЬ'}
+            </Text>
+          </TouchableOpacity>
+
           {/* Main Translated Text */}
           <Text style={styles.translatedText} selectable>
             {result.translated_text}
@@ -379,22 +424,8 @@ export const QuickTranslatorScreen: React.FC<QuickTranslatorScreenProps> = ({
             </View>
           ) : null}
 
-          {/* Actions Row (Voice, Copy, Save to Vocab) */}
+          {/* Actions Row (Copy, Save to Vocab) */}
           <View style={styles.resultActionsRow}>
-            {/* 🔊 Voice Button */}
-            <TouchableOpacity
-              style={[
-                styles.actionBtn,
-                isPlayingAudio && styles.actionBtnActive,
-              ]}
-              onPress={handleToggleVoice}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.actionBtnText}>
-                {isPlayingAudio ? '⏹ Стоп' : '🔊 Озвучить'}
-              </Text>
-            </TouchableOpacity>
-
             {/* 📋 Copy Button */}
             <TouchableOpacity
               style={[
@@ -666,6 +697,29 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     flexWrap: 'wrap',
     gap: 6,
+  },
+  unifiedAudioBtn: {
+    width: '100%',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: Theme.radius.button,
+    backgroundColor: Theme.colors.voiceButton,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    ...Theme.shadow.chip,
+  },
+  unifiedAudioBtnActive: {
+    backgroundColor: Theme.colors.voiceButtonPressed,
+  },
+  unifiedAudioBtnPaused: {
+    backgroundColor: '#D97706',
+  },
+  unifiedAudioBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+    letterSpacing: 0.3,
   },
   resultBadge: {
     backgroundColor: darkTheme.badgeFreeBg,

@@ -23,8 +23,13 @@ from app.routers.voice import router as voice_router
 from app.routers.translate import router as translate_router
 from app.routers.feedback import router as feedback_router
 from app.routers.license import router as license_router
-from app.routers.telegram import router as telegram_router
+from app.routers.telegram import router as telegram_router, legacy_telegram_router
 from app.services.telegram_alert import send_telegram_alert, start_telegram_polling
+from app.middleware.security import (
+    SecurityHeadersMiddleware,
+    mask_device_id,
+    sanitize_log_message,
+)
 
 # Setup file loggers with rotation (backend/logs/app.log and backend/logs/error.log)
 setup_logging()
@@ -37,14 +42,15 @@ async def lifespan(app: FastAPI):
     try:
         init_db()
         logger.info("Database initialized successfully.")
-        try:
-            with SessionLocal() as db_session:
-                from app.services.license_service import sync_keys_from_file
-                synced_count = sync_keys_from_file(db_session)
-                if synced_count > 0:
-                    logger.info(f"Auto-synced {synced_count} keys from generated_keys.txt.")
-        except Exception as seed_err:
-            logger.warning(f"Could not auto-sync keys from file: {seed_err}")
+        if settings.APP_ENV != "production":
+            try:
+                with SessionLocal() as db_session:
+                    from app.services.license_service import sync_keys_from_file
+                    synced_count = sync_keys_from_file(db_session)
+                    if synced_count > 0:
+                        logger.info(f"Auto-synced {synced_count} keys from generated_keys.txt.")
+            except Exception as seed_err:
+                logger.warning(f"Could not auto-sync keys from file: {seed_err}")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
 
@@ -88,7 +94,8 @@ app = FastAPI(
 
 app.state.limiter = limiter
 
-# CORS Configuration
+# Pure ASGI Security Headers & CORS Configuration
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -98,31 +105,67 @@ app.add_middleware(
 )
 
 
-@app.middleware("http")
-async def log_requests_middleware(request: Request, call_next):
+class RequestLoggingMiddleware:
     """
-    Measures processing duration and logs all incoming requests (method, endpoint,
-    status_code, response time in ms, request_id) into backend/logs/app.log.
-    Adds X-Request-ID to response headers for end-to-end tracing.
+    Pure ASGI request logging & X-Request-ID tracing middleware.
+    Avoids Starlette BaseHTTPMiddleware TaskGroup overhead and preserves streaming responses.
+    Sanitizes logs by masking X-Device-ID, tokens, license keys, and Base64 images.
     """
-    start_time = time.perf_counter()
-    request_id = request.headers.get("x-request-id") or f"req_{uuid.uuid4().hex[:8]}"
-    request.state.request_id = request_id
 
-    try:
-        response = await call_next(request)
-        process_time_ms = (time.perf_counter() - start_time) * 1000
-        response.headers["x-request-id"] = request_id
-        logger.info(
-            f"[{request_id}] {request.method} {request.url.path} - {response.status_code} - {process_time_ms:.2f}ms"
-        )
-        return response
-    except Exception as exc:
-        process_time_ms = (time.perf_counter() - start_time) * 1000
-        logger.error(
-            f"[{request_id}] {request.method} {request.url.path} - FAILED - {process_time_ms:.2f}ms - error: {exc}"
-        )
-        raise exc
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        start_time = time.perf_counter()
+        raw_headers = scope.get("headers") or []
+        req_id = None
+        device_id_raw = None
+
+        for k, v in raw_headers:
+            k_lower = k.lower()
+            if k_lower == b"x-request-id" and not req_id:
+                req_id = v.decode("latin-1", errors="ignore").strip()
+            elif k_lower == b"x-device-id" and not device_id_raw:
+                device_id_raw = v.decode("latin-1", errors="ignore").strip()
+
+        request_id = req_id or f"req_{uuid.uuid4().hex[:8]}"
+        scope.setdefault("state", {})["request_id"] = request_id
+
+        method = scope.get("method", "HTTP")
+        raw_path = scope.get("path", "")
+        clean_path = sanitize_log_message(raw_path)
+        dev_tag = f" [dev:{mask_device_id(device_id_raw)}]" if device_id_raw else ""
+        status_code = 500
+
+        async def send_wrapper(message):
+            nonlocal status_code
+            if message.get("type") == "http.response.start":
+                status_code = message.get("status", 200)
+                headers = list(message.get("headers") or [])
+                headers.append((b"x-request-id", request_id.encode("latin-1")))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+            process_time_ms = (time.perf_counter() - start_time) * 1000
+            logger.info(
+                f"[{request_id}] {method} {clean_path}{dev_tag} - {status_code} - {process_time_ms:.2f}ms"
+            )
+        except Exception as exc:
+            process_time_ms = (time.perf_counter() - start_time) * 1000
+            clean_error = sanitize_log_message(str(exc))
+            logger.error(
+                f"[{request_id}] {method} {clean_path}{dev_tag} - FAILED - {process_time_ms:.2f}ms - error: {clean_error}"
+            )
+            raise
+
+
+app.add_middleware(RequestLoggingMiddleware)
 
 
 # Register routers
@@ -134,12 +177,12 @@ app.include_router(translate_router)
 app.include_router(feedback_router)
 app.include_router(license_router)
 app.include_router(telegram_router)
+app.include_router(legacy_telegram_router)
 
-# Mount static files directory (for high-performance static audio serving)
-static_dir = Path("static")
-static_dir.mkdir(parents=True, exist_ok=True)
-(static_dir / "audio").mkdir(parents=True, exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Mount ONLY isolated static audio subdirectory (never expose root static/ or private invoices)
+static_audio_dir = Path("static") / "audio"
+static_audio_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/static/audio", StaticFiles(directory=str(static_audio_dir)), name="static_audio")
 
 
 @app.exception_handler(RateLimitExceeded)

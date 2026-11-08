@@ -4,6 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PageAnalysisResponse, UserProfile, VocabularyItem } from '../types';
 import { captureException } from './sentry';
+import { formatBilingualErrorMessage } from '../utils/errorHandler';
 
 import { API_BASE_URL, getApiBaseUrl } from '../config/apiConfig';
 
@@ -17,7 +18,20 @@ export function resolveBaseUrl(baseUrl?: string): string {
 }
 
 export const API_TIMEOUT_MS = 60000;
-export const ANALYZE_TIMEOUT_MS = 90000;
+export const ANALYZE_TIMEOUT_MS = 25000;
+
+// Module-level controller for page analysis requests:
+// Cancels previous in-flight requests on duplicate submissions and prevents parallel hanging calls.
+let activeAnalyzeController: AbortController | null = null;
+
+export function cancelActiveAnalyze(): void {
+  if (activeAnalyzeController) {
+    try {
+      activeAnalyzeController.abort('USER_CANCELLED');
+    } catch {}
+    activeAnalyzeController = null;
+  }
+}
 
 /**
  * Fetch wrapper that automatically enforces an AbortController timeout.
@@ -53,6 +67,11 @@ export async function fetchWithTimeout(
     });
   } catch (err: any) {
     if (err?.name === 'AbortError' || controller.signal.aborted) {
+      if (timeoutMs <= 30000) {
+        throw new Error(
+          'Сервер долго обрабатывает страницу. Проверьте интернет и попробуйте еще раз'
+        );
+      }
       throw new Error(
         `Время ожидания ответа от сервера (${Math.round(timeoutMs / 1000)} сек) истекло. Пожалуйста, проверьте интернет и повторите попытку.`
       );
@@ -147,9 +166,9 @@ export async function getDeviceId(): Promise<string> {
       }
     }
 
-    // 4. Crypto-random fallback if hardware id is inaccessible
-    if (!resolvedId || !resolvedId.trim()) {
-      resolvedId = `dev_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    // 4. Crypto-random fallback if hardware id is inaccessible or outside {16,64} safe format
+    if (!resolvedId || !/^[a-zA-Z0-9._-]{16,64}$/.test(resolvedId.trim())) {
+      resolvedId = `dev_${Date.now()}_${Math.random().toString(36).substring(2, 12)}`;
     }
 
     cachedDeviceId = resolvedId.trim();
@@ -220,20 +239,39 @@ export function notifyAuthRequired(): void {
 
 export function toSafeHeaderAscii(val: string): string {
   if (!val) return '';
-  if (val.includes(':')) {
-    const [dev, ...nickParts] = val.split(':');
+  const dotIdx = val.lastIndexOf('.');
+  let payloadPart = val;
+  let sigSuffix = '';
+  if (dotIdx > 0 && val.length - dotIdx - 1 === 64) {
+    payloadPart = val.slice(0, dotIdx);
+    sigSuffix = val.slice(dotIdx);
+  }
+  if (payloadPart.includes(':')) {
+    const [dev, ...nickParts] = payloadPart.split(':');
     const nick = nickParts.join(':');
     try {
-      return `${dev}:${encodeURIComponent(decodeURIComponent(nick))}`;
+      return `${dev}:${encodeURIComponent(decodeURIComponent(nick))}${sigSuffix}`;
     } catch {
-      return `${dev}:${encodeURIComponent(nick)}`;
+      return `${dev}:${encodeURIComponent(nick)}${sigSuffix}`;
     }
   }
   try {
-    return /[^\x00-\x7F]/.test(val) ? encodeURIComponent(decodeURIComponent(val)) : val;
+    const cleanPayload = /[^\x00-\x7F]/.test(payloadPart)
+      ? encodeURIComponent(decodeURIComponent(payloadPart))
+      : payloadPart;
+    return `${cleanPayload}${sigSuffix}`;
   } catch {
-    return encodeURIComponent(val);
+    return `${encodeURIComponent(payloadPart)}${sigSuffix}`;
   }
+}
+
+export function isSignedAuthToken(token: string | null | undefined): boolean {
+  if (!token) return false;
+  const trimmed = token.trim();
+  const dotIdx = trimmed.lastIndexOf('.');
+  if (dotIdx <= 0) return false;
+  const sig = trimmed.slice(dotIdx + 1);
+  return /^[0-9a-fA-F]{64}$/.test(sig);
 }
 
 export function setAuthToken(token: string | null): void {
@@ -250,8 +288,85 @@ export function clearAuthSession(): void {
 
 export function buildAuthToken(deviceId: string, nickname: string): string {
   const cleanDevice = (deviceId || '').trim();
-  const cleanNick = (nickname || '').trim() || 'Ученик';
+  const cleanNick = ((nickname || '').trim() || 'Ученик').slice(0, 50);
   return `${cleanDevice}:${encodeURIComponent(cleanNick)}`;
+}
+
+export async function requestSignedAuthToken(
+  nickname: string,
+  baseUrl: string = API_BASE_URL
+): Promise<string> {
+  const deviceId = await getDeviceId();
+  const cleanNick = ((nickname || '').trim() || 'Ученик').slice(0, 50);
+  const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/license/auth-token`;
+  const response = await fetchWithTimeout(
+    endpoint,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-Device-ID': deviceId,
+      },
+      body: JSON.stringify({ nickname: cleanNick }),
+    },
+    15000
+  );
+
+  if (!response.ok) {
+    throw await parseErrorResponse(response);
+  }
+
+  const data = (await response.json()) as { auth_token: string };
+  if (data?.auth_token) {
+    setAuthToken(data.auth_token);
+    try {
+      await AsyncStorage.setItem('@tarkapp_auth_token', data.auth_token);
+    } catch {}
+    return data.auth_token;
+  }
+  return buildAuthToken(deviceId, cleanNick);
+}
+
+export async function ensureSignedAuthToken(
+  nickname: string,
+  baseUrl: string = API_BASE_URL
+): Promise<string | null> {
+  const current = getAuthToken();
+  if (isSignedAuthToken(current)) {
+    return current;
+  }
+  try {
+    return await requestSignedAuthToken(nickname, baseUrl);
+  } catch {
+    return current;
+  }
+}
+
+export async function deleteServerAccountData(baseUrl: string = API_BASE_URL): Promise<void> {
+  const deviceId = await getDeviceId();
+  const token = await ensureSignedAuthToken('Ученик', baseUrl);
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'X-Device-ID': deviceId,
+  };
+  if (token) {
+    const safeToken = toSafeHeaderAscii(token);
+    headers['Authorization'] = `Bearer ${safeToken}`;
+    headers['X-Auth-Token'] = safeToken;
+  }
+  const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/license/device`;
+  const response = await fetchWithTimeout(
+    endpoint,
+    {
+      method: 'DELETE',
+      headers,
+    },
+    15000
+  );
+  if (!response.ok && response.status !== 404) {
+    throw await parseErrorResponse(response);
+  }
 }
 
 export interface LicenseStatus {
@@ -264,6 +379,7 @@ export interface LicenseStatus {
   device_id?: string;
   activated_key?: string;
   package_name?: string;
+  auth_token?: string;
 }
 
 export interface KeyActivateResponse {
@@ -292,7 +408,14 @@ export async function getLicenseStatus(baseUrl: string = API_BASE_URL): Promise<
     throw await parseErrorResponse(response);
   }
 
-  return (await response.json()) as LicenseStatus;
+  const data = (await response.json()) as LicenseStatus;
+  if (data?.auth_token && cachedAuthToken && !isSignedAuthToken(cachedAuthToken)) {
+    setAuthToken(data.auth_token);
+    try {
+      await AsyncStorage.setItem('@tarkapp_auth_token', data.auth_token);
+    } catch {}
+  }
+  return data;
 }
 
 export async function activateAccessKey(
@@ -503,7 +626,10 @@ export function formatFriendlyErrorMessage(error: any): string {
       return 'Сервер TarkApp временно перегружен или обновляется. Пожалуйста, повторите попытку через минуту.';
     }
     if (error.status === 413) {
-      return 'Размер фотографии слишком велик. Пожалуйста, выберите изображение меньшего размера.';
+      return 'Файл страницы слишком большой. Сделайте снимок ближе / Fail on liiga suur';
+    }
+    if (error.status === 502 || error.status === 503 || error.status === 504) {
+      return 'Сервер временно недоступен. Попробуйте через минуту / Server on ajutiselt kättesaamatu';
     }
     if (error.status === 404) {
       return 'Запрашиваемый ресурс не найден на сервере.';
@@ -513,9 +639,7 @@ export function formatFriendlyErrorMessage(error: any): string {
     }
   }
 
-  const msg = typeof error === 'string' ? error : error.message || String(error);
-
-  // Eliminate any technical backend env or mail server parameters from user view
+  const msg = typeof error === 'string' ? error : error?.message || String(error);
   if (
     msg.includes('SMTP') ||
     msg.includes('RESEND') ||
@@ -527,55 +651,7 @@ export function formatFriendlyErrorMessage(error: any): string {
     return 'Счёт готов к оплате. Используйте реквизиты IBAN и Viitenumber ниже.';
   }
 
-  // Network connection / DNS / Offline / Cleartext issues
-  if (
-    msg.includes('Network request failed') ||
-    msg.includes('UnknownHostException') ||
-    msg.includes('Unable to resolve host') ||
-    msg.includes('SSLHandshakeException') ||
-    msg.includes('CertPathValidatorException') ||
-    msg.includes('Unexpected char') ||
-    msg.includes('IllegalArgumentException') ||
-    msg.includes('CLEARTEXT') ||
-    msg.includes('Cleartext') ||
-    msg.includes('cleartext') ||
-    msg.includes('Failed to connect') ||
-    msg.includes('ConnectException') ||
-    msg.includes('ECONNREFUSED') ||
-    msg.includes('ENOTFOUND') ||
-    msg.includes('EHOSTUNREACH') ||
-    msg.includes('NetworkError')
-  ) {
-    return 'Не удалось связаться с сервером TarkApp. Пожалуйста, проверьте интернет-соединение и попробуйте снова.';
-  }
-
-  // Timeout issues
-  if (
-    msg.includes('timeout') ||
-    msg.includes('Timeout') ||
-    msg.includes('AbortError') ||
-    msg.includes('aborted')
-  ) {
-    return 'Время ожидания ответа от сервера истекло. Проверьте стабильность соединения и попробуйте снова.';
-  }
-
-  // 500 status in message
-  if (msg.includes('500') || msg.includes('INTERNAL_SERVER_ERROR')) {
-    return 'Временный сбой при обработке задания. Попробуйте еще раз через несколько секунд.';
-  }
-
-  // 502/503/504 in message
-  if (msg.includes('502') || msg.includes('503') || msg.includes('504')) {
-    return 'Сервер временно недоступен или перезагружается. Попробуйте через минуту.';
-  }
-
-  // If the error message is already user-facing Russian text, keep it!
-  const hasCyrillic = /[а-яёА-ЯЁ]/.test(msg);
-  if (hasCyrillic && !msg.includes('java.') && !msg.includes('at ') && !msg.includes('Error:')) {
-    return msg;
-  }
-
-  return 'Временный сбой при соединении с сервером. Пожалуйста, попробуйте еще раз.';
+  return formatBilingualErrorMessage(error);
 }
 
 /**
@@ -584,6 +660,14 @@ export function formatFriendlyErrorMessage(error: any): string {
 async function parseErrorResponse(response: Response): Promise<ApiError> {
   let friendlyMessage = `Сбой сервера (${response.status})`;
   let errorCode: string | undefined = undefined;
+
+  if (response.status === 413) {
+    friendlyMessage = 'Файл страницы слишком большой. Сделайте снимок ближе / Fail on liiga suur';
+    errorCode = 'PAYLOAD_TOO_LARGE';
+  } else if (response.status === 502 || response.status === 503 || response.status === 504) {
+    friendlyMessage = 'Сервер временно недоступен. Попробуйте через минуту / Server on ajutiselt kättesaamatu';
+    errorCode = 'SERVICE_UNAVAILABLE';
+  }
 
   try {
     const errJson = await response.json();
@@ -685,6 +769,16 @@ export async function analyzePage(
   profile: UserProfile,
   baseUrl: string = API_BASE_URL
 ): Promise<PageAnalysisResponse> {
+  // Cancel previous active analysis request to prevent duplicate parallel processing
+  if (activeAnalyzeController) {
+    try {
+      activeAnalyzeController.abort('DUPLICATE_SUBMISSION');
+    } catch {}
+    activeAnalyzeController = null;
+  }
+  const currentController = new AbortController();
+  activeAnalyzeController = currentController;
+
   const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/analyze-page`;
   try {
     const deviceId = await getDeviceId();
@@ -705,24 +799,32 @@ export async function analyzePage(
     formData.append('grade', String(profile.grade));
     formData.append('tier', profile.tier);
     formData.append('interests', (profile.interests || []).join(', '));
-    formData.append('nickname', profile.nickname || 'Друг');
+    formData.append('nickname', (profile.nickname || 'Друг').slice(0, 50));
 
     const headers: Record<string, string> = {
       Accept: 'application/json',
       'X-Device-ID': deviceId,
     };
-    const token = getAuthToken();
+    const currentToken = getAuthToken();
+    const token = currentToken
+      ? await ensureSignedAuthToken((profile.nickname || 'Друг').slice(0, 50), baseUrl)
+      : null;
     if (token) {
       const safeToken = toSafeHeaderAscii(token);
       headers['Authorization'] = `Bearer ${safeToken}`;
       headers['X-Auth-Token'] = safeToken;
     }
 
-    const response = await fetchWithTimeout(endpoint, {
-      method: 'POST',
-      body: formData,
-      headers,
-    });
+    const response = await fetchWithTimeout(
+      endpoint,
+      {
+        method: 'POST',
+        body: formData,
+        headers,
+        signal: currentController.signal,
+      },
+      ANALYZE_TIMEOUT_MS
+    );
 
     if (!response.ok) {
       throw await parseErrorResponse(response);
@@ -734,7 +836,15 @@ export async function analyzePage(
     if (err instanceof ApiError) {
       throw err;
     }
-    throw new ApiError(0, formatFriendlyErrorMessage(err), undefined, err);
+    const friendly =
+      err?.message && err.message.includes('Сервер долго обрабатывает')
+        ? err.message
+        : formatFriendlyErrorMessage(err);
+    throw new ApiError(0, friendly, undefined, err);
+  } finally {
+    if (activeAnalyzeController === currentController) {
+      activeAnalyzeController = null;
+    }
   }
 }
 
@@ -753,6 +863,16 @@ export async function analyzePagesJson(
   baseUrl: string = API_BASE_URL,
   lessonId?: string
 ): Promise<PageAnalysisResponse> {
+  // Cancel previous active analysis request to prevent duplicate parallel processing
+  if (activeAnalyzeController) {
+    try {
+      activeAnalyzeController.abort('DUPLICATE_SUBMISSION');
+    } catch {}
+    activeAnalyzeController = null;
+  }
+  const currentController = new AbortController();
+  activeAnalyzeController = currentController;
+
   const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/analyze-page/json`;
   try {
     const deviceId = await getDeviceId();
@@ -769,7 +889,7 @@ export async function analyzePagesJson(
       grade: profile.grade,
       tier: profile.tier,
       interests: profile.interests,
-      nickname: profile.nickname,
+      nickname: (profile.nickname || '').slice(0, 50),
     };
     if (lessonId) {
       bodyPayload.lesson_id = lessonId;
@@ -780,7 +900,10 @@ export async function analyzePagesJson(
       Accept: 'application/json',
       'X-Device-ID': deviceId,
     };
-    const token = getAuthToken();
+    const currentToken = getAuthToken();
+    const token = currentToken
+      ? await ensureSignedAuthToken((profile.nickname || 'Ученик').slice(0, 50), baseUrl)
+      : null;
     if (token) {
       const safeToken = toSafeHeaderAscii(token);
       headers['Authorization'] = `Bearer ${safeToken}`;
@@ -793,6 +916,7 @@ export async function analyzePagesJson(
         method: 'POST',
         headers,
         body: JSON.stringify(bodyPayload),
+        signal: currentController.signal,
       },
       ANALYZE_TIMEOUT_MS
     );
@@ -807,7 +931,15 @@ export async function analyzePagesJson(
     if (err instanceof ApiError) {
       throw err;
     }
-    throw new ApiError(0, formatFriendlyErrorMessage(err), undefined, err);
+    const friendly =
+      err?.message && err.message.includes('Сервер долго обрабатывает')
+        ? err.message
+        : formatFriendlyErrorMessage(err);
+    throw new ApiError(0, friendly, undefined, err);
+  } finally {
+    if (activeAnalyzeController === currentController) {
+      activeAnalyzeController = null;
+    }
   }
 }
 
@@ -821,6 +953,76 @@ export async function analyzePageJson(
   baseUrl: string = API_BASE_URL
 ): Promise<PageAnalysisResponse> {
   return analyzePagesJson([{ base64, mimeType }], profile, baseUrl);
+}
+
+/**
+ * Appends a second textbook/workbook page to an active lesson session without deducting review quotas.
+ * Hits POST /api/v1/lessons/{lessonId}/append-page
+ */
+export async function appendPageJson(
+  lessonId: string,
+  image: ImagePayload,
+  baseUrl: string = API_BASE_URL
+): Promise<PageAnalysisResponse> {
+  // Cancel previous active analysis request to prevent duplicate parallel processing
+  if (activeAnalyzeController) {
+    try {
+      activeAnalyzeController.abort('DUPLICATE_SUBMISSION');
+    } catch {}
+    activeAnalyzeController = null;
+  }
+  const currentController = new AbortController();
+  activeAnalyzeController = currentController;
+
+  const endpoint = `${resolveBaseUrl(baseUrl)}/api/v1/lessons/${encodeURIComponent(lessonId)}/append-page`;
+  try {
+    const deviceId = await getDeviceId();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'X-Device-ID': deviceId,
+    };
+    const currentToken = getAuthToken();
+    if (currentToken) {
+      const safeToken = toSafeHeaderAscii(currentToken);
+      headers['Authorization'] = `Bearer ${safeToken}`;
+      headers['X-Auth-Token'] = safeToken;
+    }
+
+    const response = await fetchWithTimeout(
+      endpoint,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          image_base64: image.base64,
+          mime_type: image.mimeType || 'image/jpeg',
+        }),
+        signal: currentController.signal,
+      },
+      ANALYZE_TIMEOUT_MS
+    );
+
+    if (!response.ok) {
+      throw await parseErrorResponse(response);
+    }
+
+    return (await response.json()) as PageAnalysisResponse;
+  } catch (err: any) {
+    captureException(err, { endpoint, context: 'appendPageJson' });
+    if (err instanceof ApiError) {
+      throw err;
+    }
+    const friendly =
+      err?.message && err.message.includes('Сервер долго обрабатывает')
+        ? err.message
+        : formatFriendlyErrorMessage(err);
+    throw new ApiError(0, friendly, undefined, err);
+  } finally {
+    if (activeAnalyzeController === currentController) {
+      activeAnalyzeController = null;
+    }
+  }
 }
 
 /**

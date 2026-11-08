@@ -1,9 +1,13 @@
 import asyncio
+from collections import OrderedDict
 import hashlib
 import logging
+import os
 from pathlib import Path
+import queue
 import re
-from typing import AsyncGenerator, Dict, List, Optional, Tuple
+import threading
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 try:
     import azure.cognitiveservices.speech as speechsdk
@@ -27,28 +31,96 @@ VOICE_MAP: Dict[str, str] = {
     "et-EE-KertNeural": "et-EE-KertNeural",
 }
 
-# Disk and memory caching
+# Disk and memory caching (single canonical cache directory with LRU rotation)
 AUDIO_CACHE_DIR = Path("static/audio/cache")
 try:
     AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 except Exception:
     pass
 
-_TTS_STREAM_CACHE: Dict[str, bytes] = {}
+_TTS_STREAM_CACHE: "OrderedDict[str, bytes]" = OrderedDict()
 MAX_CACHE_ENTRIES = 500
-MIN_VALID_AUDIO_BYTES = 4096
+MIN_VALID_AUDIO_BYTES = 800
+MAX_DISK_CACHE_FILES = 1200
+MAX_DISK_CACHE_BYTES = 100 * 1024 * 1024  # 100 MB
+AZURE_SYNTHESIS_TIMEOUT_SEC = 10.0
 
 # Registry of active in-flight tasks for deduplication of simultaneous requests
 _IN_FLIGHT_TASKS: Dict[str, asyncio.Task[bytes]] = {}
 
+# Singleton SpeechConfig & thread-safe synthesizer pool to avoid 150-300ms TLS/config overhead
+_SPEECH_CONFIG_LOCK = threading.Lock()
+_SPEECH_CONFIG_SINGLETON: Optional[Any] = None
+_SPEECH_CONFIG_KEY_REGION: Optional[Tuple[str, str]] = None
+_SYNTHESIZER_POOL: "queue.LifoQueue[Any]" = queue.LifoQueue(maxsize=4)
+
+
+def is_valid_mp3_buffer(data: Optional[bytes]) -> bool:
+    """
+    Проверяет, что буфер содержит валидный MP3-аудиопоток размером >= 800 байт
+    и корректным заголовком (ID3v2 или MPEG sync frame 0xFF 0xE0..0xFF).
+    Позволяет кэшировать короткие эстонские и русские слова ('öö', 'ja', 'puu', '5').
+    """
+    if not data or len(data) < MIN_VALID_AUDIO_BYTES:
+        return False
+    if data[:3] == b"ID3":
+        return True
+    if len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0:
+        return True
+    return False
+
 
 def _store_in_memory_cache(cache: Dict[str, bytes], key: str, data: bytes) -> None:
-    if len(cache) >= MAX_CACHE_ENTRIES:
-        # FIFO eviction of oldest 20%
-        keys_to_remove = list(cache.keys())[: max(1, MAX_CACHE_ENTRIES // 5)]
-        for k in keys_to_remove:
-            cache.pop(k, None)
-    cache[key] = data
+    if isinstance(cache, OrderedDict):
+        if key in cache:
+            cache.move_to_end(key)
+            cache[key] = data
+            return
+        while len(cache) >= MAX_CACHE_ENTRIES:
+            cache.popitem(last=False)
+        cache[key] = data
+    else:
+        if len(cache) >= MAX_CACHE_ENTRIES:
+            keys_to_remove = list(cache.keys())[: max(1, MAX_CACHE_ENTRIES // 5)]
+            for k in keys_to_remove:
+                cache.pop(k, None)
+        cache[key] = data
+
+
+def _enforce_disk_cache_limits(cache_dir: Path) -> None:
+    """LRU-ротация единого дискового кэша static/audio/cache/ по числу файлов и общему объему."""
+    try:
+        if not cache_dir.is_dir():
+            return
+        entries = []
+        total_bytes = 0
+        for p in cache_dir.glob("*.mp3"):
+            try:
+                st = p.stat()
+                entries.append((st.st_mtime, st.st_size, p))
+                total_bytes += st.st_size
+            except OSError:
+                continue
+
+        if len(entries) <= MAX_DISK_CACHE_FILES and total_bytes <= MAX_DISK_CACHE_BYTES:
+            return
+
+        entries.sort(key=lambda item: item[0])  # Самые старые по mtime первыми
+        target_files = int(MAX_DISK_CACHE_FILES * 0.85)
+        target_bytes = int(MAX_DISK_CACHE_BYTES * 0.85)
+        remaining_files = len(entries)
+
+        for _, fsize, fpath in entries:
+            if remaining_files <= target_files and total_bytes <= target_bytes:
+                break
+            try:
+                fpath.unlink(missing_ok=True)
+                total_bytes -= fsize
+                remaining_files -= 1
+            except OSError:
+                continue
+    except Exception as err:
+        logger.warning(f"Disk cache LRU cleanup warning: {err}")
 
 
 # Re-export normalization architecture from dedicated tts_normalizer module
@@ -56,22 +128,34 @@ from app.services.tts_normalizer import (
     TERMINOLOGY_MAP,
     CUSTOM_PHONETIC_MAP,
     apply_custom_phonetic_map,
+    apply_phonetic_substitutions,
+    get_tts_lexicon,
     ENGLISH_BRANDS,
     normalize_loanwords_and_brands,
     normalize_time_expressions,
     int_to_russian_cardinal,
     int_to_russian_nominative,
     normalize_math_expressions,
+    normalize_celsius_expressions,
+    normalize_russian_fractions,
+    normalize_russian_decimals,
     normalize_roman_numerals,
     normalize_number_ranges,
     normalize_russian_ordinals_with_dot,
     normalize_russian_accents_and_yo,
     normalize_text_for_estonian_tts,
     normalize_estonian_measurement_units,
+    normalize_estonian_fractions,
+    normalize_estonian_math_signs,
+    is_chemical_formula_or_acronym,
     clean_text_for_speech,
     prepare_speech_text,
     normalize_text_for_speech,
     prepare_worked_example_speech,
+    auto_tag_estonian_phrases,
+    filter_card_headers_from_speech,
+    apply_ssml_sub_alias,
+    apply_russian_ssml_sub_aliases,
 )
 
 
@@ -142,14 +226,17 @@ def _stitch_and_clean_segments(raw_segments: List[Tuple[str, str]], fallback_tex
             continue
 
         if not re.search(r'\w', s_clean):
-            if segments and segments[-1][1] == DEFAULT_VOICE:
+            if segments:
                 prev_text, prev_voice = segments[-1]
                 segments[-1] = (f"{prev_text}{s_clean}", prev_voice)
             continue
 
         if segments and segments[-1][1] == s_voice:
             prev_text, prev_voice = segments[-1]
-            segments[-1] = (f"{prev_text} {s_clean}", prev_voice)
+            if ("et-EE" in s_voice or s_voice == "et") and not re.search(r'[,.;:!?]\s*$', prev_text):
+                segments[-1] = (f"{prev_text}, {s_clean}", prev_voice)
+            else:
+                segments[-1] = (f"{prev_text} {s_clean}", prev_voice)
         else:
             segments.append((s_clean, s_voice))
 
@@ -172,23 +259,24 @@ def _is_pure_english_brand_or_key(text: str) -> bool:
     return bool(words) and all(w in ENGLISH_COMMON_TERMS for w in words)
 
 
-def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
+def parse_bilingual_segments(text: str, already_normalized: bool = False) -> List[Tuple[str, str]]:
     """
     Разбивает двуязычный текст на последовательные сегменты (текст, голос):
     - Приоритет 1: Фрагменты внутри тегов <est>...</est> отправляются эстонскому диктору (et-EE-AnuNeural).
-    - Приоритет 2: Фразы на эстонском языке в кавычках или термины в скобках без кириллицы.
-    - Весь остальной текст (русский язык + свободная английская латиница Minecraft, Roblox, W/A/S/D)
-      озвучивается русским голосом (ru-RU-SvetlanaMultilingualNeural).
+    - Приоритет 2: Фразы на эстонском языке в кавычках или термины в скобках без кириллицы (исключая формулы CO2, H2O и бренды).
+    - Весь остальной текст озвучивается русским голосом (ru-RU-SvetlanaNeural).
     - Если во всем тексте нет кириллицы (чистый эстонский текст) — отправляется эстонскому диктору.
     """
     if not text or not text.strip():
         return [(text or "", DEFAULT_VOICE)]
 
-    text = normalize_text_for_speech(text, is_russian_context=True)
+    if not already_normalized:
+        text = auto_tag_estonian_phrases(text)
+        text = normalize_text_for_speech(text, is_russian_context=True)
 
     # 1. Если во всём тексте нет кириллицы вообще — озвучиваем целиком эстонским диктором
     if not re.search(r'[а-яА-ЯёЁ]', text):
-        clean_est = normalize_text_for_estonian_tts(text.strip())
+        clean_est = text.strip() if already_normalized else normalize_text_for_estonian_tts(text.strip())
         return [(clean_est or text.strip(), ESTONIAN_VOICE)]
 
     # 2. Ищем эстонские фрагменты в русском тексте
@@ -199,7 +287,7 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
         re.DOTALL
     )
 
-    matches: List[Tuple[int, int, str]] = []
+    matches: List[Tuple[int, int, str, bool]] = []
     for m in pattern.finditer(text):
         tag_val = m.group(1)
         quote_val = m.group(2)
@@ -208,15 +296,15 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
         if tag_val is not None:
             clean = tag_val.strip()
             if clean:
-                matches.append((m.start(), m.end(), clean))
+                matches.append((m.start(), m.end(), clean, True))
         elif quote_val is not None:
             val = quote_val.strip()
-            if val and not _is_pure_english_brand_or_key(val):
-                matches.append((m.start(), m.end(), val))
+            if val and not _is_pure_english_brand_or_key(val) and not is_chemical_formula_or_acronym(val):
+                matches.append((m.start(), m.end(), val, False))
         elif paren_val is not None:
             val = paren_val.strip()
-            if val and not _is_pure_english_brand_or_key(val):
-                matches.append((m.start(), m.end(), val))
+            if val and not _is_pure_english_brand_or_key(val) and not is_chemical_formula_or_acronym(val):
+                matches.append((m.start(), m.end(), val, False))
 
     if not matches:
         return [(text.strip(), DEFAULT_VOICE)]
@@ -224,14 +312,14 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
     raw_segments: List[Tuple[str, str]] = []
     last_idx = 0
 
-    for start, end, est_content in matches:
+    for start, end, est_content, is_from_tag in matches:
         if start > last_idx:
             prefix = text[last_idx:start]
             clean_prefix = prefix.rstrip(' ([«"“„')
             if clean_prefix:
                 raw_segments.append((clean_prefix, DEFAULT_VOICE))
 
-        clean_est = normalize_text_for_estonian_tts(est_content)
+        clean_est = est_content if (already_normalized and is_from_tag) else normalize_text_for_estonian_tts(est_content)
         if clean_est:
             raw_segments.append((clean_est, ESTONIAN_VOICE))
 
@@ -251,81 +339,173 @@ def parse_bilingual_segments(text: str) -> List[Tuple[str, str]]:
 
 
 def _escape_ssml(text: str) -> str:
-    """Экранирует специальные символы XML для корректного SSML."""
-    return (
-        text.replace("&", "&amp;")
+    """Экранирует специальные символы XML для корректного SSML, защищая существующие теги <sub alias="...">."""
+    sub_tags = []
+    def mask_sub(m):
+        idx = len(sub_tags)
+        sub_tags.append(m.group(0))
+        return f"__SSML_SUB_PROTECTED_{idx}__"
+
+    t = re.sub(r'<sub\b[^>]*>.*?<\/sub>', mask_sub, text, flags=re.IGNORECASE | re.DOTALL)
+
+    t = (
+        t.replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace('"', "&quot;")
         .replace("'", "&apos;")
     )
 
+    for idx, orig in enumerate(sub_tags):
+        t = t.replace(f"__SSML_SUB_PROTECTED_{idx}__", orig)
 
-def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -> str:
+    return t
+
+
+def is_already_speech_text(text: str, explicit_flag: bool = False) -> bool:
     """
-    Формирует единый SSML-документ для одного запроса к Azure Speech Services:
-    - Голос по умолчанию: ru-RU-SvetlanaNeural.
-    - Эстонские фрагменты (слова, термины, предложения на эстонском) оборачиваются в <lang xml:lang="et-EE">...</lang>.
-    - Числительные внутри эстонского контекста оборачиваются в <say-as interpret-as="cardinal">...</say-as>.
-    - Английские термины и названия брендов (Lego Mindstorms, Minecraft и т.д.) оборачиваются в <lang xml:lang="en-US">...</lang>.
-    - Клавиши управления / аббревиатуры (WASD, W, A, S, D) оборачиваются в <say-as interpret-as="characters">W A S D</say-as>.
-    - Если voice explicitly Estonian ("et" или "et-EE..."), синтезируется голос et-EE-AnuNeural.
+    Проверяет, является ли текст уже готовым речевым слоем:
+    - явный флаг is_speech_text=True
+    - либо эвристика: отсутствие цифр (0-9) и математических символов (+, *, =, /, :)
     """
-    clean_text = clean_text_for_speech(text)
-    if not clean_text:
+    if explicit_flag:
+        return True
+    if not text:
+        return False
+    if re.search(r'\d', text):
+        return False
+    if re.search(r'[+*=]', text) or re.search(r'\s[-/:]\s', text):
+        return False
+    return True
+
+
+def _format_estonian_ssml_segment(seg_text: str, is_speech_text: bool = False) -> str:
+    """
+    Форматирует уже нормализованный эстонский сегмент в валидный SSML-контент:
+    - При is_speech_text=True: пропускает преобразование формул и say-as, только базовая разметка.
+    - Озвучивает математические знаки (+ -> pluss, - -> miinus, = -> võrdub).
+    - Преобразует порядковые числительные > 12 ('15. harjutus') в <say-as interpret-as="ordinal">15</say-as>.
+    - Защищает временные метки 14:30 от разрыва и оборачивает их в <say-as interpret-as="time">.
+    - Оборачивает количественные числительные в <say-as interpret-as="cardinal"> (кроме падежных 5-ga, 10-ni).
+    - Добавляет мягкие паузы между перечисляемыми эстонскими словами через запятую.
+    """
+    if is_speech_text:
+        s_clean = seg_text.strip()
+        if not s_clean:
+            return ""
+        s_clean = re.sub(r'(?<=[a-zA-ZõäöüÕÄÖÜšžŠŽ])\s*/\s*(?=[a-zA-ZõäöüÕÄÖÜšžŠŽ])', ' või ', s_clean)
+        s_clean = re.sub(r'\s+/\s+', ' või ', s_clean)
+        esc = _escape_ssml(s_clean)
+        esc = re.sub(r',\s*(?!<break\b)', ', <break time="250ms" /> ', esc)
+        return add_ssml_sentence_breaks(esc)
+
+    s_clean = normalize_estonian_math_signs(seg_text.strip())
+    if not s_clean:
         return ""
 
-    has_est_tag = bool(re.search(r'<\s*est(?:\s+[^>]*)?>', clean_text, re.IGNORECASE))
+    s_clean = re.sub(r'(?<=[a-zA-ZõäöüÕÄÖÜšžŠŽ])\s*/\s*(?=[a-zA-ZõäöüÕÄÖÜšžŠŽ])', ' või ', s_clean)
+    s_clean = re.sub(r'\s+/\s+', ' või ', s_clean)
+    esc = _escape_ssml(s_clean)
 
-    if bilingual or has_est_tag:
-        segments = parse_bilingual_segments(clean_text)
-    elif "et-EE" in voice or voice == "et":
-        if re.search(r'[а-яА-ЯёЁ]', clean_text) and not re.search(r'[a-zA-ZäöüõÄÖÜÕšžŠŽ]', clean_text):
-            norm_text = normalize_text_for_speech(clean_text, is_russian_context=True)
-            segments = [(norm_text, DEFAULT_VOICE)]
-        elif re.search(r'[а-яА-ЯёЁ]', clean_text):
-            segments = parse_bilingual_segments(clean_text)
+    # 1. Защищаем временные метки HH:MM
+    say_as_protected: List[str] = []
+    def _protect_say_as(tag_xml: str) -> str:
+        idx = len(say_as_protected)
+        say_as_protected.append(tag_xml)
+        return f"SAYASPROTECTED{idx}SAYAS"
+
+    esc = re.sub(
+        r'\b([01]?\d|2[0-3]):([0-5]\d)\b',
+        lambda m: _protect_say_as(f'<say-as interpret-as="time" format="hm24">{m.group(0)}</say-as>'),
+        esc,
+    )
+
+    # 2. Порядковые числительные > 12 перед эстонским существительным (15. harjutus)
+    esc = re.sub(
+        r'\b(\d+)\.(?=\s+[a-zõäöüšž]{2,})',
+        lambda m: _protect_say_as(f'<say-as interpret-as="ordinal">{m.group(1)}</say-as>'),
+        esc,
+    )
+
+    # 3. Количественные числительные (кроме падежных форм 5-ga, 10-ni и т.д.)
+    esc = re.sub(
+        r'\b(\d+)\b(?!\s*-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)',
+        r'<say-as interpret-as="cardinal">\1</say-as>',
+        esc,
+    )
+
+    for idx, orig_tag in enumerate(say_as_protected):
+        esc = esc.replace(f"SAYASPROTECTED{idx}SAYAS", orig_tag)
+
+    # 4. Мягкая пауза после запятых для устранения склеивания эстонских слов
+    esc = re.sub(r',\s*(?!<break\b)', ', <break time="250ms" /> ', esc)
+    return add_ssml_sentence_breaks(esc)
+
+
+def build_ssml(
+    text: str,
+    voice: str = DEFAULT_VOICE,
+    bilingual: bool = False,
+    grade: Optional[int] = None,
+    tier: Optional[str] = None,
+    is_speech_text: bool = False,
+) -> str:
+    """
+    Формирует единый SSML-документ для одного запроса к Azure Speech Services.
+    Текст нормализуется ровно ОДИН раз перед генерацией SSML (без тройного прогона):
+    - При is_speech_text=True: полностью обходит вызовы prepare_speech_text и normalize_text_for_estonian_tts.
+    - Голос по умолчанию: ru-RU-SvetlanaNeural.
+    - Эстонские фрагменты оборачиваются в <voice name="et-EE-AnuNeural"><lang xml:lang="et-EE">...</lang></voice>.
+    - Исключает дублирование <break/> перед закрывающим </voice>.
+    - При grade 1–2 или tier primary/junior адаптирует темп речи (rate="-5%") для младших классов.
+    """
+    if not text or not text.strip():
+        return ""
+
+    raw_stripped = text.strip()
+
+    is_junior_speed = (
+        (grade is not None and 1 <= grade <= 2)
+        or (tier is not None and str(tier).lower() in ("primary", "junior"))
+    )
+
+    is_explicit_est_voice = ("et-EE" in voice or voice == "et")
+    has_cyrillic = bool(re.search(r'[а-яА-ЯёЁ]', raw_stripped))
+
+    # Ветка 1: Чисто эстонский текст (без кириллицы) — единичная эстонская нормализация
+    if not has_cyrillic and (is_explicit_est_voice or not _is_pure_english_brand_or_key(raw_stripped)):
+        raw_est = re.sub(r'</?\s*est(?:\s+[^>]*)?>', '', raw_stripped, flags=re.IGNORECASE)
+        if is_speech_text:
+            norm_est = raw_est.strip()
         else:
-            clean_est = normalize_text_for_estonian_tts(clean_text)
-            segments = [(clean_est, ESTONIAN_VOICE)]
-    else:
-        if not re.search(r'[а-яА-ЯёЁ]', clean_text) and not _is_pure_english_brand_or_key(clean_text):
-            clean_est = normalize_text_for_estonian_tts(clean_text)
-            segments = [(clean_est, ESTONIAN_VOICE)]
-        else:
-            norm_text = normalize_text_for_speech(clean_text, is_russian_context=True)
-            segments = [(norm_text, DEFAULT_VOICE)]
-
-    is_all_est = all("et-EE" in v or v == "et" for _, v in segments)
-
-    # Если весь документ чисто эстонский (например, быстрый переводчик или чисто эстонский текст)
-    if is_all_est and ("et-EE" in voice or voice == "et" or not re.search(r'[а-яА-ЯёЁ]', clean_text)):
-        root_voice = ESTONIAN_VOICE
-        root_lang = "et-EE"
-        body_parts = []
-        for seg_text, _ in segments:
-            s_clean = seg_text.strip()
-            if not s_clean:
-                continue
-            s_clean = re.sub(r'(?<=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])\s*/\s*(?=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])', ' või ', s_clean)
-            s_clean = re.sub(r'\s+/\s+', ' või ', s_clean)
-            esc = _escape_ssml(s_clean)
-            esc = re.sub(
-                r'\b(\d+)\b(?!\s*-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)',
-                r'<say-as interpret-as="cardinal">\1</say-as>',
-                esc,
-            )
-            body_parts.append(esc)
-        inner_content = add_ssml_sentence_breaks(" ".join(body_parts))
+            norm_est = normalize_text_for_estonian_tts(raw_est, verbalize_math_signs=True)
+        if not norm_est:
+            return ""
+        inner_content = _format_estonian_ssml_segment(norm_est, is_speech_text=is_speech_text)
+        if re.search(r'[.!?:]\s*$', raw_stripped) and not re.search(r'<break\b[^>]*\/>\s*$', inner_content):
+            inner_content = f'{inner_content} <break time="500ms" />'
+        voiced_inner = f'<prosody rate="-5%">{inner_content}</prosody>' if is_junior_speed else inner_content
         return (
             '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
             'xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="et-EE">\n'
-            f'  <voice name="{root_voice}">{inner_content}</voice>\n'
+            f'  <voice name="{ESTONIAN_VOICE}">{voiced_inner}</voice>\n'
             '</speak>'
         )
 
-    # Иначе: двуязычный / русский документ с явным переключением <voice> между ru-RU и et-EE
-    root_lang = "ru-RU"
+    # Ветка 2: Русский / двуязычный текст — ровно ОДНА идемпотентная нормализация prepare_speech_text
+    if is_speech_text:
+        prepared_text = raw_stripped
+    else:
+        prepared_text = prepare_speech_text(raw_stripped, is_russian_context=True)
+    if not prepared_text:
+        return ""
+
+    has_est_tag = bool(re.search(r'<\s*est(?:\s+[^>]*)?>', prepared_text, re.IGNORECASE))
+
+    if bilingual or has_est_tag or (is_explicit_est_voice and re.search(r'[a-zA-ZäöüõÄÖÜÕšžŠŽ]', prepared_text)):
+        segments = parse_bilingual_segments(prepared_text, already_normalized=True)
+    else:
+        segments = [(prepared_text, DEFAULT_VOICE)]
 
     # Выделяем ключевые эстонские термины из русских фрагментов в отдельные блоки эстонского диктора
     expanded_segments: List[Tuple[str, str]] = []
@@ -349,7 +529,7 @@ def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -
         else:
             expanded_segments.append((s_text, s_voice))
 
-    final_segments = _stitch_and_clean_segments(expanded_segments, clean_text)
+    final_segments = _stitch_and_clean_segments(expanded_segments, prepared_text)
 
     voice_blocks: List[str] = []
     for seg_text, seg_voice in final_segments:
@@ -358,53 +538,69 @@ def build_ssml(text: str, voice: str = DEFAULT_VOICE, bilingual: bool = False) -
             continue
 
         if "et-EE" in seg_voice or seg_voice == "et":
-            # Эстонский фрагмент -> et-EE-AnuNeural
-            s_clean = re.sub(r'(?<=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])\s*/\s*(?=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])', ' või ', s_clean)
-            s_clean = re.sub(r'\s+/\s+', ' või ', s_clean)
-            esc = _escape_ssml(s_clean)
-            # Эстонские числительные: <say-as interpret-as="cardinal">
-            esc = re.sub(
-                r'\b(\d+)\b(?!\s*-(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)',
-                r'<say-as interpret-as="cardinal">\1</say-as>',
-                esc,
-            )
-            esc = add_ssml_sentence_breaks(esc)
-            voice_blocks.append(f'  <voice name="{ESTONIAN_VOICE}"><lang xml:lang="et-EE">{esc}</lang></voice>')
+            esc = _format_estonian_ssml_segment(s_clean, is_speech_text=is_speech_text)
+            if esc:
+                voiced = f'<prosody rate="-5%">{esc}</prosody>' if is_junior_speed else esc
+                voice_blocks.append(f'  <voice name="{ESTONIAN_VOICE}"><lang xml:lang="et-EE">{voiced}</lang></voice>')
         else:
-            # Русский фрагмент -> ru-RU-SvetlanaNeural
-            s_clean = re.sub(r'(?<=[а-яА-ЯёЁ0-9a-zA-Z])\s*/\s*(?=[а-яА-ЯёЁ0-9a-zA-Z])', ' или ', s_clean)
-            s_clean = re.sub(r'\s+/\s+', ' или ', s_clean)
-            s_norm = prepare_speech_text(s_clean)
-            esc = _escape_ssml(s_norm)
-
-            # Оборачиваем английские бренды в <lang xml:lang="en-US">
-            for brand in ENGLISH_BRANDS:
-                p_brand = re.compile(rf'\b{re.escape(brand)}\b', re.IGNORECASE)
-                esc = p_brand.sub(f'<lang xml:lang="en-US">{brand}</lang>', esc)
-
-            # Оборачиваем клавиши WASD в <say-as interpret-as="characters">W A S D</say-as>
-            p_wasd = re.compile(r'\b(?:WASD|W,\s*A,\s*S,\s*D|W\s+A\s+S\s+D)\b', re.IGNORECASE)
-            esc = p_wasd.sub('<say-as interpret-as="characters">W A S D</say-as>', esc)
-
+            esc = _escape_ssml(s_clean)
+            esc = apply_russian_ssml_sub_aliases(esc)
             esc = add_ssml_sentence_breaks(esc)
-            voice_blocks.append(f'  <voice name="{DEFAULT_VOICE}">{esc}</voice>')
+            voiced = f'<prosody rate="-5%">{esc}</prosody>' if is_junior_speed else esc
+            voice_blocks.append(f'  <voice name="{DEFAULT_VOICE}">{voiced}</voice>')
 
-    if voice_blocks and re.search(r'[.!?:]\s*$', clean_text):
+    if voice_blocks and re.search(r'[.!?:]\s*$', raw_stripped):
         last_b = voice_blocks[-1]
-        if not re.search(r'<break\b[^>]*\/>\s*<\/voice>$', last_b):
-            voice_blocks[-1] = re.sub(r'<\/voice>$', r'. <break time="500ms" /></voice>', last_b)
+        if not re.search(r'<break\b[^>]*\/>\s*(?:<\/lang>\s*)?<\/voice>$', last_b):
+            if re.search(r'<\/lang><\/voice>$', last_b):
+                voice_blocks[-1] = re.sub(r'<\/lang><\/voice>$', r' <break time="500ms" /></lang></voice>', last_b)
+            else:
+                voice_blocks[-1] = re.sub(r'<\/voice>$', r'. <break time="500ms" /></voice>', last_b)
 
     joined_voices = "\n".join(voice_blocks)
     return (
-        f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
-        f'xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="{root_lang}">\n'
+        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
+        'xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="ru-RU">\n'
         f'{joined_voices}\n'
-        f'</speak>'
+        '</speak>'
     )
 
 
+def _get_speech_config(key: str, region: str) -> Any:
+    """Возвращает потокобезопасный синглтон SpeechConfig, устраняя повторную инициализацию конфига при промахах кэша."""
+    global _SPEECH_CONFIG_SINGLETON, _SPEECH_CONFIG_KEY_REGION
+    with _SPEECH_CONFIG_LOCK:
+        if _SPEECH_CONFIG_SINGLETON is None or _SPEECH_CONFIG_KEY_REGION != (key, region):
+            cfg = speechsdk.SpeechConfig(subscription=key, region=region)
+            cfg.set_speech_synthesis_output_format(
+                speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3
+            )
+            _SPEECH_CONFIG_SINGLETON = cfg
+            _SPEECH_CONFIG_KEY_REGION = (key, region)
+            while not _SYNTHESIZER_POOL.empty():
+                try:
+                    _SYNTHESIZER_POOL.get_nowait()
+                except queue.Empty:
+                    break
+        return _SPEECH_CONFIG_SINGLETON
+
+
+def _acquire_synthesizer(speech_config: Any) -> Any:
+    try:
+        return _SYNTHESIZER_POOL.get_nowait()
+    except queue.Empty:
+        return speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
+
+
+def _release_synthesizer(synthesizer: Any) -> None:
+    try:
+        _SYNTHESIZER_POOL.put_nowait(synthesizer)
+    except queue.Full:
+        pass
+
+
 def _synthesize_azure_ssml(ssml: str) -> bytes:
-    """Синхронный вызов Azure Speech SDK speak_ssml_async().get() для выполнения в отдельном потоке."""
+    """Синхронный вызов Azure Speech SDK speak_ssml_async().get() с пулом синтезаторов и синглтоном SpeechConfig."""
     if speechsdk is None:
         raise RuntimeError("azure-cognitiveservices-speech package is not installed.")
 
@@ -413,18 +609,18 @@ def _synthesize_azure_ssml(ssml: str) -> bytes:
         raise RuntimeError("AZURE_SPEECH_KEY is not configured in environment.")
 
     region = settings.AZURE_SPEECH_REGION or "northeurope"
+    speech_config = _get_speech_config(key, region)
+    synthesizer = _acquire_synthesizer(speech_config)
 
-    speech_config = speechsdk.SpeechConfig(subscription=key, region=region)
-    speech_config.set_speech_synthesis_output_format(
-        speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3
-    )
-
-    synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
-    # Ensure Azure API receives canonical voice identifier if requested via Multilingual alias
     azure_ssml = ssml.replace("ru-RU-SvetlanaMultilingualNeural", "ru-RU-SvetlanaNeural")
-    result = synthesizer.speak_ssml_async(azure_ssml).get()
+    try:
+        result = synthesizer.speak_ssml_async(azure_ssml).get()
+    except Exception:
+        # При сбое соединения не возвращаем поврежденный инстанс в пул
+        raise
 
     if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+        _release_synthesizer(synthesizer)
         return result.audio_data
     elif result.reason == speechsdk.ResultReason.Canceled:
         details = result.cancellation_details
@@ -442,26 +638,39 @@ async def get_or_synthesize_audio(
     text: str,
     voice: str = DEFAULT_VOICE,
     bilingual: bool = False,
+    grade: Optional[int] = None,
+    tier: Optional[str] = None,
+    is_speech_text: bool = False,
 ) -> bytes:
     """
-    Получает готовый байтовый буфер аудио (MP3) с локальным файловым кэшированием на диске
-    (static/audio/cache/{md5}.mp3), оперативным кэшем и дедупликацией одновременных in-flight запросов.
-    Генерация выполняется за один запрос к Azure SpeechSynthesizer через SSML.
+    Получает готовый байтовый буфер аудио (MP3) с единым дисковым кэшем
+    (static/audio/cache/{md5}.mp3 + LRU-ротация), RAM-кэшем, жестким таймаутом 10с
+    и гарантированной очисткой _IN_FLIGHT_TASKS в блоке finally.
     """
     clean_text = text.strip()
     if not clean_text:
         return b""
 
-    # Строим итоговый SSML
-    ssml = build_ssml(clean_text, voice=voice, bilingual=bilingual)
+    ssml = build_ssml(
+        clean_text,
+        voice=voice,
+        bilingual=bilingual,
+        grade=grade,
+        tier=tier,
+        is_speech_text=is_speech_text,
+    )
+    if not ssml:
+        return b""
     ssml_hash = hashlib.md5(ssml.encode("utf-8")).hexdigest()
 
     # 1. Быстрый возврат из оперативной памяти
     if ssml_hash in _TTS_STREAM_CACHE:
+        if isinstance(_TTS_STREAM_CACHE, OrderedDict):
+            _TTS_STREAM_CACHE.move_to_end(ssml_hash)
         logger.info(f"Serving TTS from RAM cache (md5={ssml_hash[:10]}...)")
         return _TTS_STREAM_CACHE[ssml_hash]
 
-    # 2. Проверка локального файлового кэша на диске
+    # 2. Проверка единого локального файлового кэша на диске
     cache_file = AUDIO_CACHE_DIR / f"{ssml_hash}.mp3"
     if cache_file.is_file():
         try:
@@ -473,46 +682,60 @@ async def get_or_synthesize_audio(
                 cache_file.unlink(missing_ok=True)
             else:
                 cached_bytes = cache_file.read_bytes()
-                if len(cached_bytes) >= MIN_VALID_AUDIO_BYTES:
+                if is_valid_mp3_buffer(cached_bytes):
+                    try:
+                        os.utime(cache_file, None)
+                    except OSError:
+                        pass
                     logger.info(f"Serving TTS from disk cache: {cache_file} (md5={ssml_hash[:10]}...)")
                     _store_in_memory_cache(_TTS_STREAM_CACHE, ssml_hash, cached_bytes)
                     return cached_bytes
+                else:
+                    logger.warning(f"Purging invalid MP3 header cache file {cache_file}")
+                    cache_file.unlink(missing_ok=True)
         except Exception as read_err:
             logger.warning(f"Failed reading cache file {cache_file}: {read_err}")
 
-    # 3. Дедупликация: если для этого SSML уже запущен запрос, ожидаем текущую задачу
-    if ssml_hash in _IN_FLIGHT_TASKS:
+    # 3. Дедупликация: если для этого SSML уже запущен запрос, ожидаем текущую задачу с таймаутом
+    existing_task = _IN_FLIGHT_TASKS.get(ssml_hash)
+    if existing_task is not None and not existing_task.done():
         logger.info(f"Awaiting in-flight Azure Speech task for md5={ssml_hash[:10]}...")
         try:
-            return await _IN_FLIGHT_TASKS[ssml_hash]
+            return await asyncio.wait_for(asyncio.shield(existing_task), timeout=AZURE_SYNTHESIS_TIMEOUT_SEC)
         except Exception:
-            pass
+            _IN_FLIGHT_TASKS.pop(ssml_hash, None)
 
-    # 4. Синтез через Azure Speech SDK в фоновом пуле потоков
+    # 4. Синтез через Azure Speech SDK с жестким таймаутом 10.0 с и гарантированной очисткой _IN_FLIGHT_TASKS
     async def _worker() -> bytes:
-        logger.info(f"Synthesizing audio via Azure Speech SDK (md5={ssml_hash[:10]}...)")
-        audio_bytes = await asyncio.to_thread(_synthesize_azure_ssml, ssml)
-        if audio_bytes and len(audio_bytes) >= MIN_VALID_AUDIO_BYTES:
-            # Сохраняем в кэш на диск
-            try:
-                AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                cache_file.write_bytes(audio_bytes)
-                logger.info(f"Cached audio to disk: {cache_file} ({len(audio_bytes)} bytes)")
-            except Exception as write_err:
-                logger.warning(f"Failed to write audio cache file {cache_file}: {write_err}")
+        try:
+            logger.info(f"Synthesizing audio via Azure Speech SDK (md5={ssml_hash[:10]}...)")
+            audio_bytes = await asyncio.wait_for(
+                asyncio.to_thread(_synthesize_azure_ssml, ssml),
+                timeout=AZURE_SYNTHESIS_TIMEOUT_SEC,
+            )
+            if is_valid_mp3_buffer(audio_bytes):
+                try:
+                    AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                    cache_file.write_bytes(audio_bytes)
+                    _enforce_disk_cache_limits(AUDIO_CACHE_DIR)
+                    logger.info(f"Cached audio to disk: {cache_file} ({len(audio_bytes)} bytes)")
+                except Exception as write_err:
+                    logger.warning(f"Failed to write audio cache file {cache_file}: {write_err}")
 
-            # Сохраняем в память
-            _store_in_memory_cache(_TTS_STREAM_CACHE, ssml_hash, audio_bytes)
-        return audio_bytes
+                _store_in_memory_cache(_TTS_STREAM_CACHE, ssml_hash, audio_bytes)
+            return audio_bytes
+        finally:
+            _IN_FLIGHT_TASKS.pop(ssml_hash, None)
 
     task = asyncio.create_task(_worker())
     _IN_FLIGHT_TASKS[ssml_hash] = task
+    task.add_done_callback(lambda _: _IN_FLIGHT_TASKS.pop(ssml_hash, None))
 
     try:
-        audio_result = await task
-        return audio_result
+        return await asyncio.wait_for(asyncio.shield(task), timeout=AZURE_SYNTHESIS_TIMEOUT_SEC)
     finally:
-        _IN_FLIGHT_TASKS.pop(ssml_hash, None)
+        if task.done():
+            _IN_FLIGHT_TASKS.pop(ssml_hash, None)
 
 
 async def generate_speech_stream(

@@ -4,12 +4,13 @@ import html
 import logging
 from typing import Optional, Union, List, Tuple
 
+import anyio.to_thread
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.limiter import safe_limit, get_device_or_ip
+from app.limiter import safe_limit, get_device_or_ip, get_remote_address
 from app.models.page_analysis import (
     AgeTier,
     AnalyzePageJsonRequest,
@@ -45,6 +46,72 @@ ALLOWED_MIME_TYPES = {
     "image/heic",
     "image/jpg",
 }
+
+MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB per image
+MAX_REQUEST_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB per request
+MAX_B64_CHARS_PER_IMAGE = int(MAX_FILE_SIZE_BYTES * 4 / 3) + 1024  # ~13.3 MB base64 chars
+
+
+def _check_content_length(request: Optional[Request], max_bytes: int = MAX_REQUEST_SIZE_BYTES) -> None:
+    """Pre-check request Content-Length header BEFORE reading request stream into memory."""
+    if not request:
+        return
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit():
+        if int(cl) > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Размер запроса ({int(cl)} байт) превышает допустимый лимит {max_bytes // (1024 * 1024)} МБ.",
+            )
+
+
+async def _read_upload_file_bounded(f: UploadFile, max_bytes: int = MAX_FILE_SIZE_BYTES) -> bytes:
+    """Reads UploadFile in chunks with hard byte limit to prevent RAM DoS before buffer allocation."""
+    if hasattr(f, "size") and f.size is not None and f.size > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Размер файла '{f.filename}' ({f.size} байт) превышает лимит {max_bytes // (1024 * 1024)} МБ.",
+        )
+    chunks = []
+    total = 0
+    chunk_size = 64 * 1024
+    while True:
+        chunk = await f.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Размер файла '{f.filename}' превышает допустимый лимит {max_bytes // (1024 * 1024)} МБ.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _decode_b64_bounded(b64_str: str, max_bytes: int = MAX_FILE_SIZE_BYTES, label: str = "изображения") -> bytes:
+    """Validates base64 string length BEFORE b64decode to prevent RAM allocation attacks."""
+    if not b64_str:
+        return b""
+    clean_b64 = b64_str.split(",", 1)[1] if "," in b64_str else b64_str
+    if len(clean_b64) > MAX_B64_CHARS_PER_IMAGE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Размер {label} превышает лимит {max_bytes // (1024 * 1024)} МБ.",
+        )
+    try:
+        data = base64.b64decode(clean_b64, validate=True)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Некорректная Base64 строка в данных {label}: {e}",
+        )
+    if len(data) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Размер {label} ({len(data)} байт) превышает лимит {max_bytes // (1024 * 1024)} МБ.",
+        )
+    return data
 
 
 def _extract_device_id(raw_val: object) -> str:
@@ -93,6 +160,7 @@ async def _dispatch_gemini_alert(e: GeminiServiceError, endpoint: str) -> None:
     ),
 )
 @safe_limit("10/minute", key_func=get_device_or_ip)
+@safe_limit("20/minute", key_func=get_remote_address)
 async def analyze_page(
     request: Request,
     files: Optional[List[UploadFile]] = File(default=None, description="Список файлов страниц (JPEG/PNG)"),
@@ -112,6 +180,8 @@ async def analyze_page(
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> PageAnalysisResponse:
+    _check_content_length(request, MAX_REQUEST_SIZE_BYTES)
+
     target_files: List[UploadFile] = []
     if files:
         target_files.extend(files)
@@ -124,7 +194,13 @@ async def analyze_page(
             detail="Не передано ни одного файла изображения.",
         )
 
-    max_size_bytes = settings.MAX_IMAGE_SIZE_MB * 1024 * 1024
+    if len(target_files) > 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="В сессию разворота разрешено загружать максимум 2 страницы (max 2 страницы).",
+        )
+
+    total_request_bytes = 0
     images_data: List[Tuple[bytes, str]] = []
 
     for f in target_files:
@@ -134,13 +210,14 @@ async def analyze_page(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Неподдерживаемый формат изображения: {content_type}. Поддерживаются: {', '.join(ALLOWED_MIME_TYPES)}",
             )
-        data = await f.read()
+        data = await _read_upload_file_bounded(f, MAX_FILE_SIZE_BYTES)
         if not data:
             continue
-        if len(data) > max_size_bytes:
+        total_request_bytes += len(data)
+        if total_request_bytes > MAX_REQUEST_SIZE_BYTES:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"Размер файла '{f.filename}' превышает лимит {settings.MAX_IMAGE_SIZE_MB} МБ.",
+                detail=f"Суммарный размер файлов превышает лимит {MAX_REQUEST_SIZE_BYTES // (1024 * 1024)} МБ.",
             )
         images_data.append((data, content_type))
 
@@ -158,17 +235,17 @@ async def analyze_page(
         grade=grade,
         tier=resolved_tier,
         interests=raw_interests,
-        nickname=nickname if nickname and nickname != "Друг" else (current_user.nickname or "Друг"),
+        nickname=((nickname if nickname and nickname != "Друг" else (current_user.nickname or "Друг")).strip() or "Друг")[:50],
     )
 
-    dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")
+    dev_id = _extract_device_id(x_device_id) or ("dev-test-device-0001" if settings.APP_ENV in ("development", "test") else "")
 
     # Check cache for identical image content and pedagogical profile
     cache_key = compute_analysis_cache_key([b for b, _ in images_data], profile)
     cached_result = get_cached_analysis(cache_key)
     if cached_result and cached_result.is_acceptable is not False:
         if dev_id and isinstance(db, Session):
-            license_service.deduct_review_attempt(dev_id, db)
+            await anyio.to_thread.run_sync(license_service.deduct_review_attempt, dev_id, db)
         session = lesson_session_service.create_session(
             device_id=dev_id,
             profile=profile,
@@ -191,7 +268,7 @@ async def analyze_page(
         if result.is_acceptable is not False:
             store_cached_analysis(cache_key, result)
             if dev_id and isinstance(db, Session):
-                license_service.deduct_review_attempt(dev_id, db)
+                await anyio.to_thread.run_sync(license_service.deduct_review_attempt, dev_id, db)
         session = lesson_session_service.create_session(
             device_id=dev_id,
             profile=profile,
@@ -232,6 +309,7 @@ async def analyze_page(
     description="Альтернативный эндпоинт для клиентов, передающих base64 строку вместо multipart/form-data. Поддерживает одиночные и множественные страницы.",
 )
 @safe_limit("10/minute", key_func=get_device_or_ip)
+@safe_limit("20/minute", key_func=get_remote_address)
 async def analyze_page_json(
     payload: AnalyzePageJsonRequest,
     request: Request = None,
@@ -239,25 +317,25 @@ async def analyze_page_json(
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> PageAnalysisResponse:
-    max_size_bytes = settings.MAX_IMAGE_SIZE_MB * 1024 * 1024
+    _check_content_length(request, MAX_REQUEST_SIZE_BYTES)
     images_data: List[Tuple[bytes, str]] = []
+    total_request_bytes = 0
 
     # 1. Проверяем список изображений
     if payload.images_base64 and len(payload.images_base64) > 0:
+        if len(payload.images_base64) > 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="В сессию разворота разрешено передавать максимум 2 страницы.",
+            )
         for idx, b64_str in enumerate(payload.images_base64):
-            try:
-                clean_b64 = b64_str.split(",", 1)[1] if "," in b64_str else b64_str
-                ib = base64.b64decode(clean_b64, validate=True)
-            except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Некорректная Base64 строка в изображении #{idx + 1}: {e}",
-                )
+            ib = _decode_b64_bounded(b64_str, MAX_FILE_SIZE_BYTES, f"изображения #{idx + 1}")
             if ib:
-                if len(ib) > max_size_bytes:
+                total_request_bytes += len(ib)
+                if total_request_bytes > MAX_REQUEST_SIZE_BYTES:
                     raise HTTPException(
                         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=f"Размер изображения #{idx + 1} превышает лимит {settings.MAX_IMAGE_SIZE_MB} МБ.",
+                        detail=f"Суммарный размер изображений превышает лимит {MAX_REQUEST_SIZE_BYTES // (1024 * 1024)} МБ.",
                     )
                 mtype = "image/jpeg"
                 if payload.mime_types and idx < len(payload.mime_types):
@@ -268,24 +346,8 @@ async def analyze_page_json(
 
     # 2. Фолбэк на одиночное изображение (для обратной совместимости)
     elif payload.image_base64:
-        try:
-            clean_b64 = (
-                payload.image_base64.split(",", 1)[1]
-                if "," in payload.image_base64
-                else payload.image_base64
-            )
-            image_bytes = base64.b64decode(clean_b64, validate=True)
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Некорректная Base64 строка: {e}",
-            )
+        image_bytes = _decode_b64_bounded(payload.image_base64, MAX_FILE_SIZE_BYTES, "изображения")
         if image_bytes:
-            if len(image_bytes) > max_size_bytes:
-                raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail=f"Размер изображения превышает лимит {settings.MAX_IMAGE_SIZE_MB} МБ.",
-                )
             images_data.append((image_bytes, payload.mime_type or "image/jpeg"))
 
     if not images_data:
@@ -300,26 +362,40 @@ async def analyze_page_json(
         grade=payload.grade,
         tier=resolved_tier,
         interests=raw_interests,
-        nickname=payload.nickname if payload.nickname and payload.nickname != "Друг" else (current_user.nickname or "Друг"),
+        nickname=((payload.nickname if payload.nickname and payload.nickname != "Друг" else (current_user.nickname or "Друг")).strip() or "Друг")[:50],
     )
 
-    dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")
+    dev_id = _extract_device_id(x_device_id) or ("dev-test-device-0001" if settings.APP_ENV in ("development", "test") else "")
 
     # Проверяем, передана ли активная сессия урока для добавления разворота
     active_session = None
     if payload.lesson_id:
         active_session = lesson_session_service.get_session(payload.lesson_id)
-        if active_session:
-            if active_session.is_expired:
-                raise HTTPException(
-                    status_code=status.HTTP_410_GONE,
-                    detail={"error": "SESSION_EXPIRED", "message": "Время бесплатного дополнения урока (10 минут) истекло. Пожалуйста, начните новый урок."},
-                )
-            if dev_id and active_session.device_id and active_session.device_id != dev_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": "DEVICE_MISMATCH", "message": "Сессия урока принадлежит другому устройству."},
-                )
+        if not active_session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": "SESSION_NOT_FOUND", "message": "Сессия урока не найдена или завершена."},
+            )
+        if active_session.is_expired:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail={"error": "SESSION_EXPIRED", "message": "Время бесплатного дополнения урока (10 минут) истекло. Пожалуйста, начните новый урок."},
+            )
+        if not active_session.can_append:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "PAGE_LIMIT_REACHED", "message": "В сессию урока уже добавлено максимальное количество страниц (2 страницы) или истекло окно добавления."},
+            )
+        if not dev_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": "DEVICE_REQUIRED", "message": "Заголовок X-Device-ID обязателен для работы с сессией."},
+            )
+        if active_session.device_id and active_session.device_id != dev_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": "DEVICE_MISMATCH", "message": "Сессия урока принадлежит другому устройству."},
+            )
 
     is_session_append = active_session is not None
 
@@ -329,7 +405,7 @@ async def analyze_page_json(
         cached_result = get_cached_analysis(cache_key)
         if cached_result and cached_result.is_acceptable is not False:
             if dev_id and isinstance(db, Session):
-                license_service.deduct_review_attempt(dev_id, db)
+                await anyio.to_thread.run_sync(license_service.deduct_review_attempt, dev_id, db)
             session = lesson_session_service.create_session(
                 device_id=dev_id,
                 profile=profile,
@@ -364,7 +440,7 @@ async def analyze_page_json(
         if result.is_acceptable is not False:
             store_cached_analysis(cache_key, result)
             if dev_id and isinstance(db, Session):
-                license_service.deduct_review_attempt(dev_id, db)
+                await anyio.to_thread.run_sync(license_service.deduct_review_attempt, dev_id, db)
         session = lesson_session_service.create_session(
             device_id=dev_id,
             profile=profile,
@@ -404,6 +480,8 @@ async def analyze_page_json(
     summary="Добавление второй страницы (разворота) в активную сессию урока",
     description="Добавляет страницу 2 к уроку в течение 10 минут. Повторно очки сканирований не списываются.",
 )
+@safe_limit("10/minute", key_func=get_device_or_ip)
+@safe_limit("20/minute", key_func=get_remote_address)
 async def append_page_to_lesson(
     lesson_id: str,
     request: Request,
@@ -412,7 +490,14 @@ async def append_page_to_lesson(
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> PageAnalysisResponse:
-    dev_id = _extract_device_id(x_device_id) or ("dev-test-device" if settings.APP_ENV in ("development", "test") else "")
+    _check_content_length(request, MAX_REQUEST_SIZE_BYTES)
+    dev_id = _extract_device_id(x_device_id) or ("dev-test-device-0001" if settings.APP_ENV in ("development", "test") else "")
+    if not dev_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "DEVICE_REQUIRED", "message": "Заголовок X-Device-ID обязателен для работы с сессией."},
+        )
+
     session = lesson_session_service.get_session(lesson_id)
     if not session:
         raise HTTPException(
@@ -420,7 +505,7 @@ async def append_page_to_lesson(
             detail={"error": "SESSION_NOT_FOUND", "message": "Сессия урока не найдена или завершена."},
         )
 
-    if dev_id and session.device_id and session.device_id != dev_id:
+    if session.device_id and session.device_id != dev_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": "DEVICE_MISMATCH", "message": "Сессия урока принадлежит другому устройству."},
@@ -432,7 +517,7 @@ async def append_page_to_lesson(
             detail={"error": "SESSION_EXPIRED", "message": "Время бесплатного дополнения урока (10 минут) истекло. Пожалуйста, начните новый урок."},
         )
 
-    if session.page_count >= 2:
+    if not session.can_append or session.page_count >= 2:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": "PAGE_LIMIT_REACHED", "message": "В сессию урока можно добавить максимум 2 страницы (разворот)."},
@@ -452,7 +537,7 @@ async def append_page_to_lesson(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Неподдерживаемый формат изображения: {mime_type}.",
                 )
-            image_bytes = await uploaded.read()
+            image_bytes = await _read_upload_file_bounded(uploaded, MAX_FILE_SIZE_BYTES)
     else:
         # JSON payload handling
         clean_b64 = None
@@ -469,26 +554,12 @@ async def append_page_to_lesson(
                 pass
 
         if clean_b64:
-            clean_str = clean_b64.split(",", 1)[1] if "," in clean_b64 else clean_b64
-            try:
-                image_bytes = base64.b64decode(clean_str, validate=True)
-            except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Некорректная Base64 строка: {e}",
-                )
+            image_bytes = _decode_b64_bounded(clean_b64, MAX_FILE_SIZE_BYTES, "второй страницы")
 
     if not image_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Не передано изображение второй страницы для добавления.",
-        )
-
-    max_size_bytes = settings.MAX_IMAGE_SIZE_MB * 1024 * 1024
-    if len(image_bytes) > max_size_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Размер изображения превышает лимит {settings.MAX_IMAGE_SIZE_MB} МБ.",
         )
 
     # 1. Прикрепляем вторую страницу к сессии урока
@@ -533,6 +604,8 @@ legacy_lessons_router = APIRouter(
     dependencies=[Depends(get_current_user)],
     summary="Алиас для добавления второй страницы (разворота) в активную сессию урока",
 )
+@safe_limit("10/minute", key_func=get_device_or_ip)
+@safe_limit("20/minute", key_func=get_remote_address)
 async def append_page_legacy_alias(
     lesson_id: str,
     request: Request,
@@ -560,6 +633,7 @@ async def append_page_legacy_alias(
     description="Создает новые эстонские примеры предложений с пропусками для интерактивного конструктора ответа.",
 )
 @safe_limit("15/minute", key_func=get_device_or_ip)
+@safe_limit("30/minute", key_func=get_remote_address)
 async def get_more_examples(
     payload: MoreExamplesRequest,
     request: Request = None,

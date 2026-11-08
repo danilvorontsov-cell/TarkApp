@@ -5,6 +5,10 @@
 !mobile/.env.development
 backend/.env
 mobile/.env
+generated_keys.txt
+backend/generated_keys.txt
+data/private_invoices/
+backend/data/private_invoices/
 
 # Local Databases (SQLite + WAL)
 *.db

@@ -26,6 +26,10 @@ def setup_logging() -> None:
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
 
+    from app.middleware.security import SensitiveDataLoggingFilter
+    sensitive_filter = SensitiveDataLoggingFilter()
+    root_logger.addFilter(sensitive_filter)
+
     # Avoid duplicate handlers if setup_logging is called multiple times
     if not any(isinstance(h, RotatingFileHandler) for h in root_logger.handlers):
         # 1. Rotating File Handler for general app logs (INFO and higher)
@@ -37,6 +41,7 @@ def setup_logging() -> None:
         )
         app_file_handler.setLevel(logging.INFO)
         app_file_handler.setFormatter(formatter)
+        app_file_handler.addFilter(sensitive_filter)
         root_logger.addHandler(app_file_handler)
 
         # 2. Rotating File Handler exclusively for errors & tracebacks (ERROR and higher)
@@ -48,6 +53,7 @@ def setup_logging() -> None:
         )
         error_file_handler.setLevel(logging.ERROR)
         error_file_handler.setFormatter(formatter)
+        error_file_handler.addFilter(sensitive_filter)
         root_logger.addHandler(error_file_handler)
 
         # 3. Console Stream Handler (if not already attached)
@@ -55,6 +61,7 @@ def setup_logging() -> None:
             console_handler = logging.StreamHandler()
             console_handler.setLevel(logging.INFO)
             console_handler.setFormatter(formatter)
+            console_handler.addFilter(sensitive_filter)
             root_logger.addHandler(console_handler)
 
     # Dedicated error logger

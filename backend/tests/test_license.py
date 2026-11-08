@@ -333,6 +333,7 @@ def test_invoice_endpoint_validates_email_and_generates_pdf(setup_db, monkeypatc
     assert empty_resp.status_code == 400
 
     # 2. Valid PDF generation check
+    monkeypatch.setattr(settings, 'BANK_IBAN', 'EE000000000000000000')
     pdf_bytes = build_invoice_pdf(
         invoice_number="TARK-20261028-ABCD",
         customer_email="student@mail.ee",
@@ -374,16 +375,19 @@ def test_invoice_endpoint_validates_email_and_generates_pdf(setup_db, monkeypatc
 
     # 4. Download PDF
     inv_num = data["invoice_number"]
-    pdf_resp = client.get(f"/api/v1/license/invoice/{inv_num}.pdf")
+    download_url = data.get("pdf_download_url") or f"/api/v1/license/invoice/{inv_num}.pdf"
+    pdf_resp = client.get(download_url, headers={"X-Device-ID": "test-device-invoice"})
     assert pdf_resp.status_code == 200
     assert pdf_resp.headers["content-type"] == "application/pdf"
     assert pdf_resp.content.startswith(b"%PDF-1.4")
     assert data["viitenumber"].encode("latin-1") in pdf_resp.content
 
     # 5. Confirm invoice payment and verify days granted
+    monkeypatch.setattr(settings, "ADMIN_SECRET", "test_admin_secret_2026")
     conf_resp = client.post(
         "/api/v1/license/invoice/confirm",
         json={"invoice_number": inv_num},
+        headers={"X-Admin-Secret": "test_admin_secret_2026"},
     )
     assert conf_resp.status_code == 200
     conf_data = conf_resp.json()

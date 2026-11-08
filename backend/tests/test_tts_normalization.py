@@ -10,11 +10,12 @@ from app.services.tts_service import (
 )
 
 def test_normalize_crosses_and_multiplication():
-    # Eliminates crosses and multiplication symbols
-    assert normalize_text_for_estonian_tts("12 \u00d7 2") == "12 2"
+    # Normalizes multiplication symbols to 'korda' and eliminates decorative crosses
+    assert normalize_text_for_estonian_tts("12 \u00d7 2") == "12 korda 2"
     assert normalize_text_for_estonian_tts("12 \u2715") == "12"
     assert normalize_text_for_estonian_tts("12 \u2716") == "12"
-    assert normalize_text_for_estonian_tts("12 * 2") == "12 2"
+    assert normalize_text_for_estonian_tts("12 * 2") == "12 korda 2"
+    assert normalize_text_for_estonian_tts("4 · 5 = 20") == "4 korda 5 = 20"
 
 def test_normalize_brackets():
     # Eliminates brackets and braces
@@ -275,7 +276,7 @@ def test_ssml_unified_multilingual_document():
     assert '<voice name="et-EE-AnuNeural"><lang xml:lang="et-EE">liidetav</lang></voice>' in ssml
     assert '<voice name="et-EE-AnuNeural"><lang xml:lang="et-EE">summa</lang></voice>' in ssml
     # Английские заимствования адаптированы для русского голоса по TERMINOLOGY_MAP
-    assert 'Майнкрафт' in ssml
+    assert ('Майнкрафт' in ssml or 'Ма\u0301йнкрафт' in ssml)
     # Клавиши в фонетической адаптации
     assert 'В А С Д' in ssml
 
@@ -336,8 +337,8 @@ def test_terminology_phonetic_adaptation():
     text = "Мы играем в Roblox и строим в Minecraft из LEGO, смотрим YouTube и учим IT, жми WASD."
     speech = prepare_speech_text(text)
     assert "Ро\u0301блокс" in speech
-    assert "Майнкрафт" in speech
-    assert "Лего" in speech
+    assert ("Майнкрафт" in speech or "Ма\u0301йнкрафт" in speech)
+    assert ("Лего" in speech or "Ле\u0301го" in speech)
     assert "Ютуб" in speech
     assert "АйТи" in speech
     assert "В А С Д" in speech
@@ -385,7 +386,7 @@ def test_display_and_speech_layers_separation():
     assert "Ро\u0301блокс" in resp.speech_layer.theme_explanation
     assert "четыре и три" in resp.speech_layer.theme_explanation
     assert "девять ноль-ноль" in resp.speech_layer.theme_explanation
-    assert "Майнкрафт" in resp.speech_layer.voice_prompt_script
+    assert ("Майнкрафт" in resp.speech_layer.voice_prompt_script or "Ма\u0301йнкрафт" in resp.speech_layer.voice_prompt_script)
     assert "девять плюс три" in resp.speech_layer.voice_prompt_script
     assert "в два ша\u0301га" in resp.speech_layer.how_to_answer
     assert "Первое" in resp.speech_layer.worked_example

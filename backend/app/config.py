@@ -6,10 +6,28 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     APP_NAME: str = "TarkApp Backend"
-    APP_VERSION: str = "1.2.1"
+    APP_VERSION: str = "1.3.2"
     APP_ENV: str = "development"
     PORT: int = 8000
     HOST: str = "0.0.0.0"
+
+    # Security & Auth settings
+    SECRET_KEY: str = "tarkapp-dev-hmac-secret-change-in-production"
+    ADMIN_SECRET: Optional[str] = None
+
+    # Monetization & Trial Mode ("closed_beta" vs "production")
+    TRIAL_MODE: str = "closed_beta"
+    BETA_TRIAL_DAYS: int = 14
+    BETA_DAILY_REVIEWS: int = 20
+    PROD_TRIAL_DAYS: int = 5
+    PROD_DAILY_REVIEWS: int = 10
+
+    # Company & Bank Requisites (must be configured in .env for live SEPA invoicing)
+    COMPANY_NAME: str = "Tark Systems OÜ"
+    COMPANY_REG: str = "16987456"
+    BANK_NAME: str = "Coop Pank"
+    BANK_IBAN: str = ""
+    BANK_SWIFT: str = "CPNKEE2X"
     
     # Gemini API settings
     GEMINI_API_KEY: str = ""
@@ -21,8 +39,15 @@ class Settings(BaseSettings):
     AZURE_SPEECH_KEY: Optional[str] = None
     AZURE_SPEECH_REGION: str = "northeurope"
     
-    # CORS
-    CORS_ORIGINS: List[str] = ["*"]
+    # CORS: Explicit trusted domains (replaces open allow_origins=["*"])
+    CORS_ORIGINS: List[str] = [
+        "https://tarkapp.ee",
+        "https://www.tarkapp.ee",
+        "https://app.tarkapp.ee",
+        "http://localhost:8081",
+        "http://localhost:19006",
+        "http://localhost:3000",
+    ]
     
     # Max image upload size in MB (e.g. 10MB)
     MAX_IMAGE_SIZE_MB: int = 10
@@ -69,6 +94,22 @@ class Settings(BaseSettings):
         else:
             self.GEMINI_MODEL_NAME = self.GEMINI_MODEL
         return self
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: Any) -> List[str]:
+        if isinstance(v, str):
+            clean_v = v.strip()
+            if clean_v.startswith("[") and clean_v.endswith("]"):
+                import json
+                try:
+                    return json.loads(clean_v)
+                except Exception:
+                    pass
+            return [origin.strip() for origin in clean_v.split(",") if origin.strip()]
+        if isinstance(v, (list, tuple)):
+            return [str(origin).strip() for origin in v if str(origin).strip()]
+        return v
 
     @field_validator(
         "TELEGRAM_TOPIC_BUGS",

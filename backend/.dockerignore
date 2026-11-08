@@ -1,0 +1,25 @@
+# Secrets & Compromised Keys
+.env
+.env.*
+generated_keys.txt
+backend/generated_keys.txt
+
+# Local Databases & Private Invoices
+*.db
+*.db-shm
+*.db-wal
+data/
+static/invoices/
+logs/
+
+# Python & Test Caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+env/
+tests/
+.git/
+.gitignore

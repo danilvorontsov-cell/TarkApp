@@ -4,13 +4,12 @@ import {
   View,
   Text,
   TouchableOpacity,
-  Modal,
   TouchableWithoutFeedback,
   Dimensions,
   Animated,
-  Platform,
+  BackHandler,
 } from 'react-native';
-import { Theme, darkTheme } from '../theme/colors';
+import { Theme } from '../theme/colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ALERT_WIDTH = Math.min(SCREEN_WIDTH * 0.86, 340);
@@ -39,7 +38,8 @@ interface AlertState {
 
 type AlertListener = (state: AlertState) => void;
 
-let currentListener: AlertListener | null = null;
+// Stack of mounted overlay hosts so alerts always appear on the topmost surface without native UIKit <Modal> deadlocks
+const listenerStack: AlertListener[] = [];
 
 /**
  * Static ThemedAlert API - drop-in replacement for React Native's Alert.alert.
@@ -56,7 +56,6 @@ export const ThemedAlert = {
         ? buttons
         : [{ text: 'Понятно', style: 'default' }];
 
-    // Auto-detect a suitable decorative icon based on title or content
     let icon = options?.icon;
     if (!icon) {
       const lower = `${title} ${message || ''}`.toLowerCase();
@@ -64,7 +63,13 @@ export const ThemedAlert = {
         icon = '❌';
       } else if (lower.includes('удалить') || lower.includes('выход') || lower.includes('выйти')) {
         icon = '⚠️';
-      } else if (lower.includes('успеш') || lower.includes('сохранен') || lower.includes('спасибо') || lower.includes('добро пожаловать') || lower.includes('добавлен')) {
+      } else if (
+        lower.includes('успеш') ||
+        lower.includes('сохранен') ||
+        lower.includes('спасибо') ||
+        lower.includes('добро пожаловать') ||
+        lower.includes('добавлен')
+      ) {
         icon = '✅';
       } else if (lower.includes('камер') || lower.includes('фото') || lower.includes('галере') || lower.includes('снимок')) {
         icon = '📸';
@@ -83,8 +88,11 @@ export const ThemedAlert = {
       }
     }
 
-    if (currentListener) {
-      currentListener({
+    const activeListener =
+      listenerStack.length > 0 ? listenerStack[listenerStack.length - 1] : null;
+
+    if (activeListener) {
+      activeListener({
         visible: true,
         title,
         message,
@@ -94,24 +102,24 @@ export const ThemedAlert = {
         onDismiss: options?.onDismiss,
       });
     } else {
-      // Fallback if component is not mounted yet
-      console.warn('[ThemedAlert] ThemedAlertContainer not mounted yet, alert queued');
+      console.warn('[ThemedAlert] ThemedAlertContainer not mounted yet, alert skipped');
     }
   },
 
   _subscribe(listener: AlertListener) {
-    currentListener = listener;
+    listenerStack.push(listener);
     return () => {
-      if (currentListener === listener) {
-        currentListener = null;
+      const idx = listenerStack.lastIndexOf(listener);
+      if (idx !== -1) {
+        listenerStack.splice(idx, 1);
       }
     };
   },
 };
 
 /**
- * Global Alert Modal Container.
- * Mount this once at the root of the app (e.g. in App.tsx).
+ * Pure React Overlay Alert Container (No native <Modal>).
+ * Eliminates iOS UIKit nested/sibling modal animation deadlocks.
  */
 export const ThemedAlertContainer: React.FC = () => {
   const [alertState, setAlertState] = useState<AlertState>({
@@ -148,34 +156,48 @@ export const ThemedAlertContainer: React.FC = () => {
     });
   }, [scaleAnim, opacityAnim]);
 
-  const handleClose = (callback?: () => void) => {
-    Animated.parallel([
-      Animated.timing(scaleAnim, {
-        toValue: 0.95,
-        duration: 140,
-        useNativeDriver: true,
-      }),
-      Animated.timing(opacityAnim, {
-        toValue: 0,
-        duration: 140,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      setAlertState((prev) => ({ ...prev, visible: false }));
-      if (alertState.onDismiss) {
-        alertState.onDismiss();
-      }
-      if (callback) {
-        callback();
-      }
-    });
-  };
+  const handleClose = React.useCallback(
+    (callback?: () => void) => {
+      Animated.parallel([
+        Animated.timing(scaleAnim, {
+          toValue: 0.95,
+          duration: 140,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacityAnim, {
+          toValue: 0,
+          duration: 140,
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        setAlertState((prev) => ({ ...prev, visible: false }));
+        if (alertState.onDismiss) {
+          alertState.onDismiss();
+        }
+        if (callback) {
+          callback();
+        }
+      });
+    },
+    [scaleAnim, opacityAnim, alertState.onDismiss]
+  );
 
-  const handleBackdropPress = () => {
+  const handleBackdropPress = React.useCallback(() => {
     if (!alertState.cancelable) return;
     const cancelBtn = alertState.buttons.find((b) => b.style === 'cancel');
     handleClose(cancelBtn?.onPress);
-  };
+  }, [alertState.cancelable, alertState.buttons, handleClose]);
+
+  useEffect(() => {
+    if (!alertState.visible) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (alertState.cancelable) {
+        handleBackdropPress();
+      }
+      return true;
+    });
+    return () => sub.remove();
+  }, [alertState.visible, alertState.cancelable, handleBackdropPress]);
 
   if (!alertState.visible) {
     return null;
@@ -185,13 +207,7 @@ export const ThemedAlertContainer: React.FC = () => {
   const isDestructive = alertState.buttons.some((b) => b.style === 'destructive');
 
   return (
-    <Modal
-      visible={alertState.visible}
-      transparent
-      animationType="none"
-      onRequestClose={handleBackdropPress}
-      statusBarTranslucent
-    >
+    <View style={styles.overlayRoot} pointerEvents="auto">
       <TouchableWithoutFeedback onPress={handleBackdropPress}>
         <Animated.View style={[styles.backdrop, { opacity: opacityAnim }]}>
           <TouchableWithoutFeedback>
@@ -204,7 +220,6 @@ export const ThemedAlertContainer: React.FC = () => {
                 },
               ]}
             >
-              {/* Decorative Icon Circle */}
               {alertState.icon && (
                 <View
                   style={[
@@ -216,15 +231,12 @@ export const ThemedAlertContainer: React.FC = () => {
                 </View>
               )}
 
-              {/* Title */}
               <Text style={styles.title}>{alertState.title}</Text>
 
-              {/* Message */}
               {Boolean(alertState.message) && (
                 <Text style={styles.message}>{alertState.message}</Text>
               )}
 
-              {/* Action Buttons */}
               <View
                 style={[
                   styles.buttonsContainer,
@@ -267,18 +279,25 @@ export const ThemedAlertContainer: React.FC = () => {
           </TouchableWithoutFeedback>
         </Animated.View>
       </TouchableWithoutFeedback>
-    </Modal>
+    </View>
   );
 };
 
+export const ThemedAlertModal = ThemedAlertContainer;
+
 const styles = StyleSheet.create({
+  overlayRoot: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 99999,
+    elevation: 99999,
+  },
   backdrop: {
-    flex: 1,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(5, 8, 11, 0.82)',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 20,
-    zIndex: 9999,
+    zIndex: 99999,
   },
   card: {
     width: ALERT_WIDTH,

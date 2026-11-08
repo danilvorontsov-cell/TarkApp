@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field
 class QuickTranslateRequest(BaseModel):
     text: Optional[str] = Field(
         default=None,
-        description="Текст, слово или абзац для быстрого перевода",
+        max_length=1000,
+        description="Текст, слово или абзац для быстрого перевода (не более 1000 символов)",
     )
     image_base64: Optional[str] = Field(
         default=None,
@@ -17,10 +18,12 @@ class QuickTranslateRequest(BaseModel):
     )
     source_lang: Optional[str] = Field(
         default="auto",
+        max_length=10,
         description="Исходный язык (auto, et, ru)",
     )
     target_lang: Optional[str] = Field(
         default="ru",
+        max_length=10,
         description="Целевой язык (ru, et)",
     )
 

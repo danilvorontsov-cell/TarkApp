@@ -28,11 +28,39 @@ export interface VocabularyItem {
   topicTitle?: string;
 }
 
+export interface StepItem {
+  text: string;
+  speech_text?: string;
+  step_number?: number;
+  is_formula?: boolean;
+}
+
+export interface SelfSolveStep {
+  text: string;
+  speech_text?: string;
+  hint?: string;
+}
+
+export interface LessonCard {
+  id?: string;
+  title?: string;
+  text: string;
+  speech_text?: string;
+}
+
+export interface BilingualCard {
+  est: string;
+  ru?: string;
+  text?: string;
+  speech_text?: string;
+}
+
 export interface WorkedExample {
   title: string;
   given: string;
   steps: string[];
   note?: string;
+  speech_text?: string;
 }
 
 export interface LessonSpeechLayer {
@@ -61,6 +89,7 @@ export interface PageAnalysisResponse {
   alternative_explanation_speech?: string;
   how_to_answer_speech?: string;
   worked_example_speech?: string;
+  speech_text?: string;
 }
 
 export interface SavedLessonCard {

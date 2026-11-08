@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -11,8 +11,11 @@ import {
   Platform,
   PanResponder,
   AppState,
+  Linking,
   StatusBar as RNStatusBar,
+  BackHandler,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import {
   SafeAreaProvider,
   useSafeAreaInsets,
@@ -47,6 +50,7 @@ import {
   analyzePage,
   analyzePageJson,
   analyzePagesJson,
+  appendPageJson,
   ImagePayload,
   formatFriendlyErrorMessage,
   getLicenseStatus,
@@ -56,11 +60,15 @@ import {
   getAuthToken,
   setOnAuthRequiredListener,
   buildAuthToken,
+  requestSignedAuthToken,
+  isSignedAuthToken,
   getDeviceId,
   clearAuthSession,
+  cancelActiveAnalyze,
 } from './src/services/api';
+import { LessonStepList } from './src/components/LessonCard';
 import { optimizePageImage, optimizePageImages } from './src/services/imageOptimizer';
-import { PhraseBuilder } from './src/components/PhraseBuilder';
+import { PhraseBuilder, normalizeTextForTTS } from './src/components/PhraseBuilder';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { initSentry, Sentry } from './src/services/sentry';
 import { Theme, darkTheme } from './src/theme/colors';
@@ -254,7 +262,10 @@ function MainApp() {
   ).current;
 
   const scrollViewRef = useRef<React.ElementRef<typeof ScrollView>>(null);
+  const isMountedRef = useRef<boolean>(true);
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const analysisSessionRef = useRef<number>(0);
+  const initialLessonAnalysisRef = useRef<PageAnalysisResponse | null>(null);
   const tierPolicy = getTierPolicy(profile.grade || profile.tier);
   const isJunior = profile.tier === 'primary';
   const isFullAudioEnabled = tierPolicy.fullAudioEnabled;
@@ -263,6 +274,7 @@ function MainApp() {
   const isPro = subInfo.isPro;
 
   useEffect(() => {
+    isMountedRef.current = true;
     StorageService.getProfile().then(async (saved) => {
       const draft = await StorageService.getProfileDraft();
       let effectiveProfile = saved;
@@ -285,34 +297,43 @@ function MainApp() {
         setIsProfileSetupModalVisible(true);
       } else {
         StorageService.getAuthToken().then(async (tok) => {
-          if (tok) {
+          if (tok && isSignedAuthToken(tok)) {
             setAuthTokenState(tok);
             setAuthToken(tok);
           } else {
             const devId = await getDeviceId();
-            const token = buildAuthToken(devId, effectiveProfile.nickname);
-            await StorageService.saveAuthToken(token);
-            setAuthToken(token);
-            setAuthTokenState(token);
+            const fallbackTok = tok || buildAuthToken(devId, effectiveProfile.nickname);
+            setAuthToken(fallbackTok);
+            setAuthTokenState(fallbackTok);
+            try {
+              const signedTok = await requestSignedAuthToken(effectiveProfile.nickname);
+              await StorageService.saveAuthToken(signedTok);
+              setAuthToken(signedTok);
+              setAuthTokenState(signedTok);
+            } catch {
+              await StorageService.saveAuthToken(fallbackTok);
+            }
           }
         });
       }
 
-      StorageService.getHistory().then((h) => {
+      StorageService.getHistory().then(async (h) => {
         setHistory(h);
         if (isRegistered) {
           // Pre-fill today's study session lessons from local history only for registered users
           const studyDayStart = getStudyDayStart();
-          const todayItems: SessionLesson[] = h
-            .filter((c) => c.timestamp >= studyDayStart)
-            .map((c) => ({
-              id: c.id,
-              title: c.task_title,
-              analysis: c.analysis,
-              imageUri: c.imageUri || null,
-              imageUris: c.imageUris,
-              timestamp: c.timestamp,
-            }));
+          const todayCards = h.filter((c) => c.timestamp >= studyDayStart);
+          const hydratedToday = await Promise.all(
+            todayCards.map((c) => StorageService.getFullLessonCard(c))
+          );
+          const todayItems: SessionLesson[] = hydratedToday.map((c) => ({
+            id: c.id,
+            title: c.task_title,
+            analysis: c.analysis,
+            imageUri: c.imageUri || null,
+            imageUris: c.imageUris,
+            timestamp: c.timestamp,
+          }));
 
           if (todayItems.length > 0) {
             setSessionLessons(todayItems);
@@ -389,7 +410,9 @@ function MainApp() {
     });
 
     const appStateSub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'background' || nextState === 'inactive') {
+      if (nextState === 'background') {
+        AudioQueueManager.stopAndClear().catch(() => {});
+      } else if (nextState === 'inactive') {
         AudioQueueManager.pause();
       } else if (nextState === 'active') {
         // Daily session reset check at 03:00 boundary
@@ -420,6 +443,48 @@ function MainApp() {
       }
     });
 
+    // Hardware Back button handler for Android: closes open modals or returns to camera/home
+    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isDrawerOpen) {
+        setIsDrawerOpen(false);
+        return true;
+      }
+      if (isProfileSetupModalVisible) {
+        setIsProfileSetupModalVisible(false);
+        return true;
+      }
+      if (isAvatarModalVisible) {
+        setIsAvatarModalVisible(false);
+        return true;
+      }
+      if (isPaywallVisible) {
+        setIsPaywallVisible(false);
+        return true;
+      }
+      if (isKeyModalVisible) {
+        setIsKeyModalVisible(false);
+        return true;
+      }
+      if (isTrialBlockedModalVisible) {
+        setIsTrialBlockedModalVisible(false);
+        return true;
+      }
+      if (currentTab !== 'study') {
+        setCurrentTab('study');
+        return true;
+      }
+      // If viewing a lesson card, back button returns to clean home screen
+      if (analysis !== null) {
+        AudioQueueManager.stopAndClear().catch(() => {});
+        setAnalysis(null);
+        setCapturedImages([]);
+        setCapturedImageUri(null);
+        setIsSaved(false);
+        return true;
+      }
+      return false;
+    });
+
     // Periodic check for 03:00 educational day rollover while app remains open
     const checkStudyDayTimer = setInterval(() => {
       const studyDayStart = getStudyDayStart();
@@ -437,20 +502,40 @@ function MainApp() {
     }, 60000);
 
     return () => {
+      isMountedRef.current = false;
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current);
+        scrollTimerRef.current = null;
+      }
       clearInterval(checkStudyDayTimer);
+      backSub.remove();
       appStateSub.remove();
       unsubAudio();
-      stopTts();
+      AudioQueueManager.stopAndClear().catch(() => {});
+      cancelActiveAnalyze();
       setOnTrialExpiredListener(null);
       setOnAuthRequiredListener(null);
     };
-  }, []);
+  }, [
+    isDrawerOpen,
+    isProfileSetupModalVisible,
+    isAvatarModalVisible,
+    isPaywallVisible,
+    isKeyModalVisible,
+    isTrialBlockedModalVisible,
+    currentTab,
+    analysis,
+  ]);
 
-  const scrollToTaskTop = () => {
-    setTimeout(() => {
+  const scrollToTaskTop = useCallback(() => {
+    if (scrollTimerRef.current) {
+      clearTimeout(scrollTimerRef.current);
+    }
+    scrollTimerRef.current = setTimeout(() => {
       scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+      scrollTimerRef.current = null;
     }, 120);
-  };
+  }, []);
 
   const handleKeyActivated = (newStatus: LicenseStatus) => {
     setLicenseStatus(newStatus);
@@ -459,32 +544,48 @@ function MainApp() {
     setIsPaywallVisible(false);
   };
 
-  const handlePlayAudio = async (
-    text: string,
-    lang: 'ru' | 'et',
-    id: string,
-    bilingual: boolean = false
-  ) => {
-    try {
-      await AudioQueueManager.playOrEnqueue(
-        id,
-        text,
-        lang,
-        bilingual,
-        {
-          onError: () => {
-            ThemedAlert.alert(
-              'Аудио',
-              'Не удалось загрузить аудиофайл. Проверьте подключение к бэкенду.'
-            );
+  const handlePlayAudio = useCallback(
+    async (
+      text: string,
+      lang: 'ru' | 'et',
+      id: string,
+      bilingual: boolean = false,
+      speech_text?: string
+    ) => {
+      try {
+        await AudioQueueManager.playOrEnqueue(
+          id,
+          text,
+          lang,
+          bilingual,
+          {
+            onError: () => {
+              ThemedAlert.alert(
+                'Аудио',
+                'Не удалось загрузить аудиофайл. Проверьте подключение к бэкенду.'
+              );
+            },
           },
-        },
-        API_BASE_URL
-      );
-    } catch (err: any) {
-      ThemedAlert.alert('Аудио', formatFriendlyErrorMessage(err));
+          API_BASE_URL,
+          profile.grade,
+          profile.tier,
+          speech_text
+        );
+      } catch (err: any) {
+        ThemedAlert.alert('Аудио', formatFriendlyErrorMessage(err));
+      }
+    },
+    [profile.grade, profile.tier]
+  );
+
+  const handleCopyFormula = useCallback(async (formulaText: string) => {
+    try {
+      await Clipboard.setStringAsync(formulaText);
+      ThemedAlert.alert('Формула скопирована', formulaText);
+    } catch (err) {
+      console.warn('Copy formula error:', err);
     }
-  };
+  }, []);
 
   const switchTab = (tab: TabType) => {
     AudioQueueManager.stop();
@@ -583,7 +684,10 @@ function MainApp() {
     await StorageService.clearProfileDraft();
     if (completeUpdated.nickname && completeUpdated.nickname.trim().length > 0) {
       const devId = await getDeviceId();
-      const token = buildAuthToken(devId, completeUpdated.nickname);
+      let token = buildAuthToken(devId, completeUpdated.nickname);
+      try {
+        token = await requestSignedAuthToken(completeUpdated.nickname);
+      } catch {}
       await StorageService.saveAuthToken(token);
       setAuthToken(token);
       setAuthTokenState(token);
@@ -608,7 +712,10 @@ function MainApp() {
     setProfile(updated);
     await StorageService.saveProfile(updated);
     const devId = await getDeviceId();
-    const token = buildAuthToken(devId, trimmed);
+    let token = buildAuthToken(devId, trimmed);
+    try {
+      token = await requestSignedAuthToken(trimmed);
+    } catch {}
     await StorageService.saveAuthToken(token);
     setAuthToken(token);
     setAuthTokenState(token);
@@ -810,8 +917,8 @@ function MainApp() {
         })
       );
 
-      // Discard if user logged out or started another action while optimizing
-      if (analysisSessionRef.current !== currentSession) return;
+      // Discard if user logged out, unmounted or started another action while optimizing
+      if (!isMountedRef.current || analysisSessionRef.current !== currentSession) return;
 
       const payload: ImagePayload[] = preparedImages.map((img) => ({
         base64: img.base64,
@@ -828,10 +935,17 @@ function MainApp() {
       const isAppend = imagesList.length > 1 && Boolean(analysis?.lesson_id);
       const currentLessonId = isAppend ? analysis?.lesson_id : undefined;
 
-      const data = await analyzePagesJson(payload, profile, API_BASE_URL, currentLessonId);
+      let data: PageAnalysisResponse;
+      if (isAppend && currentLessonId) {
+        // Appending spread page to active lesson session hits the free append-page endpoint
+        const secondImg = payload[1] || payload[0];
+        data = await appendPageJson(currentLessonId, secondImg, API_BASE_URL);
+      } else {
+        data = await analyzePagesJson(payload, profile, API_BASE_URL, currentLessonId);
+      }
 
-      // Discard if user logged out while backend was analyzing
-      if (analysisSessionRef.current !== currentSession) return;
+      // Discard if component unmounted or another session started while analyzing
+      if (!isMountedRef.current || analysisSessionRef.current !== currentSession) return;
 
       // Decrement free reviews counter immediately in local state ONLY for new scans (not appends) and when photo was acceptable
       if (!isAppend && !isPro && data.is_acceptable !== false) {
@@ -846,15 +960,37 @@ function MainApp() {
           max_free_reviews: subInfo.maxReviews,
         });
         // Silently sync latest status from server
-        getLicenseStatus().then(setLicenseStatus).catch(() => {});
+        getLicenseStatus().then((st) => {
+          if (isMountedRef.current) setLicenseStatus(st);
+        }).catch(() => {});
       }
 
       setAnalysis(data);
+      if (!isAppend) {
+        initialLessonAnalysisRef.current = data;
+      }
       setAnalysisError(null);
       setShowAlternativeExplanation(false);
       await recordNewLesson(data, preparedImages);
     } catch (err: any) {
-      if (analysisSessionRef.current !== currentSession) return;
+      if (!isMountedRef.current || analysisSessionRef.current !== currentSession) return;
+      if (
+        err?.status === 410 ||
+        err?.code === 'SESSION_EXPIRED' ||
+        err?.message?.includes('10 минут') ||
+        err?.message?.includes('SESSION_EXPIRED')
+      ) {
+        // If append session expired, reset the preview to page 1 and alert user without blocking UI
+        if (capturedImages.length > 0) {
+          setCapturedImages([capturedImages[0]]);
+          setCapturedImageUri(capturedImages[0]?.uri || null);
+        }
+        ThemedAlert.alert(
+          'Время сессии истекло',
+          'Время бесплатного дополнения урока (10 минут) истекло. Пожалуйста, начните новый урок.'
+        );
+        return;
+      }
       if (
         err?.status === 401 ||
         err?.code === 'UNAUTHORIZED' ||
@@ -895,7 +1031,7 @@ function MainApp() {
         friendlyMsg
       );
     } finally {
-      if (analysisSessionRef.current === currentSession) {
+      if (isMountedRef.current && analysisSessionRef.current === currentSession) {
         setLoading(false);
         setLoadingStep('');
       }
@@ -937,6 +1073,7 @@ function MainApp() {
       // Immediately activate loading state and clear stale analysis if replacing
       if (mode === 'replace') {
         setAnalysis(null);
+        initialLessonAnalysisRef.current = null;
       }
       setLoading(true);
       setLoadingStep('Оптимизируем изображение...');
@@ -984,8 +1121,8 @@ function MainApp() {
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
-        allowsEditing: false,
-        allowsMultipleSelection: true,
+        allowsEditing: true,
+        allowsMultipleSelection: false,
         quality: 1,
       });
 
@@ -998,6 +1135,7 @@ function MainApp() {
       // Immediately activate loading state and clear stale analysis if replacing
       if (mode === 'replace') {
         setAnalysis(null);
+        initialLessonAnalysisRef.current = null;
       }
       setLoading(true);
       setLoadingStep(
@@ -1061,6 +1199,15 @@ function MainApp() {
     const nextImages = capturedImages.filter((_, idx) => idx !== index);
     setCapturedImages(nextImages);
     setCapturedImageUri(nextImages[0]?.uri || null);
+
+    // If removing second page of spread and returning to single page, restore cached initial page analysis
+    // without making a network call or deducting quota
+    if (nextImages.length === 1 && initialLessonAnalysisRef.current) {
+      setAnalysis(initialLessonAnalysisRef.current);
+      setAnalysisError(null);
+      return;
+    }
+
     await processImagesAnalysis(nextImages);
   };
 
@@ -1077,6 +1224,7 @@ function MainApp() {
             setCapturedImages([]);
             setCapturedImageUri(null);
             setAnalysis(null);
+            initialLessonAnalysisRef.current = null;
             setAnalysisError(null);
             handleTakePhoto('replace');
           },
@@ -1111,7 +1259,7 @@ function MainApp() {
         return;
       }
 
-      const newUri = result.assets[0].uri;
+      const newUri = await StorageService.persistAvatarImage(result.assets[0].uri);
 
       // Update ONLY avatarUri while strictly preserving existing profile fields (name, grade, interests)
       const saved = await StorageService.getProfile();
@@ -1171,7 +1319,7 @@ function MainApp() {
         return;
       }
 
-      const newUri = result.assets[0].uri;
+      const newUri = await StorageService.persistAvatarImage(result.assets[0].uri);
 
       // Update ONLY avatarUri while strictly preserving existing profile fields (name, grade, interests)
       const saved = await StorageService.getProfile();
@@ -1272,20 +1420,21 @@ function MainApp() {
     scrollToTaskTop();
   };
 
-  const handleOpenHistoryItem = (item: SavedLessonCard) => {
-    setAnalysis(item.analysis);
+  const handleOpenHistoryItem = async (item: SavedLessonCard) => {
+    const fullItem = await StorageService.getFullLessonCard(item);
+    setAnalysis(fullItem.analysis);
     setShowAlternativeExplanation(false);
-    const restored = (item.imageUris && item.imageUris.length > 0)
-      ? item.imageUris.map((u) => ({ uri: u, mimeType: 'image/jpeg' }))
-      : item.imageUri
-      ? [{ uri: item.imageUri, mimeType: 'image/jpeg' }]
+    const restored = (fullItem.imageUris && fullItem.imageUris.length > 0)
+      ? fullItem.imageUris.map((u) => ({ uri: u, mimeType: 'image/jpeg' }))
+      : fullItem.imageUri
+      ? [{ uri: fullItem.imageUri, mimeType: 'image/jpeg' }]
       : [];
     setCapturedImages(restored);
     setCapturedImageUri(restored[0]?.uri || null);
     setIsSaved(true);
     setCurrentTab('study');
     AudioQueueManager.clearQueue();
-    AudioQueueManager.prefetchLessonAudio(item.analysis, API_BASE_URL, profile.grade);
+    AudioQueueManager.prefetchLessonAudio(fullItem.analysis, API_BASE_URL, profile.grade);
     scrollToTaskTop();
   };
 
@@ -1341,22 +1490,58 @@ function MainApp() {
   const handleClearAllData = () => {
     ThemedAlert.alert(
       'Очистить историю и словарь?',
-      'Это действие удалит сохранённые уроки и словарь из памяти телефона. Настройки профиля сохранятся.',
+      'Это действие удалит сохранённые уроки, карточки словаря и аудиокэш из памяти телефона. Настройки профиля и вход сохранятся.',
       [
         { text: 'Отмена', style: 'cancel' },
         {
           text: 'Очистить',
           style: 'destructive',
           onPress: async () => {
-            await StorageService.clearAll();
+            await StorageService.clearLearningData();
             AudioQueueManager.clearQueue();
             setHistory([]);
             setSavedVocab([]);
             setSessionLessons([]);
             setAnalysis(null);
+            setCapturedImages([]);
             setCapturedImageUri(null);
             setIsSaved(false);
-            ThemedAlert.alert('Готово', 'История и словарик очищены.');
+            ThemedAlert.alert('Готово', 'История уроков, словарик и аудиокэш очищены. Профиль сохранён.');
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteAccountAndData = () => {
+    ThemedAlert.alert(
+      'Удалить профиль и все данные?',
+      'Это действие необратимо удалит профиль ученика, историю уроков, словарик и связанные данные на сервере (GDPR).',
+      [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Удалить всё',
+          style: 'destructive',
+          onPress: async () => {
+            analysisSessionRef.current += 1;
+            AudioQueueManager.stop();
+            AudioQueueManager.clearQueue();
+            await StorageService.deleteAccountAndData();
+            const freshProfile = await StorageService.getProfile();
+            setProfile(freshProfile);
+            setInterestsText((freshProfile.interests || []).join(', '));
+            setAuthToken(null);
+            setAuthTokenState(null);
+            setHistory([]);
+            setSavedVocab([]);
+            setSessionLessons([]);
+            setAnalysis(null);
+            setCapturedImages([]);
+            setCapturedImageUri(null);
+            setIsSaved(false);
+            setCurrentTab('study');
+            setIsProfileSetupModalVisible(true);
+            ThemedAlert.alert('Данные удалены', 'Профиль и связанные данные полностью удалены.');
           },
         },
       ]
@@ -1773,16 +1958,52 @@ function MainApp() {
             <View style={styles.modularCard}>
               <View style={styles.voiceHeroHeader}>
                 <Text style={styles.voiceHeroBadge}>🎧 ПОДСКАЗКА К УРОКУ</Text>
-                <Text style={styles.voiceHeroTitle}>
-                  {loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice'
-                    ? '⏳ Подготовка подсказки...'
-                    : (playingId === 'voice_prompt' || playingId === 'senior_voice') && playbackState === 'playing'
-                    ? '🔊 Воспроизведение...'
-                    : (playingId === 'voice_prompt' || playingId === 'senior_voice') && playbackState === 'paused'
-                    ? '⏸ На паузе'
-                    : 'Послушай подсказку голосом:'}
-                </Text>
               </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.unifiedAudioBtn,
+                  playingId === 'voice_prompt' &&
+                    (playbackState === 'playing'
+                      ? styles.unifiedAudioBtnActive
+                      : playbackState === 'paused'
+                      ? styles.unifiedAudioBtnPaused
+                      : null),
+                ]}
+                onPress={() => {
+                  const visualPrompt = analysis.voice_prompt_script;
+                  const speechPrompt =
+                    analysis.speech_layer?.voice_prompt_script ||
+                    analysis.voice_prompt_script_speech ||
+                    visualPrompt;
+                  handlePlayAudio(
+                    visualPrompt,
+                    'ru',
+                    'voice_prompt',
+                    true,
+                    speechPrompt
+                  );
+                }}
+                activeOpacity={0.85}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                  {loadingAudioId === 'voice_prompt' ? (
+                    <>
+                      <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 8 }} />
+                      <Text style={styles.unifiedAudioBtnText}>ЗАГРУЗКА ЗВУКА...</Text>
+                    </>
+                  ) : (
+                    <Text style={styles.unifiedAudioBtnText}>
+                      {playingId === 'voice_prompt'
+                        ? playbackState === 'playing'
+                          ? '⏸ ПАУЗА'
+                          : '▶ ПРОДОЛЖИТЬ'
+                        : '▶ СЛУШАТЬ ПОДСКАЗКУ'}
+                    </Text>
+                  )}
+                </View>
+              </TouchableOpacity>
+
               <Text style={styles.voiceScriptText}>{cleanEstTags(analysis.voice_prompt_script)}</Text>
 
               {/* Автоматическая наглядная визуализация прямо между текстом подсказки и кнопками действий (когда есть визуальное объяснение) */}
@@ -1792,46 +2013,6 @@ function MainApp() {
                   grade={profile.grade}
                 />
               )}
-
-              <TouchableOpacity
-                style={[
-                  styles.voiceHeroPlayButton,
-                  (playingId === 'voice_prompt' || playingId === 'senior_voice') &&
-                    (playbackState === 'playing'
-                      ? styles.voiceHeroPlayButtonActive
-                      : playbackState === 'paused'
-                      ? styles.voiceHeroPlayButtonPaused
-                      : null),
-                ]}
-                onPress={() => {
-                  const speechPrompt =
-                    analysis.speech_layer?.voice_prompt_script ||
-                    analysis.voice_prompt_script_speech ||
-                    analysis.voice_prompt_script;
-                  handlePlayAudio(
-                    speechPrompt,
-                    'ru',
-                    isJunior ? 'voice_prompt' : 'senior_voice',
-                    true
-                  );
-                }}
-                activeOpacity={0.85}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                  {(loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice') && (
-                    <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 8 }} />
-                  )}
-                  <Text style={styles.voiceHeroPlayText}>
-                    {(loadingAudioId === 'voice_prompt' || loadingAudioId === 'senior_voice')
-                      ? 'ЗАГРУЗКА ЗВУКА...'
-                      : (playingId === 'voice_prompt' || playingId === 'senior_voice')
-                      ? playbackState === 'playing'
-                        ? '⏸ ПАУЗА'
-                        : '▶ ПРОДОЛЖИТЬ'
-                      : '▶ СЛУШАТЬ ПОДСКАЗКУ'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
             </View>
           )}
 
@@ -1848,53 +2029,56 @@ function MainApp() {
             ) : null}
 
             {isFullAudioEnabled && (
-              <View style={styles.sectionAudioCenteredContainer}>
-                <TouchableOpacity
-                  style={[
-                    styles.sectionAudioBtn,
-                    (showAlternativeExplanation
-                      ? playingId === 'alt_explanation'
-                      : playingId === 'theme_explanation') &&
-                      (playbackState === 'playing'
-                        ? styles.sectionAudioBtnActive
-                        : playbackState === 'paused'
-                        ? styles.sectionAudioBtnPaused
-                        : null),
-                  ]}
-                  onPress={() => {
-                    const targetText = showAlternativeExplanation
-                      ? (analysis.speech_layer?.alternative_explanation ||
-                         analysis.alternative_explanation_speech ||
-                         analysis.alternative_explanation!)
-                      : (analysis.speech_layer?.theme_explanation ||
-                         analysis.theme_explanation_speech ||
-                         analysis.theme_explanation);
-                    const targetId = showAlternativeExplanation ? 'alt_explanation' : 'theme_explanation';
-                    handlePlayAudio(targetText, 'ru', targetId, true);
-                  }}
-                  activeOpacity={0.85}
-                  accessibilityLabel="Озвучить суть темы"
-                >
+              <TouchableOpacity
+                style={[
+                  styles.unifiedAudioBtn,
+                  (showAlternativeExplanation
+                    ? playingId === 'alt_explanation'
+                    : playingId === 'theme_explanation') &&
+                    (playbackState === 'playing'
+                      ? styles.unifiedAudioBtnActive
+                      : playbackState === 'paused'
+                      ? styles.unifiedAudioBtnPaused
+                      : null),
+                ]}
+                onPress={() => {
+                  const visualText = showAlternativeExplanation
+                    ? analysis.alternative_explanation!
+                    : analysis.theme_explanation;
+                  const speechText = showAlternativeExplanation
+                    ? (analysis.speech_layer?.alternative_explanation ||
+                       analysis.alternative_explanation_speech ||
+                       visualText)
+                    : (analysis.speech_layer?.theme_explanation ||
+                       analysis.theme_explanation_speech ||
+                       visualText);
+                  const targetId = showAlternativeExplanation ? 'alt_explanation' : 'theme_explanation';
+                  handlePlayAudio(visualText, 'ru', targetId, true, speechText);
+                }}
+                activeOpacity={0.85}
+                accessibilityLabel="Озвучить суть темы"
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                   {(showAlternativeExplanation
                     ? loadingAudioId === 'alt_explanation'
                     : loadingAudioId === 'theme_explanation') ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                      <Text style={[styles.sectionAudioBtnText, { marginLeft: 6 }]}>Загрузка...</Text>
-                    </View>
+                    <>
+                      <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                      <Text style={styles.unifiedAudioBtnText}>ЗАГРУЗКА ЗВУКА...</Text>
+                    </>
                   ) : (
-                    <Text style={styles.sectionAudioBtnText}>
+                    <Text style={styles.unifiedAudioBtnText}>
                       {(showAlternativeExplanation
                         ? playingId === 'alt_explanation'
                         : playingId === 'theme_explanation')
                         ? playbackState === 'playing'
-                          ? '⏸ Пауза'
-                          : '▶ Продолжить'
-                        : '▶ Озвучить'}
+                          ? '⏸ ПАУЗА'
+                          : '▶ ПРОДОЛЖИТЬ'
+                        : '▶ ОЗВУЧИТЬ'}
                     </Text>
                   )}
-                </TouchableOpacity>
-              </View>
+                </View>
+              </TouchableOpacity>
             )}
             <Text style={styles.explanationText}>
               {cleanEstTags(showAlternativeExplanation ? analysis.alternative_explanation : analysis.theme_explanation)}
@@ -1955,7 +2139,7 @@ function MainApp() {
                             isVocabActive && styles.vocabCircleSpeakerActive,
                             isVocabPaused && styles.vocabCircleSpeakerPaused,
                           ]}
-                          onPress={() => handlePlayAudio(v.est, 'et', `vocab_${idx}`)}
+                          onPress={() => handlePlayAudio(cleanEstTags(v.est), 'et', `vocab_${idx}`)}
                           accessibilityLabel={`Озвучить слово ${v.est}`}
                         >
                           {loadingAudioId === `vocab_${idx}` ? (
@@ -1991,7 +2175,7 @@ function MainApp() {
                             isExActive && styles.vocabCircleSpeakerActive,
                             isExPaused && styles.vocabCircleSpeakerPaused,
                           ]}
-                          onPress={() => handlePlayAudio(v.example, 'et', `vocab_ex_${idx}`)}
+                          onPress={() => handlePlayAudio(cleanEstTags(v.example), 'et', `vocab_ex_${idx}`)}
                           accessibilityLabel={`Озвучить пример ${v.example}`}
                         >
                           {loadingAudioId === `vocab_ex_${idx}` ? (
@@ -2024,64 +2208,64 @@ function MainApp() {
               </View>
 
               {isFullAudioEnabled && (
-                <View style={styles.sectionAudioCenteredContainer}>
-                  <TouchableOpacity
-                    style={[
-                      styles.sectionAudioBtn,
-                      playingId === 'worked_example' &&
-                        (playbackState === 'playing'
-                          ? styles.sectionAudioBtnActive
-                          : playbackState === 'paused'
-                          ? styles.sectionAudioBtnPaused
-                          : null),
-                    ]}
-                    onPress={() => {
-                      const workedSpeech =
-                        analysis.speech_layer?.worked_example ||
-                        analysis.worked_example_speech;
-                      let naidisAudioText = workedSpeech;
-                      if (!naidisAudioText) {
-                        const we = analysis.worked_example!;
-                        const ORDINAL_STEP_WORDS: Record<number, string> = {
-                          1: 'Первое',
-                          2: 'Второе',
-                          3: 'Третье',
-                          4: 'Четвертое',
-                          5: 'Пятое',
-                          6: 'Шестое',
-                          7: 'Седьмое',
-                          8: 'Восьмое',
-                          9: 'Девятое',
-                          10: 'Десятое',
-                        };
-                        const formattedSteps = we.steps.map((step, sIdx) => {
-                          const clean = step.replace(/^\d+[\.\)]\s*/, '').trim();
-                          const prefix = ORDINAL_STEP_WORDS[sIdx + 1] || `${sIdx + 1}-е`;
-                          return `${prefix}: ${clean}`;
-                        });
-                        naidisAudioText = `${we.given}. Шаги решения: ${formattedSteps.join('. ')}. ${we.note || ''}`.trim();
-                      }
-                      handlePlayAudio(naidisAudioText, 'ru', 'worked_example', true);
-                    }}
-                    activeOpacity={0.85}
-                    accessibilityLabel="Озвучить пример решения"
-                  >
+                <TouchableOpacity
+                  style={[
+                    styles.unifiedAudioBtn,
+                    playingId === 'worked_example' &&
+                      (playbackState === 'playing'
+                        ? styles.unifiedAudioBtnActive
+                        : playbackState === 'paused'
+                        ? styles.unifiedAudioBtnPaused
+                        : null),
+                  ]}
+                  onPress={() => {
+                    const we = analysis.worked_example!;
+                    const ORDINAL_STEP_WORDS: Record<number, string> = {
+                      1: 'Первое',
+                      2: 'Второе',
+                      3: 'Третье',
+                      4: 'Четвертое',
+                      5: 'Пятое',
+                      6: 'Шестое',
+                      7: 'Седьмое',
+                      8: 'Восьмое',
+                      9: 'Девятое',
+                      10: 'Десятое',
+                    };
+                    const formattedSteps = (we.steps || [])
+                      .filter((step) => Boolean(step && step.trim()))
+                      .map((step, sIdx) => {
+                        const clean = step.replace(/^\d+[\.\)]\s*/, '').trim();
+                        const prefix = ORDINAL_STEP_WORDS[sIdx + 1] || `${sIdx + 1}-е`;
+                        return `${prefix}: ${clean}`;
+                      });
+                    const naidisVisualText = `${we.given}. Шаги решения: ${formattedSteps.join('. ')}. ${we.note || ''}`.trim();
+                    const workedSpeech =
+                      analysis.speech_layer?.worked_example ||
+                      analysis.worked_example_speech ||
+                      naidisVisualText;
+                    handlePlayAudio(naidisVisualText, 'ru', 'worked_example', true, workedSpeech);
+                  }}
+                  activeOpacity={0.85}
+                  accessibilityLabel="Озвучить пример решения"
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                     {loadingAudioId === 'worked_example' ? (
-                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                        <Text style={[styles.sectionAudioBtnText, { marginLeft: 6 }]}>Загрузка...</Text>
-                      </View>
+                      <>
+                        <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                        <Text style={styles.unifiedAudioBtnText}>ЗАГРУЗКА ЗВУКА...</Text>
+                      </>
                     ) : (
-                      <Text style={styles.sectionAudioBtnText}>
+                      <Text style={styles.unifiedAudioBtnText}>
                         {playingId === 'worked_example'
                           ? playbackState === 'playing'
-                            ? '⏸ Пауза'
-                            : '▶ Продолжить'
-                          : '▶ Озвучить пример'}
+                            ? '⏸ ПАУЗА'
+                            : '▶ ПРОДОЛЖИТЬ'
+                          : '▶ ОЗВУЧИТЬ'}
                       </Text>
                     )}
-                  </TouchableOpacity>
-                </View>
+                  </View>
+                </TouchableOpacity>
               )}
 
               {/* Given condition / situation */}
@@ -2093,14 +2277,13 @@ function MainApp() {
               {/* Step by step breakdown */}
               <View style={styles.naidisStepsContainer}>
                 <Text style={styles.naidisStepsHeader}>Пошаговые действия:</Text>
-                {analysis.worked_example.steps.map((step, sIdx) => (
-                  <View key={sIdx} style={styles.naidisStepRow}>
-                    <View style={styles.naidisStepNumberBadge}>
-                      <Text style={styles.naidisStepNumberText}>{sIdx + 1}</Text>
-                    </View>
-                    <Text style={styles.naidisStepText}>{cleanEstTags(step).replace(/^\d+[\.\)]\s*/, '')}</Text>
-                  </View>
-                ))}
+                <LessonStepList
+                  steps={(analysis.worked_example.steps || [])
+                    .map((step) => cleanEstTags(step).replace(/^\d+[\.\)]\s*/, '').trim())
+                    .filter(Boolean)}
+                  audioPrefix="we_step"
+                  onCopyFormula={handleCopyFormula}
+                />
               </View>
 
               {/* Concluding note / tip */}
@@ -2118,45 +2301,77 @@ function MainApp() {
           <View style={styles.modularCard}>
             <Text style={styles.sectionHeader}>🎯 Как решить задание самому</Text>
             {isFullAudioEnabled && (
-              <View style={styles.sectionAudioCenteredContainer}>
-                <TouchableOpacity
-                  style={[
-                    styles.sectionAudioBtn,
-                    playingId === 'how_to_answer' &&
-                      (playbackState === 'playing'
-                        ? styles.sectionAudioBtnActive
-                        : playbackState === 'paused'
-                        ? styles.sectionAudioBtnPaused
-                        : null),
-                  ]}
-                  onPress={() => {
-                    const howSpeech =
-                      analysis.speech_layer?.how_to_answer ||
-                      analysis.how_to_answer_speech ||
-                      analysis.how_to_answer;
-                    handlePlayAudio(howSpeech, 'ru', 'how_to_answer', true);
-                  }}
-                  activeOpacity={0.85}
-                  accessibilityLabel="Озвучить решение"
-                >
+              <TouchableOpacity
+                style={[
+                  styles.unifiedAudioBtn,
+                  playingId === 'how_to_answer' &&
+                    (playbackState === 'playing'
+                      ? styles.unifiedAudioBtnActive
+                      : playbackState === 'paused'
+                      ? styles.unifiedAudioBtnPaused
+                      : null),
+                ]}
+                onPress={() => {
+                  const howVisual = analysis.how_to_answer;
+                  const howSpeech =
+                    analysis.speech_layer?.how_to_answer ||
+                    analysis.how_to_answer_speech ||
+                    howVisual;
+                  handlePlayAudio(howVisual, 'ru', 'how_to_answer', true, howSpeech);
+                }}
+                activeOpacity={0.85}
+                accessibilityLabel="Озвучить решение"
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                   {loadingAudioId === 'how_to_answer' ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                      <Text style={[styles.sectionAudioBtnText, { marginLeft: 6 }]}>Загрузка...</Text>
-                    </View>
+                    <>
+                      <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                      <Text style={styles.unifiedAudioBtnText}>ЗАГРУЗКА ЗВУКА...</Text>
+                    </>
                   ) : (
-                    <Text style={styles.sectionAudioBtnText}>
+                    <Text style={styles.unifiedAudioBtnText}>
                       {playingId === 'how_to_answer'
                         ? playbackState === 'playing'
-                          ? '⏸ Пауза'
-                          : '▶ Продолжить'
-                        : '▶ Озвучить'}
+                          ? '⏸ ПАУЗА'
+                          : '▶ ПРОДОЛЖИТЬ'
+                        : '▶ ОЗВУЧИТЬ'}
                     </Text>
                   )}
-                </TouchableOpacity>
-              </View>
+                </View>
+              </TouchableOpacity>
             )}
-            <Text style={styles.instructionText}>{cleanEstTags(analysis.how_to_answer)}</Text>
+
+            {/* Визуальное разделение шагов решения с круглыми зелеными бейджами (1), (2), (3) */}
+            {(() => {
+              const rawText = cleanEstTags(analysis.how_to_answer || '').trim();
+              const rawParts = rawText
+                .split(/(?:^|\n+|\s+)(?=(?:\(?\d+[\.\)]|\bШаг\s+\d+[:.]?)\s+)/i)
+                .map((p) => p.trim())
+                .filter(Boolean);
+
+              const candidateSteps = rawParts.length > 1
+                ? rawParts
+                : rawText.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+
+              const validSteps = candidateSteps
+                .map((s) => s.replace(/^(?:\(?\d+[\.\)]|\bШаг\s+\d+[:.]?)\s*/i, '').trim())
+                .filter(Boolean);
+
+              if (validSteps.length > 1 || (validSteps.length === 1 && /^(?:\(?\d+[\.\)]|\bШаг\s+\d+[:.]?)\s+/i.test(candidateSteps[0] || ''))) {
+                if (validSteps.length === 0) return null;
+                return (
+                  <View style={styles.naidisStepsContainer}>
+                    <LessonStepList
+                      steps={validSteps}
+                      audioPrefix="how_step"
+                      onCopyFormula={handleCopyFormula}
+                    />
+                  </View>
+                );
+              }
+
+              return rawText ? <Text style={styles.instructionText}>{rawText}</Text> : null;
+            })()}
           </View>
 
           {/* Card 6: Собери ответ на эстонском (1–9 классы) / Формулировка для ответа (Гимназия 10–12) */}
@@ -2185,9 +2400,46 @@ function MainApp() {
                 </Text>
               </View>
 
+              <TouchableOpacity
+                style={[
+                  styles.unifiedAudioBtn,
+                  playingId === 'answer_template_gymnasium' &&
+                    (playbackState === 'playing'
+                      ? styles.unifiedAudioBtnActive
+                      : playbackState === 'paused'
+                      ? styles.unifiedAudioBtnPaused
+                      : null),
+                ]}
+                onPress={() => {
+                  const academicText = normalizeTextForTTS(
+                    cleanEstTags((analysis.answer_template || '').replace(/\[(.*?)\]/g, '$1'))
+                  );
+                  handlePlayAudio(academicText, 'et', 'answer_template_gymnasium');
+                }}
+                activeOpacity={0.85}
+                accessibilityLabel="Озвучить формулировку ответа на эстонском"
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                  {loadingAudioId === 'answer_template_gymnasium' ? (
+                    <>
+                      <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                      <Text style={styles.unifiedAudioBtnText}>ЗАГРУЗКА ЗВУКА...</Text>
+                    </>
+                  ) : (
+                    <Text style={styles.unifiedAudioBtnText}>
+                      {playingId === 'answer_template_gymnasium'
+                        ? playbackState === 'playing'
+                          ? '⏸ ПАУЗА'
+                          : '▶ ПРОДОЛЖИТЬ'
+                        : '▶ ОЗВУЧИТЬ'}
+                    </Text>
+                  )}
+                </View>
+              </TouchableOpacity>
+
               <View style={styles.academicAnswerBox}>
                 <Text style={styles.academicAnswerText}>
-                  {(analysis.answer_template || '').replace(/\[(.*?)\]/g, '$1')}
+                  {cleanEstTags((analysis.answer_template || '').replace(/\[(.*?)\]/g, '$1'))}
                 </Text>
               </View>
 
@@ -2212,14 +2464,19 @@ function MainApp() {
                 : 'Сохранить термины в словарик'
             }
           >
-            <Text
-              style={[
-                styles.saveCardButtonText,
-                areLessonTermsSaved && styles.saveCardButtonTextSaved,
-              ]}
-            >
-              {areLessonTermsSaved ? '✓ Термины сохранены в словарике' : 'Сохранить термины в словарик'}
-            </Text>
+            <View style={styles.saveCardButtonContent}>
+              <Text style={styles.saveCardButtonStar}>
+                ⭐
+              </Text>
+              <Text
+                style={[
+                  styles.saveCardButtonText,
+                  areLessonTermsSaved && styles.saveCardButtonTextSaved,
+                ]}
+              >
+                {areLessonTermsSaved ? 'Термины сохранены в словарике' : 'Сохранить термины в словарик'}
+              </Text>
+            </View>
           </TouchableOpacity>
 
           {/* Card 8: Next Task Camera Button */}
@@ -2368,7 +2625,7 @@ function MainApp() {
                           <View style={styles.vocabCardTop}>
                             <View style={styles.vocabEstRow}>
                               <Text style={[styles.vocabCardEst, isJunior && styles.vocabCardEstJunior]}>
-                                {item.est}
+                                {cleanEstTags(item.est)}
                               </Text>
                               <TouchableOpacity
                                 style={[
@@ -2376,7 +2633,7 @@ function MainApp() {
                                   isItemActive && styles.vocabCardSpeakerActive,
                                   isItemPaused && styles.vocabCardSpeakerPaused,
                                 ]}
-                                onPress={() => handlePlayAudio(item.est, 'et', `saved_vocab_${item.est}`)}
+                                onPress={() => handlePlayAudio(cleanEstTags(item.est), 'et', `saved_vocab_${item.est}`)}
                               >
                                 {loadingAudioId === `saved_vocab_${item.est}` ? (
                                   <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.7 }] }} />
@@ -2395,7 +2652,7 @@ function MainApp() {
                             </TouchableOpacity>
                           </View>
 
-                          <Text style={styles.vocabCardRu}>{item.ru}</Text>
+                          <Text style={styles.vocabCardRu}>{cleanEstTags(item.ru)}</Text>
 
                           {isExpanded && item.example ? (
                             <View style={styles.vocabCardExampleBox}>
@@ -2407,7 +2664,7 @@ function MainApp() {
                                     isExActive && styles.vocabCardSpeakerActive,
                                     isExPaused && styles.vocabCardSpeakerPaused,
                                   ]}
-                                  onPress={() => handlePlayAudio(item.example, 'et', `saved_ex_${item.est}`)}
+                                  onPress={() => handlePlayAudio(cleanEstTags(item.example), 'et', `saved_ex_${item.est}`)}
                                 >
                                   {loadingAudioId === `saved_ex_${item.est}` ? (
                                     <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.7 }] }} />
@@ -2418,7 +2675,7 @@ function MainApp() {
                                   )}
                                 </TouchableOpacity>
                               </View>
-                              <Text style={styles.vocabCardExampleText}>«{item.example}»</Text>
+                              <Text style={styles.vocabCardExampleText}>«{cleanEstTags(item.example)}»</Text>
                             </View>
                           ) : null}
                         </TouchableOpacity>
@@ -2774,6 +3031,23 @@ function MainApp() {
 
         <TouchableOpacity style={styles.clearDataBtn} onPress={handleClearAllData}>
           <Text style={styles.clearDataBtnText}>🗑️ Очистить сохранённую историю и словарь</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.privacyPolicyBtn}
+          onPress={() => Linking.openURL('https://tarkapp.ee/privacy')}
+          activeOpacity={0.8}
+          accessibilityRole="link"
+        >
+          <Text style={styles.privacyPolicyBtnText}>🔒 Политика конфиденциальности (GDPR)</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.deleteAccountBtn}
+          onPress={handleDeleteAccountAndData}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.deleteAccountBtnText}>⚠️ Удалить профиль и все данные</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -4317,6 +4591,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginVertical: 10,
   },
+  unifiedAudioBtn: {
+    width: '100%',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: Theme.radius.button,
+    backgroundColor: Theme.colors.voiceButton,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 8,
+    ...Theme.shadow.chip,
+  },
+  unifiedAudioBtnActive: {
+    backgroundColor: Theme.colors.voiceButtonPressed,
+  },
+  unifiedAudioBtnPaused: {
+    backgroundColor: '#D97706',
+  },
+  unifiedAudioBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+    letterSpacing: 0.3,
+  },
   sectionAudioBtn: {
     backgroundColor: Theme.colors.voiceButton,
     paddingHorizontal: 22,
@@ -4479,8 +4776,18 @@ const styles = StyleSheet.create({
     borderRadius: Theme.radius.card,
     paddingVertical: 14,
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 14,
     ...Theme.shadow.card,
+  },
+  saveCardButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveCardButtonStar: {
+    fontSize: 16,
+    marginRight: 7,
   },
   saveCardButtonJunior: {
     backgroundColor: Theme.colors.primary,
@@ -5280,5 +5587,37 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#064E3B',
+  },
+  privacyPolicyBtn: {
+    marginTop: 10,
+    backgroundColor: 'rgba(95, 237, 197, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(95, 237, 197, 0.3)',
+    borderRadius: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  privacyPolicyBtnText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#5FEDC5',
+  },
+  deleteAccountBtn: {
+    marginTop: 10,
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.4)',
+    borderRadius: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteAccountBtnText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#FCA5A5',
   },
 });

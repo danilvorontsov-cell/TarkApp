@@ -1,5 +1,7 @@
+import { AppState } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
-import { API_BASE_URL, resolveBaseUrl } from './api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_BASE_URL, getDeviceId, resolveBaseUrl } from './api';
 import {
   playTts,
   stopTts,
@@ -10,22 +12,29 @@ import {
   AudioPlaybackCallbacks,
   getCurrentPlayingId,
   PlaybackState,
+  getFileHash,
 } from './audioPlayer';
 import { PageAnalysisResponse } from '../types';
-import { getTierPolicy, SchoolTier } from './gradePolicy';
+import { getTierPolicy, getTierFromGrade, SchoolTier } from './gradePolicy';
 
 export { PlaybackState } from './audioPlayer';
+
+export const AUDIO_CACHE_VERSION = 2;
+const CACHE_VERSION_KEY = '@tarkapp_audio_cache_version';
 
 export type AudioItemStatus = 'IDLE' | 'QUEUED' | 'LOADING' | 'READY' | 'ERROR';
 
 export interface AudioQueueItem {
   id: string;
   text: string;
+  speech_text?: string;
   lang: 'ru' | 'et';
   bilingual: boolean;
   priority: number; // 0 = urgent user click, 1 = prompt, 2 = theme, 3 = how_to_answer, 4 = vocabulary
   status: AudioItemStatus;
   localUri?: string;
+  grade?: number;
+  tier?: string;
   onReadyCallbacks: Array<(uri: string) => void>;
   onErrorCallbacks: Array<(err: any) => void>;
 }
@@ -58,13 +67,31 @@ class AudioQueueManagerClass {
       this.currentlyPlayingId = playingId;
       this.notify();
     });
+
+    // Automatic background playback cleanup: force stop audio & wipe preload queue
+    AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'background') {
+        this.stopAndClear().catch((err) =>
+          console.warn('[AudioQueue] Background cleanup error:', err)
+        );
+      }
+    });
   }
 
   private async ensureCacheDir() {
     if (this.dirInitialized) return;
     try {
+      const storedVersionStr = await AsyncStorage.getItem(CACHE_VERSION_KEY);
+      const storedVersion = storedVersionStr ? parseInt(storedVersionStr, 10) : 0;
       const dirInfo = await FileSystem.getInfoAsync(this.cacheDir);
-      if (!dirInfo.exists) {
+
+      if (storedVersion < AUDIO_CACHE_VERSION) {
+        if (dirInfo.exists) {
+          await FileSystem.deleteAsync(this.cacheDir, { idempotent: true });
+        }
+        await FileSystem.makeDirectoryAsync(this.cacheDir, { intermediates: true });
+        await AsyncStorage.setItem(CACHE_VERSION_KEY, String(AUDIO_CACHE_VERSION));
+      } else if (!dirInfo.exists) {
         await FileSystem.makeDirectoryAsync(this.cacheDir, { intermediates: true });
       } else {
         // Clean up any 0-byte or corrupted leftover files from previous network interruptions
@@ -78,8 +105,78 @@ class AudioQueueManagerClass {
         }
       }
       this.dirInitialized = true;
+      // Фоновая гигиена и ротация дискового кэша (старше 7 дней или > 50 МБ)
+      this.rotateCache().catch((err) => console.warn('Cache rotation error:', err));
     } catch (e) {
       console.warn('Failed to initialize audio cache directory:', e);
+    }
+  }
+
+  /**
+   * Фоновая ротация аудиокэша: удаляет MP3 файлы старше 7 дней
+   * или при превышении суммарного объема директории более 50 МБ (начиная с самых старых).
+   */
+  public async rotateCache(): Promise<void> {
+    try {
+      const dirInfo = await FileSystem.getInfoAsync(this.cacheDir);
+      if (!dirInfo.exists) return;
+
+      const files = await FileSystem.readDirectoryAsync(this.cacheDir);
+      const nowSec = Date.now() / 1000;
+      const MAX_AGE_SEC = 7 * 24 * 60 * 60; // 7 дней
+      const MAX_TOTAL_BYTES = 50 * 1024 * 1024; // 50 МБ
+
+      interface CacheFileEntry {
+        path: string;
+        size: number;
+        modificationTime: number;
+      }
+
+      const validEntries: CacheFileEntry[] = [];
+      let totalBytes = 0;
+
+      for (const file of files) {
+        if (!file.endsWith('.mp3')) continue;
+        const filePath = `${this.cacheDir}${file}`;
+        try {
+          const info = await FileSystem.getInfoAsync(filePath);
+          if (!info.exists || info.isDirectory) continue;
+
+          // Удаляем поврежденные / урезанные файлы (< 800 байт)
+          if (typeof info.size === 'number' && info.size < this.MIN_AUDIO_BYTES) {
+            await FileSystem.deleteAsync(filePath, { idempotent: true });
+            continue;
+          }
+
+          // 1. Удаляем файлы старше 7 дней
+          if (info.modificationTime && nowSec - info.modificationTime > MAX_AGE_SEC) {
+            await FileSystem.deleteAsync(filePath, { idempotent: true });
+            continue;
+          }
+
+          const fileSize = typeof info.size === 'number' ? info.size : 0;
+          validEntries.push({
+            path: filePath,
+            size: fileSize,
+            modificationTime: info.modificationTime || nowSec,
+          });
+          totalBytes += fileSize;
+        } catch {}
+      }
+
+      // 2. Если суммарный объем превышает 50 МБ, удаляем самые старые файлы
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        validEntries.sort((a, b) => a.modificationTime - b.modificationTime);
+        for (const entry of validEntries) {
+          if (totalBytes <= MAX_TOTAL_BYTES) break;
+          try {
+            await FileSystem.deleteAsync(entry.path, { idempotent: true });
+            totalBytes -= entry.size;
+          } catch {}
+        }
+      }
+    } catch (e) {
+      console.warn('[AudioQueue] rotateCache error:', e);
     }
   }
 
@@ -88,18 +185,17 @@ class AudioQueueManagerClass {
     return str.replace(/^[«"“„\s]+|[»"”\s]+$/g, '').trim();
   }
 
-  private getHash(str: string): string {
-    let hash = 0;
-    const clean = this.normalizeText(str).toLowerCase();
-    for (let i = 0; i < clean.length; i++) {
-      hash = (hash << 5) - hash + clean.charCodeAt(i);
-      hash |= 0;
-    }
-    return Math.abs(hash).toString(36);
+  public getFileHash(str: string): string {
+    return getFileHash(str);
   }
 
-  private getFilePath(text: string, lang: string, bilingual: boolean): string {
-    const key = `${lang}_${bilingual ? 'bi' : 'mono'}_${this.getHash(text)}`;
+  private getHash(str: string): string {
+    return getFileHash(str);
+  }
+
+  private getFilePath(textOrItem: string | { text: string; speech_text?: string }, lang: string, bilingual: boolean): string {
+    const raw = typeof textOrItem === 'string' ? textOrItem : (textOrItem.speech_text || textOrItem.text);
+    const key = `${lang}_${bilingual ? 'bi' : 'mono'}_${this.getFileHash(raw)}`;
     return `${this.cacheDir}${key}.mp3`;
   }
 
@@ -177,78 +273,98 @@ class AudioQueueManagerClass {
   ) {
     await this.ensureCacheDir();
 
+    let resolvedGrade: number | undefined;
+    let resolvedTier: string | undefined;
+
+    if (typeof gradeOrTier === 'number') {
+      resolvedGrade = gradeOrTier;
+      resolvedTier = getTierFromGrade(gradeOrTier);
+    } else if (typeof gradeOrTier === 'string') {
+      resolvedTier = gradeOrTier;
+    }
+
+    if (resolvedGrade === undefined || resolvedTier === undefined) {
+      try {
+        const raw = await AsyncStorage.getItem('@tarkapp_user_profile');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (resolvedGrade === undefined) resolvedGrade = Number(parsed.grade) || 1;
+          if (resolvedTier === undefined) resolvedTier = typeof parsed.tier === 'string' && parsed.tier ? parsed.tier : 'primary';
+        }
+      } catch {}
+    }
+
     const policy = gradeOrTier !== undefined ? getTierPolicy(gradeOrTier) : null;
     const isFullAudio = policy ? policy.fullAudioEnabled : true;
     const isVocabAudio = policy ? policy.vocabAudioEnabled : true;
 
-    // 1. Priority 1: Partner prompt (voice_prompt_script)
-    const promptText = analysis.speech_layer?.voice_prompt_script || analysis.voice_prompt_script_speech || analysis.voice_prompt_script;
-    if (isFullAudio && promptText && promptText.trim()) {
+    // 1. Priority 1: Partner prompt (voice_prompt_script) — synchronized bilingual: true
+    const promptVisual = analysis.voice_prompt_script;
+    const promptSpeech = analysis.speech_layer?.voice_prompt_script || analysis.voice_prompt_script_speech || promptVisual;
+    if (isFullAudio && promptVisual && promptVisual.trim()) {
       this.upsertItem({
         id: 'voice_prompt',
-        text: promptText,
+        text: promptVisual,
+        speech_text: promptSpeech,
         lang: 'ru',
-        bilingual: false,
+        bilingual: true,
         priority: 1,
-      });
-
-      // Senior voice shares the exact same text
-      this.upsertItem({
-        id: 'senior_voice',
-        text: promptText,
-        lang: 'ru',
-        bilingual: false,
-        priority: 1,
+        grade: resolvedGrade,
+        tier: resolvedTier,
       });
     }
 
     // 2. Priority 2: Theme explanation (theme_explanation) with bilingual stitching
-    const themeText = analysis.speech_layer?.theme_explanation || analysis.theme_explanation_speech || analysis.theme_explanation;
-    if (isFullAudio && themeText && themeText.trim()) {
+    const themeVisual = analysis.theme_explanation;
+    const themeSpeech = analysis.speech_layer?.theme_explanation || analysis.theme_explanation_speech || themeVisual;
+    if (isFullAudio && themeVisual && themeVisual.trim()) {
       this.upsertItem({
         id: 'theme_explanation',
-        text: themeText,
+        text: themeVisual,
+        speech_text: themeSpeech,
         lang: 'ru',
         bilingual: true,
         priority: 2,
+        grade: resolvedGrade,
+        tier: resolvedTier,
       });
     }
 
     // 2b. Priority 2: Alternative explanation (alt_explanation) with bilingual stitching
-    const altText = analysis.speech_layer?.alternative_explanation || analysis.alternative_explanation_speech || analysis.alternative_explanation;
-    if (isFullAudio && altText && altText.trim()) {
+    const altVisual = analysis.alternative_explanation;
+    const altSpeech = analysis.speech_layer?.alternative_explanation || analysis.alternative_explanation_speech || altVisual;
+    if (isFullAudio && altVisual && altVisual.trim()) {
       this.upsertItem({
         id: 'alt_explanation',
-        text: altText,
+        text: altVisual,
+        speech_text: altSpeech,
         lang: 'ru',
         bilingual: true,
         priority: 2,
+        grade: resolvedGrade,
+        tier: resolvedTier,
       });
     }
 
     // 3. Priority 3: How to answer (how_to_answer) with bilingual stitching
-    const howText = analysis.speech_layer?.how_to_answer || analysis.how_to_answer_speech || analysis.how_to_answer;
-    if (isFullAudio && howText && howText.trim()) {
+    const howVisual = analysis.how_to_answer;
+    const howSpeech = analysis.speech_layer?.how_to_answer || analysis.how_to_answer_speech || howVisual;
+    if (isFullAudio && howVisual && howVisual.trim()) {
       this.upsertItem({
         id: 'how_to_answer',
-        text: howText,
+        text: howVisual,
+        speech_text: howSpeech,
         lang: 'ru',
         bilingual: true,
         priority: 3,
+        grade: resolvedGrade,
+        tier: resolvedTier,
       });
     }
 
     // 3b. Priority 3: Worked example (worked_example) with bilingual stitching
     const workedSpeech = analysis.speech_layer?.worked_example || analysis.worked_example_speech;
-    if (isFullAudio && workedSpeech && workedSpeech.trim()) {
-      this.upsertItem({
-        id: 'worked_example',
-        text: workedSpeech,
-        lang: 'ru',
-        bilingual: true,
-        priority: 3,
-      });
-    } else if (isFullAudio && analysis.worked_example) {
+    if (isFullAudio && analysis.worked_example) {
       const we = analysis.worked_example;
       const ORDINAL_STEP_WORDS: Record<number, string> = {
         1: 'Первое',
@@ -262,21 +378,39 @@ class AudioQueueManagerClass {
         9: 'Девятое',
         10: 'Десятое',
       };
-      const formattedSteps = we.steps.map((step, sIdx) => {
-        const clean = step.replace(/^\d+[\.\)]\s*/, '').trim();
-        const prefix = ORDINAL_STEP_WORDS[sIdx + 1] || `${sIdx + 1}-е`;
-        return `${prefix}: ${clean}`;
-      });
-      const naidisAudioText = `${we.given}. Шаги решения: ${formattedSteps.join('. ')}. ${we.note || ''}`.trim();
-      if (naidisAudioText.trim()) {
+      const formattedSteps = (we.steps || [])
+        .filter((s) => Boolean(s && s.trim()))
+        .map((step, sIdx) => {
+          const clean = step.replace(/^\d+[\.\)]\s*/, '').trim();
+          const prefix = ORDINAL_STEP_WORDS[sIdx + 1] || `${sIdx + 1}-е`;
+          return `${prefix}: ${clean}`;
+        });
+      const naidisVisualText = `${we.given}. Шаги решения: ${formattedSteps.join('. ')}. ${we.note || ''}`.trim();
+      const naidisAudioText = (workedSpeech && workedSpeech.trim()) ? workedSpeech : naidisVisualText;
+
+      if (naidisVisualText.trim()) {
         this.upsertItem({
           id: 'worked_example',
-          text: naidisAudioText,
+          text: naidisVisualText,
+          speech_text: naidisAudioText,
           lang: 'ru',
           bilingual: true,
           priority: 3,
+          grade: resolvedGrade,
+          tier: resolvedTier,
         });
       }
+    } else if (isFullAudio && workedSpeech && workedSpeech.trim()) {
+      this.upsertItem({
+        id: 'worked_example',
+        text: workedSpeech,
+        speech_text: workedSpeech,
+        lang: 'ru',
+        bilingual: true,
+        priority: 3,
+        grade: resolvedGrade,
+        tier: resolvedTier,
+      });
     }
 
     // 4. Priority 4: Vocabulary terms and examples (one by one)
@@ -286,9 +420,12 @@ class AudioQueueManagerClass {
           this.upsertItem({
             id: `vocab_${idx}`,
             text: item.est,
+            speech_text: item.est,
             lang: 'et',
             bilingual: false,
             priority: 4,
+            grade: resolvedGrade,
+            tier: resolvedTier,
           });
         }
 
@@ -296,9 +433,12 @@ class AudioQueueManagerClass {
           this.upsertItem({
             id: `vocab_ex_${idx}`,
             text: item.example,
+            speech_text: item.example,
             lang: 'et',
             bilingual: false,
             priority: 4,
+            grade: resolvedGrade,
+            tier: resolvedTier,
           });
         }
       });
@@ -311,31 +451,46 @@ class AudioQueueManagerClass {
   private upsertItem(params: {
     id: string;
     text: string;
+    speech_text?: string;
     lang: 'ru' | 'et';
     bilingual: boolean;
     priority: number;
+    grade?: number;
+    tier?: string;
   }) {
     const cleanText = this.normalizeText(params.text);
+    const speechText = params.speech_text ? this.normalizeText(params.speech_text) : cleanText;
     const existing = this.queue.get(params.id);
 
     if (existing) {
-      if (existing.text !== cleanText) {
+      if (
+        existing.text !== cleanText ||
+        existing.speech_text !== speechText ||
+        existing.bilingual !== params.bilingual
+      ) {
         existing.text = cleanText;
+        existing.speech_text = speechText;
+        existing.bilingual = params.bilingual;
         existing.status = 'QUEUED';
         existing.localUri = undefined;
       }
       existing.priority = Math.min(existing.priority, params.priority);
+      if (params.grade !== undefined) existing.grade = params.grade;
+      if (params.tier !== undefined) existing.tier = params.tier;
       return;
     }
 
     this.queue.set(params.id, {
       id: params.id,
       text: cleanText,
+      speech_text: speechText,
       lang: params.lang,
       bilingual: params.bilingual,
       priority: params.priority,
       status: 'QUEUED',
       localUri: undefined,
+      grade: params.grade,
+      tier: params.tier,
       onReadyCallbacks: [],
       onErrorCallbacks: [],
     });
@@ -372,7 +527,9 @@ class AudioQueueManagerClass {
    * Notifies onReadyCallbacks on success, onErrorCallbacks on failure.
    */
   public async downloadItem(item: AudioQueueItem, baseUrl: string = API_BASE_URL): Promise<boolean> {
-    const targetFile = this.getFilePath(item.text, item.lang, item.bilingual);
+    const textToSynthesize = (item.speech_text && item.speech_text.trim()) ? item.speech_text.trim() : item.text;
+    const isSpeechText = Boolean(item.speech_text && item.speech_text.trim());
+    const targetFile = this.getFilePath(textToSynthesize, item.lang, item.bilingual);
     this.currentDownloadingId = item.id;
     item.status = 'LOADING';
     this.notify();
@@ -394,16 +551,111 @@ class AudioQueueManagerClass {
         await FileSystem.deleteAsync(targetFile, { idempotent: true });
       }
 
-      const activeBaseUrl = resolveBaseUrl(baseUrl);
-      const encodedText = encodeURIComponent(item.text);
-      const bilingualParam = item.bilingual ? '&bilingual=true' : '';
-      const downloadUrl = `${activeBaseUrl}/api/v1/voice/tts?text=${encodedText}&lang=${item.lang}${bilingualParam}`;
+      let deviceId = '';
+      try {
+        deviceId = await getDeviceId();
+      } catch {
+        deviceId = '';
+      }
 
-      const result = await FileSystem.downloadAsync(downloadUrl, targetFile);
+      const activeBaseUrl = resolveBaseUrl(baseUrl);
+      let grade = item.grade;
+      let tier = item.tier;
+      if (grade === undefined || tier === undefined) {
+        try {
+          const raw = await AsyncStorage.getItem('@tarkapp_user_profile');
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (grade === undefined) grade = Number(parsed.grade) || 1;
+            if (tier === undefined) tier = typeof parsed.tier === 'string' && parsed.tier ? parsed.tier : 'primary';
+          }
+        } catch {}
+        if (grade === undefined) grade = 1;
+        if (tier === undefined) tier = 'primary';
+      }
+
+      let httpStatus = 200;
+      if (textToSynthesize.length > 200) {
+        // Отправка POST запроса для фраз длиннее 200 символов
+        const postUrl = `${activeBaseUrl}/api/v1/voice/tts`;
+        const postHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+          ...(deviceId ? { 'X-Device-ID': deviceId } : {}),
+        };
+        const response = await fetch(postUrl, {
+          method: 'POST',
+          headers: postHeaders,
+          body: JSON.stringify({
+            text: textToSynthesize,
+            lang: item.lang,
+            bilingual: item.bilingual,
+            grade,
+            tier,
+            is_speech_text: isSpeechText,
+          }),
+        });
+
+        httpStatus = response.status;
+        if (!response.ok) {
+          console.warn(`[AudioQueue] Download POST failed for ${item.id}: HTTP ${response.status}`);
+          item.status = 'ERROR';
+          if (this.currentDownloadingId === item.id) {
+            this.currentDownloadingId = null;
+          }
+          this.notify();
+          this.flushErrorCallbacks(item, new Error(`Download POST returned HTTP ${response.status}`));
+          return false;
+        }
+
+        const blob = await response.blob();
+        const base64Data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const res = reader.result as string;
+            const b64 = res.indexOf(',') >= 0 ? res.split(',')[1] : res;
+            resolve(b64);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+
+        await FileSystem.writeAsStringAsync(targetFile, base64Data, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      } else {
+        const encodedText = encodeURIComponent(textToSynthesize);
+        const bilingualParam = item.bilingual ? '&bilingual=true' : '';
+        const deviceParam = deviceId ? `&device_id=${encodeURIComponent(deviceId)}` : '';
+        const gradeParam = grade ? `&grade=${grade}` : '';
+        const tierParam = tier ? `&tier=${encodeURIComponent(tier)}` : '';
+        const speechParam = isSpeechText ? '&is_speech_text=true' : '';
+        const downloadUrl = `${activeBaseUrl}/api/v1/voice/tts?text=${encodedText}&lang=${item.lang}${bilingualParam}${deviceParam}${gradeParam}${tierParam}${speechParam}`;
+
+        const result = await FileSystem.downloadAsync(
+          downloadUrl,
+          targetFile,
+          deviceId ? { headers: { 'X-Device-ID': deviceId } } : undefined
+        );
+        httpStatus = result.status;
+
+        if (result.status !== 200) {
+          console.warn(`[AudioQueue] Download GET failed for ${item.id}: HTTP ${result.status}`);
+          if (info.exists) {
+            await FileSystem.deleteAsync(targetFile, { idempotent: true });
+          }
+          item.status = 'ERROR';
+          if (this.currentDownloadingId === item.id) {
+            this.currentDownloadingId = null;
+          }
+          this.notify();
+          this.flushErrorCallbacks(item, new Error(`Download GET returned HTTP ${result.status}`));
+          return false;
+        }
+      }
+
       const downloadedInfo = await FileSystem.getInfoAsync(targetFile);
 
       if (
-        result.status === 200 &&
         downloadedInfo.exists &&
         typeof (downloadedInfo as any).size === 'number' &&
         (downloadedInfo as any).size >= this.MIN_AUDIO_BYTES
@@ -418,7 +670,7 @@ class AudioQueueManagerClass {
         return true;
       } else {
         const fileSize = (downloadedInfo.exists && typeof (downloadedInfo as any).size === 'number') ? (downloadedInfo as any).size : 0;
-        console.warn(`[AudioQueue] Download invalid for ${item.id}: HTTP status ${result.status}, size: ${fileSize} bytes`);
+        console.warn(`[AudioQueue] Download invalid for ${item.id}: HTTP status ${httpStatus}, size: ${fileSize} bytes`);
         if (downloadedInfo.exists) {
           await FileSystem.deleteAsync(targetFile, { idempotent: true });
         }
@@ -427,7 +679,7 @@ class AudioQueueManagerClass {
           this.currentDownloadingId = null;
         }
         this.notify();
-        this.flushErrorCallbacks(item, new Error(`Download returned HTTP ${result.status}, size: ${fileSize}`));
+        this.flushErrorCallbacks(item, new Error(`Download returned HTTP ${httpStatus}, size: ${fileSize}`));
         return false;
       }
     } catch (downloadErr: any) {
@@ -508,9 +760,13 @@ class AudioQueueManagerClass {
     lang: 'ru' | 'et',
     bilingual: boolean = false,
     callbacks?: AudioPlaybackCallbacks,
-    baseUrl: string = API_BASE_URL
+    baseUrl: string = API_BASE_URL,
+    grade?: number,
+    tier?: string,
+    speech_text?: string
   ) {
     const cleanText = this.normalizeText(text);
+    const speechText = speech_text ? this.normalizeText(speech_text) : cleanText;
 
     // 1. Toggle pause/resume if user taps currently active id
     if (this.currentlyPlayingId === id || getCurrentPlayingId() === id) {
@@ -541,7 +797,7 @@ class AudioQueueManagerClass {
 
     // Check existing item in queue
     let item = this.queue.get(id);
-    const targetFile = this.getFilePath(cleanText, lang, bilingual);
+    const targetFile = this.getFilePath(speechText, lang, bilingual);
 
     // Fast check: is it already on disk and non-empty?
     if (!item || item.status !== 'READY') {
@@ -549,7 +805,7 @@ class AudioQueueManagerClass {
         const info = await FileSystem.getInfoAsync(targetFile);
         if (info.exists && typeof (info as any).size === 'number' && (info as any).size >= this.MIN_AUDIO_BYTES) {
           if (!item) {
-            this.upsertItem({ id, text: cleanText, lang, bilingual, priority: 0 });
+            this.upsertItem({ id, text: cleanText, speech_text: speechText, lang, bilingual, priority: 0, grade, tier });
             item = this.queue.get(id);
           }
           if (item) {
@@ -568,30 +824,39 @@ class AudioQueueManagerClass {
       this.currentlyPlayingId = id;
       this.notify(); // Immediately change UI to playing state
 
-      await playTts(item.localUri, lang, id, {
-        onStart: () => {
-          this.currentlyPlayingId = id;
-          this.pendingUserPlayId = null;
-          this.notify();
-          callbacks?.onStart?.();
+      await playTts(
+        item.localUri,
+        lang,
+        id,
+        {
+          onStart: () => {
+            this.currentlyPlayingId = id;
+            this.pendingUserPlayId = null;
+            this.notify();
+            callbacks?.onStart?.();
+          },
+          onPause: () => {
+            callbacks?.onPause?.();
+          },
+          onResume: () => {
+            callbacks?.onResume?.();
+          },
+          onFinish: () => {
+            this.currentlyPlayingId = null;
+            this.notify();
+            callbacks?.onFinish?.();
+          },
+          onError: (err) => {
+            this.currentlyPlayingId = null;
+            this.notify();
+            callbacks?.onError?.(err);
+          },
         },
-        onPause: () => {
-          callbacks?.onPause?.();
-        },
-        onResume: () => {
-          callbacks?.onResume?.();
-        },
-        onFinish: () => {
-          this.currentlyPlayingId = null;
-          this.notify();
-          callbacks?.onFinish?.();
-        },
-        onError: (err) => {
-          this.currentlyPlayingId = null;
-          this.notify();
-          callbacks?.onError?.(err);
-        },
-      }, baseUrl);
+        baseUrl,
+        item?.bilingual ?? bilingual,
+        grade,
+        tier
+      );
       return;
     }
 
@@ -600,10 +865,13 @@ class AudioQueueManagerClass {
     this.notify();
 
     if (!item) {
-      this.upsertItem({ id, text: cleanText, lang, bilingual, priority: 0 });
+      this.upsertItem({ id, text: cleanText, speech_text: speechText, lang, bilingual, priority: 0, grade, tier });
       item = this.queue.get(id)!;
     } else {
       item.priority = 0; // Jump to the front of the queue
+      if (speech_text) item.speech_text = speechText;
+      if (grade !== undefined) item.grade = grade;
+      if (tier !== undefined) item.tier = tier;
       if (item.status === 'ERROR' || item.status === 'IDLE') {
         item.status = 'QUEUED';
       }
@@ -625,30 +893,41 @@ class AudioQueueManagerClass {
         this.notify();
 
         try {
-          await playTts(cleanText, lang, id, {
-            onStart: () => {
-              this.currentlyPlayingId = id;
-              this.pendingUserPlayId = null;
-              this.notify();
-              callbacks?.onStart?.();
+          await playTts(
+            cleanText,
+            lang,
+            id,
+            {
+              onStart: () => {
+                this.currentlyPlayingId = id;
+                this.pendingUserPlayId = null;
+                this.notify();
+                callbacks?.onStart?.();
+              },
+              onPause: () => {
+                callbacks?.onPause?.();
+              },
+              onResume: () => {
+                callbacks?.onResume?.();
+              },
+              onFinish: () => {
+                this.currentlyPlayingId = null;
+                this.notify();
+                callbacks?.onFinish?.();
+              },
+              onError: (playErr) => {
+                this.currentlyPlayingId = null;
+                this.notify();
+                callbacks?.onError?.(playErr);
+              },
             },
-            onPause: () => {
-              callbacks?.onPause?.();
-            },
-            onResume: () => {
-              callbacks?.onResume?.();
-            },
-            onFinish: () => {
-              this.currentlyPlayingId = null;
-              this.notify();
-              callbacks?.onFinish?.();
-            },
-            onError: (playErr) => {
-              this.currentlyPlayingId = null;
-              this.notify();
-              callbacks?.onError?.(playErr);
-            },
-          }, baseUrl, item?.bilingual ?? bilingual);
+            baseUrl,
+            item?.bilingual ?? bilingual,
+            grade,
+            tier,
+            speechText,
+            Boolean(speech_text && speech_text.trim())
+          );
         } catch (streamingErr) {
           this.currentlyPlayingId = null;
           this.notify();
@@ -670,30 +949,39 @@ class AudioQueueManagerClass {
       this.pendingUserPlayId = null;
       this.notify(); // Immediately change UI to playing state
 
-      await playTts(localUri, lang, id, {
-        onStart: () => {
-          this.currentlyPlayingId = id;
-          this.pendingUserPlayId = null;
-          this.notify();
-          callbacks?.onStart?.();
+      await playTts(
+        localUri,
+        lang,
+        id,
+        {
+          onStart: () => {
+            this.currentlyPlayingId = id;
+            this.pendingUserPlayId = null;
+            this.notify();
+            callbacks?.onStart?.();
+          },
+          onPause: () => {
+            callbacks?.onPause?.();
+          },
+          onResume: () => {
+            callbacks?.onResume?.();
+          },
+          onFinish: () => {
+            this.currentlyPlayingId = null;
+            this.notify();
+            callbacks?.onFinish?.();
+          },
+          onError: (err) => {
+            this.currentlyPlayingId = null;
+            this.notify();
+            callbacks?.onError?.(err);
+          },
         },
-        onPause: () => {
-          callbacks?.onPause?.();
-        },
-        onResume: () => {
-          callbacks?.onResume?.();
-        },
-        onFinish: () => {
-          this.currentlyPlayingId = null;
-          this.notify();
-          callbacks?.onFinish?.();
-        },
-        onError: (err) => {
-          this.currentlyPlayingId = null;
-          this.notify();
-          callbacks?.onError?.(err);
-        },
-      }, baseUrl);
+        baseUrl,
+        item?.bilingual ?? bilingual,
+        grade,
+        tier
+      );
     });
 
     // Fallback: If downloading to disk fails, stream live directly via playTts
@@ -709,30 +997,39 @@ class AudioQueueManagerClass {
         this.notify();
 
         try {
-          await playTts(cleanText, lang, id, {
-            onStart: () => {
-              this.currentlyPlayingId = id;
-              this.pendingUserPlayId = null;
-              this.notify();
-              callbacks?.onStart?.();
+          await playTts(
+            cleanText,
+            lang,
+            id,
+            {
+              onStart: () => {
+                this.currentlyPlayingId = id;
+                this.pendingUserPlayId = null;
+                this.notify();
+                callbacks?.onStart?.();
+              },
+              onPause: () => {
+                callbacks?.onPause?.();
+              },
+              onResume: () => {
+                callbacks?.onResume?.();
+              },
+              onFinish: () => {
+                this.currentlyPlayingId = null;
+                this.notify();
+                callbacks?.onFinish?.();
+              },
+              onError: (playErr) => {
+                this.currentlyPlayingId = null;
+                this.notify();
+                callbacks?.onError?.(playErr);
+              },
             },
-            onPause: () => {
-              callbacks?.onPause?.();
-            },
-            onResume: () => {
-              callbacks?.onResume?.();
-            },
-            onFinish: () => {
-              this.currentlyPlayingId = null;
-              this.notify();
-              callbacks?.onFinish?.();
-            },
-            onError: (playErr) => {
-              this.currentlyPlayingId = null;
-              this.notify();
-              callbacks?.onError?.(playErr);
-            },
-          }, baseUrl, item?.bilingual ?? bilingual);
+            baseUrl,
+            item?.bilingual ?? bilingual,
+            grade,
+            tier
+          );
         } catch (streamingErr) {
           this.currentlyPlayingId = null;
           this.notify();
@@ -759,6 +1056,37 @@ class AudioQueueManagerClass {
     this.isProcessing = false;
     this.currentDownloadingId = null;
     this.notify();
+  }
+
+  /**
+   * Forces complete playback termination, releases audio player via unloadAsync/release,
+   * and clears the preload queue when transitioning to background or leaving a lesson screen.
+   */
+  public async stopAndClear(): Promise<void> {
+    this.queueGeneration++;
+    try {
+      await this.stop();
+    } catch {}
+    this.queue.clear();
+    this.pendingUserPlayId = null;
+    this.currentlyPlayingId = null;
+    this.isProcessing = false;
+    this.currentDownloadingId = null;
+    this.notify();
+  }
+
+  /**
+   * Clears both in-memory queue and cached MP3 files on disk.
+   */
+  public async clearDiskCache(): Promise<void> {
+    this.clearQueue();
+    try {
+      await FileSystem.deleteAsync(this.cacheDir, { idempotent: true });
+      this.dirInitialized = false;
+      await this.ensureCacheDir();
+    } catch (e) {
+      console.warn('[AudioQueue] Failed clearing disk cache:', e);
+    }
   }
 }
 

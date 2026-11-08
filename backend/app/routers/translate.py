@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.config import settings
-from app.limiter import safe_limit, get_device_or_ip
+from app.limiter import safe_limit, get_device_or_ip, get_remote_address
 from app.models.translate import QuickTranslateRequest, QuickTranslateResponse
 from app.services.gemini_service import gemini_tutor_service
 from app.routers.license import verify_device_access
@@ -29,19 +29,34 @@ router = APIRouter(
     ),
 )
 @safe_limit("20/minute", key_func=get_device_or_ip)
+@safe_limit("40/minute", key_func=get_remote_address)
 async def quick_translate(
     payload: QuickTranslateRequest,
     request: Request = None,
 ) -> QuickTranslateResponse:
+    if request:
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > 20 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Размер запроса превышает лимит 20 МБ.",
+            )
+
     clean_text = (payload.text or "").strip()
     image_bytes = None
-    max_size_bytes = settings.MAX_IMAGE_SIZE_MB * 1024 * 1024
+    max_size_bytes = 10 * 1024 * 1024
+    max_b64_chars = int(max_size_bytes * 4 / 3) + 1024
 
     if payload.image_base64:
+        b64_clean = payload.image_base64
+        if "," in b64_clean:
+            b64_clean = b64_clean.split(",", 1)[1]
+        if len(b64_clean) > max_b64_chars:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Размер изображения превышает лимит {max_size_bytes // (1024 * 1024)} МБ.",
+            )
         try:
-            b64_clean = payload.image_base64
-            if "," in b64_clean:
-                b64_clean = b64_clean.split(",", 1)[1]
             image_bytes = base64.b64decode(b64_clean, validate=True)
         except Exception as e:
             raise HTTPException(
@@ -51,7 +66,7 @@ async def quick_translate(
         if image_bytes and len(image_bytes) > max_size_bytes:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"Размер изображения превышает лимит {settings.MAX_IMAGE_SIZE_MB} МБ.",
+                detail=f"Размер изображения превышает лимит {max_size_bytes // (1024 * 1024)} МБ.",
             )
 
     if not clean_text and not image_bytes:

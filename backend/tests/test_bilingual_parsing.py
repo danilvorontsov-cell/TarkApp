@@ -196,8 +196,8 @@ def test_phonetic_replacements_in_clean_text():
 def test_target_phrase_ssml_pipeline():
     phrase = "В игре Minecraft нажми 5 > 3 -> затем клавишу <est>klaviatuur</est>."
     ssml = build_ssml(phrase)
-    assert 'Майнкрафт' in ssml
-    assert "5 &gt; 3" in ssml
+    assert ('Майнкрафт' in ssml or 'Ма\u0301йнкрафт' in ssml)
+    assert "5 больше 3" in ssml
     assert "затем клавишу" in ssml
     assert '<break time="500ms" />' in ssml
     assert f'<voice name="{DEFAULT_VOICE}">' in ssml

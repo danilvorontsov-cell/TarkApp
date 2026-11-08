@@ -22,6 +22,7 @@ class Device(Base):
     free_reviews_left = Column(Integer, default=20, nullable=False)
     max_free_reviews = Column(Integer, default=20, nullable=False)
     last_review_date = Column(String, nullable=True)  # YYYY-MM-DD for daily limit reset
+    total_reviews_used = Column(Integer, default=0, nullable=False)
 
 
 class AccessKey(Base):
@@ -67,6 +68,17 @@ class LicenseStatusResponse(BaseModel):
     device_id: Optional[str] = None
     activated_key: Optional[str] = None
     package_name: Optional[str] = None
+    auth_token: Optional[str] = None
+
+
+class AuthTokenRequest(BaseModel):
+    nickname: Optional[str] = Field(default="Ученик", max_length=50)
+
+
+class AuthTokenResponse(BaseModel):
+    auth_token: str
+    user_id: str
+    nickname: str
 
 
 class KeyActivateRequest(BaseModel):
@@ -112,7 +124,7 @@ class InvoiceResponse(BaseModel):
     amount: str
     currency: str = "EUR"
     recipient: str = "Tark Systems OÜ"
-    iban: str = "EE000000000000000000"
+    iban: str = ""
     swift_bic: str = "CPNKEE2X"
     explanation: str
     pdf_download_url: str

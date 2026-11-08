@@ -4,9 +4,73 @@ import {
   AudioPlayer,
   AudioStatus,
 } from 'expo-audio';
-import { API_BASE_URL, resolveBaseUrl } from './api';
+import * as FileSystem from 'expo-file-system/legacy';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_BASE_URL, getDeviceId, resolveBaseUrl } from './api';
+
+export const AUDIO_CACHE_VERSION = 2;
+const CACHE_VERSION_KEY = '@tarkapp_audio_cache_version';
+
+export async function ensureAudioCacheDir(cacheDir: string): Promise<void> {
+  try {
+    const storedVersionStr = await AsyncStorage.getItem(CACHE_VERSION_KEY);
+    const storedVersion = storedVersionStr ? parseInt(storedVersionStr, 10) : 0;
+    const dirInfo = await FileSystem.getInfoAsync(cacheDir);
+
+    if (storedVersion < AUDIO_CACHE_VERSION) {
+      if (dirInfo.exists) {
+        await FileSystem.deleteAsync(cacheDir, { idempotent: true });
+      }
+      await FileSystem.makeDirectoryAsync(cacheDir, { intermediates: true });
+      await AsyncStorage.setItem(CACHE_VERSION_KEY, String(AUDIO_CACHE_VERSION));
+    } else if (!dirInfo.exists) {
+      await FileSystem.makeDirectoryAsync(cacheDir, { intermediates: true });
+    }
+  } catch (err) {
+    console.warn('Error in ensureAudioCacheDir:', err);
+  }
+}
+
+/**
+ * 64-bit FNV-1a hash with string length concatenation to eliminate collisions.
+ */
+export function getFileHash(str: string): string {
+  const clean = (str || '').replace(/^[«"“„\s]+|[»"”\s]+$/g, '').trim().toLowerCase();
+  const len = clean.length;
+  let hash = 14695981039346656037n;
+  const prime = 1099511628211n;
+  const mask = 0xffffffffffffffffn;
+
+  for (let i = 0; i < len; i++) {
+    hash ^= BigInt(clean.charCodeAt(i));
+    hash = (hash * prime) & mask;
+  }
+  return `${hash.toString(16)}_${len}`;
+}
+
+async function getStoredProfile(): Promise<{ grade: number; tier: string }> {
+  try {
+    const raw = await AsyncStorage.getItem('@tarkapp_user_profile');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        grade: Number(parsed.grade) || 1,
+        tier: typeof parsed.tier === 'string' && parsed.tier ? parsed.tier : 'primary',
+      };
+    }
+  } catch {}
+  return { grade: 1, tier: 'primary' };
+}
 
 export type PlaybackState = 'idle' | 'playing' | 'paused';
+
+export const InterruptionModeIOS = {
+  DoNotMix: 'doNotMix' as const,
+};
+
+export const InterruptionModeAndroid = {
+  DoNotMix: 'doNotMix' as const,
+};
 
 let activePlayer: AudioPlayer | null = null;
 let currentPlayingId: string | null = null;
@@ -14,6 +78,7 @@ let activeSubscription: { remove: () => void } | null = null;
 let playbackState: PlaybackState = 'idle';
 let currentCallbacks: AudioPlaybackCallbacks | null = null;
 let currentPlayToken: number = 0;
+let internalActionInProgress: boolean = false;
 
 export interface AudioPlaybackCallbacks {
   onStart?: () => void;
@@ -58,12 +123,15 @@ export function getCurrentPlayToken(): number {
 }
 
 /**
- * Configure audio mode for speech playback.
+ * Configure audio mode for speech playback with exclusive transient focus (DoNotMix)
+ * so OS audio interruptions (phone calls, headphone unplugging) deliver status updates.
  */
 async function ensureAudioMode() {
   try {
     await setAudioModeAsync({
       playsInSilentMode: true,
+      interruptionMode: InterruptionModeIOS.DoNotMix,
+      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
     });
   } catch (err) {
     console.warn('Failed to set audio mode in expo-audio:', err);
@@ -75,6 +143,7 @@ async function ensureAudioMode() {
  */
 export async function pauseTts(): Promise<void> {
   if (activePlayer && playbackState === 'playing') {
+    internalActionInProgress = true;
     try {
       if (typeof (activePlayer as any).pauseAsync === 'function') {
         await (activePlayer as any).pauseAsync();
@@ -86,6 +155,8 @@ export async function pauseTts(): Promise<void> {
       currentCallbacks?.onPause?.();
     } catch (e) {
       console.warn('Error pausing audio player:', e);
+    } finally {
+      internalActionInProgress = false;
     }
   }
 }
@@ -96,6 +167,7 @@ export const pause = pauseTts;
  */
 export async function resumeTts(): Promise<void> {
   if (activePlayer && playbackState === 'paused') {
+    internalActionInProgress = true;
     try {
       if (typeof (activePlayer as any).playAsync === 'function') {
         await (activePlayer as any).playAsync();
@@ -107,6 +179,8 @@ export async function resumeTts(): Promise<void> {
       currentCallbacks?.onResume?.();
     } catch (e) {
       console.warn('Error resuming audio player:', e);
+    } finally {
+      internalActionInProgress = false;
     }
   }
 }
@@ -157,6 +231,14 @@ export async function stopTts(incrementToken: boolean = true): Promise<void> {
         }
       }
 
+      if (typeof (activePlayer as any).unloadAsync === 'function') {
+        try {
+          await (activePlayer as any).unloadAsync();
+        } catch {
+          // ignore
+        }
+      }
+
       if (typeof activePlayer.release === 'function') {
         activePlayer.release();
       }
@@ -172,7 +254,7 @@ export const stop = stopTts;
 
 /**
  * Streams and plays TTS audio in memory via TarkApp Backend /api/v1/voice/tts
- * @param text The text to synthesize
+ * @param text The text to synthesize (or local file:// URI)
  * @param lang 'ru' for Russian tutor prompts, 'et' for Estonian vocabulary pronunciation
  * @param playbackId Unique ID (e.g. 'prompt' or word id) to track what is currently playing
  * @param callbacks Lifecycle callbacks (onStart, onPause, onResume, onFinish, onError)
@@ -185,7 +267,11 @@ export async function playTts(
   playbackId: string = 'prompt',
   callbacks?: AudioPlaybackCallbacks,
   baseUrl: string = API_BASE_URL,
-  bilingual: boolean = false
+  bilingual: boolean = false,
+  grade?: number,
+  tier?: string,
+  speechText?: string,
+  isSpeechText?: boolean
 ): Promise<AudioPlayer | null> {
   // If already active on this ID:
   if (activePlayer && currentPlayingId === playbackId) {
@@ -224,11 +310,102 @@ export async function playTts(
     text.startsWith('http://') ||
     text.startsWith('https://');
 
+  let deviceId = '';
+  if (!isDirectUri) {
+    try {
+      deviceId = await getDeviceId();
+    } catch {
+      deviceId = '';
+    }
+    if (thisToken !== currentPlayToken) {
+      return null;
+    }
+  }
+
   const activeBaseUrl = resolveBaseUrl(baseUrl);
-  const bilingualParam = bilingual ? '&bilingual=true' : '';
-  const url = isDirectUri
-    ? text
-    : `${activeBaseUrl}/api/v1/voice/tts?text=${encodeURIComponent(text.trim())}&lang=${lang}${bilingualParam}`;
+  let effectiveUri: string = text;
+
+  if (!isDirectUri) {
+    const cleanText = text.trim();
+    const synthText = (speechText && speechText.trim()) ? speechText.trim() : cleanText;
+    const effectiveIsSpeech = isSpeechText ?? Boolean(speechText && speechText.trim());
+
+    let effectiveGrade = grade;
+    let effectiveTier = tier;
+    if (effectiveGrade === undefined || effectiveTier === undefined) {
+      const stored = await getStoredProfile();
+      if (effectiveGrade === undefined) effectiveGrade = stored.grade;
+      if (effectiveTier === undefined) effectiveTier = stored.tier;
+    }
+
+    if (thisToken !== currentPlayToken) {
+      return null;
+    }
+
+    if (synthText.length > 200) {
+      // POST запрос для фраз длиннее 200 символов
+      const postUrl = `${activeBaseUrl}/api/v1/voice/tts`;
+      const response = await fetch(postUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(deviceId ? { 'X-Device-ID': deviceId } : {}),
+        },
+        body: JSON.stringify({
+          text: synthText,
+          lang,
+          bilingual,
+          grade: effectiveGrade,
+          tier: effectiveTier,
+          is_speech_text: effectiveIsSpeech,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`TTS POST returned HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const base64Data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const res = reader.result as string;
+          const b64 = res.indexOf(',') >= 0 ? res.split(',')[1] : res;
+          resolve(b64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      if (thisToken !== currentPlayToken) {
+        return null;
+      }
+
+      const cacheDir = `${FileSystem.cacheDirectory || ''}tarkapp_audio/`;
+      await ensureAudioCacheDir(cacheDir);
+
+      const hashStr = getFileHash(synthText);
+      const localFilePath = `${cacheDir}${lang}_${bilingual ? 'bi' : 'mono'}_${hashStr}.mp3`;
+      await FileSystem.writeAsStringAsync(localFilePath, base64Data, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      effectiveUri = localFilePath;
+    } else {
+      const bilingualParam = bilingual ? '&bilingual=true' : '';
+      const deviceParam = deviceId ? `&device_id=${encodeURIComponent(deviceId)}` : '';
+      const gradeParam = effectiveGrade ? `&grade=${effectiveGrade}` : '';
+      const tierParam = effectiveTier ? `&tier=${encodeURIComponent(effectiveTier)}` : '';
+      const speechParam = effectiveIsSpeech ? '&is_speech_text=true' : '';
+      effectiveUri = `${activeBaseUrl}/api/v1/voice/tts?text=${encodeURIComponent(synthText)}&lang=${lang}${bilingualParam}${deviceParam}${gradeParam}${tierParam}${speechParam}`;
+    }
+  }
+
+  const source = effectiveUri.startsWith('file://')
+    ? effectiveUri
+    : {
+        uri: effectiveUri,
+        headers: deviceId ? { 'X-Device-ID': deviceId } : undefined,
+      };
 
   try {
     if (thisToken !== currentPlayToken) {
@@ -238,7 +415,7 @@ export async function playTts(
     currentPlayingId = playbackId;
     currentCallbacks = callbacks || null;
 
-    const player = createAudioPlayer(url);
+    const player = createAudioPlayer(source);
 
     // If another sound was triggered during player creation, release and bail
     if (thisToken !== currentPlayToken) {
@@ -254,10 +431,38 @@ export async function playTts(
 
     callbacks?.onStart?.();
 
+    let hasStartedPlaying = false;
+
     activeSubscription = player.addListener('playbackStatusUpdate', (status: AudioStatus) => {
       if (thisToken !== currentPlayToken) return;
+
+      if (status.playing) {
+        hasStartedPlaying = true;
+        if (playbackState !== 'playing' && !internalActionInProgress) {
+          playbackState = 'playing';
+          notifyStateListeners();
+          currentCallbacks?.onResume?.();
+        }
+        return;
+      }
+
       if (status.didJustFinish) {
         stopTts();
+        return;
+      }
+
+      // External OS audio interruption (e.g. incoming call, headphones unplugged, audio focus lost):
+      // Synchronize UI state back to paused (ready-to-resume) so button never freezes in playing state.
+      if (
+        hasStartedPlaying &&
+        !status.playing &&
+        !status.isBuffering &&
+        playbackState === 'playing' &&
+        !internalActionInProgress
+      ) {
+        playbackState = 'paused';
+        notifyStateListeners();
+        currentCallbacks?.onPause?.();
       }
     });
 

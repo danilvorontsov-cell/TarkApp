@@ -47,7 +47,7 @@ export const FeedbackScreen: React.FC<FeedbackScreenProps> = ({
         (Platform.OS === 'android' ? 'Android Device' : Platform.OS === 'ios' ? 'Apple Device' : 'Unknown');
 
       const osVersion = `${Platform.OS} ${Device.osVersion || Platform.Version || ''}`.trim();
-      const appVersion = Application.nativeApplicationVersion || '1.2.1';
+      const appVersion = Application.nativeApplicationVersion || '1.3.2';
       const lastReqId = getLastRequestId() || undefined;
       const clientTime = new Date().toISOString();
 

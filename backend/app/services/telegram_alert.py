@@ -389,6 +389,21 @@ def is_admin_user(user_id: Optional[Union[str, int]]) -> bool:
     return str(user_id).strip() == str(settings.ADMIN_TELEGRAM_ID).strip()
 
 
+def _resolve_trusted_admin_chat_id(incoming_chat_id: Optional[Union[str, int]]) -> Optional[str]:
+    """
+    Strictly resolves the destination chat_id for sensitive admin command outputs (/gen, /stats).
+    Ignores arbitrary untrusted chat.id values from incoming webhook JSON payloads.
+    """
+    admin_id = str(settings.ADMIN_TELEGRAM_ID or "").strip()
+    configured_chat = str(settings.telegram_chat_id or "").strip()
+    trusted_ids = {cid for cid in (admin_id, configured_chat) if cid}
+    if not trusted_ids:
+        return None
+    if incoming_chat_id is not None and str(incoming_chat_id).strip() in trusted_ids:
+        return str(incoming_chat_id).strip()
+    return admin_id or configured_chat
+
+
 async def handle_admin_telegram_command(
     text: str,
     user_id: Optional[Union[str, int]] = None,
@@ -401,13 +416,11 @@ async def handle_admin_telegram_command(
     - /gen <count> <days>: Generates access keys in DB and returns them formatted with <code>KEY</code>.
     - /stats: Returns count of free, active, expired keys and total registered device_id count.
     - /help or /start: Returns usage instructions.
-    Rejects unauthorized users by showing their Telegram ID for easy configuration.
+    Sends admin command outputs strictly to trusted ADMIN_TELEGRAM_ID / TELEGRAM_CHAT_ID.
     """
     clean_text = (text or "").strip()
     if not clean_text.startswith("/"):
         return {"handled": False}
-
-    target_chat = chat_id or user_id or settings.telegram_chat_id
 
     # 1. Authorization check
     if not is_admin_user(user_id):
@@ -418,12 +431,12 @@ async def handle_admin_telegram_command(
             f"Ваш Telegram ID: <code>{html.escape(raw_uid)}</code>\n\n"
             f"Для авторизации укажите этот ID в переменной <code>ADMIN_TELEGRAM_ID</code> в файле <code>backend/.env</code>."
         )
-        if target_chat:
+        if chat_id:
             await send_telegram_message(
                 text=reply_msg,
+                chat_id=chat_id,
                 parse_mode="HTML",
                 message_thread_id=message_thread_id,
-                chat_id=target_chat,
             )
         return {
             "handled": True,
@@ -431,6 +444,18 @@ async def handle_admin_telegram_command(
             "error": "UNAUTHORIZED",
             "reply": reply_msg,
         }
+
+    # Strictly pin destination chat to trusted ADMIN_TELEGRAM_ID / TELEGRAM_CHAT_ID (ignore forged chat_id)
+    target_chat = _resolve_trusted_admin_chat_id(chat_id)
+    if incoming_mismatch := (
+        chat_id is not None
+        and target_chat is not None
+        and str(chat_id).strip() != target_chat
+    ):
+        logger.warning(
+            f"[TELEGRAM] Ignored untrusted chat_id={chat_id} for admin command '{clean_text}'; routing strictly to trusted {target_chat}."
+        )
+        message_thread_id = None
 
     # 2. Parse command name and arguments (support /gen@bot_name syntax)
     tokens = clean_text.split()

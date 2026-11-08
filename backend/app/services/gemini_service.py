@@ -11,6 +11,7 @@ from app.config import settings
 from app.models.page_analysis import (
     AgeTier,
     AGE_TIER_DEFAULT_INTERESTS,
+    GeminiPageAnalysisSchema,
     MoreExamplesResponse,
     PageAnalysisResponse,
     UserProfile,
@@ -20,6 +21,7 @@ from app.models.page_analysis import (
 from app.models.translate import QuickTranslateResponse
 from app.prompts.tutor_prompt import (
     ESTONIAN_TUTOR_SYSTEM_PROMPT,
+    MORE_EXAMPLES_SYSTEM_PROMPT,
     build_tutor_user_prompt,
 )
 
@@ -105,7 +107,7 @@ class GeminiTutorService:
                 config = types.GenerateContentConfig(
                     system_instruction=ESTONIAN_TUTOR_SYSTEM_PROMPT,
                     response_mime_type="application/json",
-                    response_schema=PageAnalysisResponse,
+                    response_schema=GeminiPageAnalysisSchema,
                     temperature=0.2 if attempt == 0 else 0.1,
                 )
 
@@ -118,6 +120,8 @@ class GeminiTutorService:
                 # Check if response.parsed was populated by the SDK
                 if hasattr(response, "parsed") and isinstance(response.parsed, PageAnalysisResponse):
                     result = response.parsed
+                elif hasattr(response, "parsed") and isinstance(response.parsed, GeminiPageAnalysisSchema):
+                    result = PageAnalysisResponse.model_validate(response.parsed.model_dump())
                 else:
                     # Otherwise parse response.text
                     raw_text = response.text or ""
@@ -566,7 +570,7 @@ class GeminiTutorService:
 
         try:
             config = types.GenerateContentConfig(
-                system_instruction=ESTONIAN_TUTOR_SYSTEM_PROMPT,
+                system_instruction=MORE_EXAMPLES_SYSTEM_PROMPT,
                 response_mime_type="application/json",
                 response_schema=MoreExamplesResponse,
                 temperature=0.3,

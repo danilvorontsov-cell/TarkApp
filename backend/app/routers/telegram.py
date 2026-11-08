@@ -24,18 +24,26 @@ async def telegram_webhook(
     """
     Receives incoming webhook updates from Telegram Bot API
     and dispatches administrative commands (/gen, /stats, /help).
-    Validates X-Telegram-Bot-Api-Secret-Token when TELEGRAM_WEBHOOK_SECRET is configured,
-    and strips sensitive generated key material from the HTTP response body.
+    Strictly fail-closed: returns HTTP 503 if TELEGRAM_WEBHOOK_SECRET is not configured,
+    and HTTP 403 if X-Telegram-Bot-Api-Secret-Token does not match via constant-time compare.
     """
     expected_secret = (settings.TELEGRAM_WEBHOOK_SECRET or "").strip()
-    if expected_secret:
-        provided_secret = (x_telegram_bot_api_secret_token or "").strip()
-        if not provided_secret or not secrets.compare_digest(provided_secret, expected_secret):
-            logger.warning("[TELEGRAM] Rejected webhook call due to invalid or missing secret token.")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Invalid Telegram webhook secret token.",
-            )
+    if not expected_secret:
+        logger.error("[TELEGRAM] Webhook rejected: TELEGRAM_WEBHOOK_SECRET is not configured in .env (fail-closed).")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telegram webhook secret is not configured.",
+        )
+
+    provided_secret = (x_telegram_bot_api_secret_token or "").strip()
+    if not provided_secret or not secrets.compare_digest(
+        provided_secret.encode("utf-8"), expected_secret.encode("utf-8")
+    ):
+        logger.warning("[TELEGRAM] Rejected webhook call due to invalid or missing secret token.")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid Telegram webhook secret token.",
+        )
 
     try:
         result = await process_telegram_update(update, db=db)
@@ -48,3 +56,21 @@ async def telegram_webhook(
     except Exception as e:
         logger.error(f"[TELEGRAM] Webhook processing exception: {e}")
         return {"ok": False, "error": "Webhook processing error"}
+
+
+legacy_telegram_router = APIRouter(prefix="/api/telegram", tags=["Telegram"])
+
+
+@legacy_telegram_router.post("/webhook")
+async def telegram_webhook_legacy_alias(
+    update: Dict[str, Any],
+    x_telegram_bot_api_secret_token: Optional[str] = Header(
+        None, alias="X-Telegram-Bot-Api-Secret-Token"
+    ),
+    db: Session = Depends(get_db),
+):
+    return await telegram_webhook(
+        update=update,
+        x_telegram_bot_api_secret_token=x_telegram_bot_api_secret_token,
+        db=db,
+    )

@@ -3,10 +3,20 @@ import { LicenseStatus, PlanItem, BankDetails } from '../services/api';
 export const DEFAULT_MAX_FREE_REVIEWS = 20;
 export const DEFAULT_TRIAL_DAYS = 14;
 
+/**
+ * Feature flag controlling direct SEPA/IBAN invoicing UI inside the mobile app.
+ * Defaults to true for Closed Beta; set EXPO_PUBLIC_ENABLE_DIRECT_INVOICE="false" for App Store / Google Play builds.
+ */
+export const ENABLE_DIRECT_INVOICE: boolean =
+  typeof process !== 'undefined' &&
+  process.env?.EXPO_PUBLIC_ENABLE_DIRECT_INVOICE !== undefined
+    ? process.env.EXPO_PUBLIC_ENABLE_DIRECT_INVOICE.toLowerCase() !== 'false'
+    : true;
+
 export const DEFAULT_BANK_DETAILS: BankDetails = {
   recipient_name: 'Tark Systems OÜ',
-  iban: 'EE000000000000000000',
-  swift_bic: 'CPNKEE2X',
+  iban: (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_BANK_IBAN) || '',
+  swift_bic: (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_BANK_SWIFT) || 'CPNKEE2X',
 };
 
 export const DEFAULT_PLANS: PlanItem[] = [

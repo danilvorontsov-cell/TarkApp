@@ -11,8 +11,252 @@
 6. Формирование билингвального SSML-документа с переключением дикторов между ru-RU и et-EE.
 """
 
+import json
+import logging
+from pathlib import Path
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+# ==============================================================================
+# 0. КОНФИГУРАЦИОННЫЙ СЛОВАРЬ (tts_lexicon.json)
+# ==============================================================================
+
+_LEXICON_DATA: Optional[Dict[str, Dict[str, str]]] = None
+_COMPILED_ESTONIAN_UNITS: Optional[List[Tuple[re.Pattern, str]]] = None
+_COMPILED_RUSSIAN_HOMOGRAPHS: Optional[List[Tuple[re.Pattern, str]]] = None
+_COMPILED_BRAND_FALLBACKS: Optional[List[Tuple[re.Pattern, str]]] = None
+
+
+def get_tts_lexicon() -> Dict[str, Dict[str, str]]:
+    """Возвращает кэшированный словарь tts_lexicon.json."""
+    return _load_tts_lexicon()
+
+
+def _load_tts_lexicon() -> Dict[str, Dict[str, str]]:
+    """
+    Загружает правила из tts_lexicon.json при старте и кэширует скомпилированные регулярки в памяти.
+    """
+    global _LEXICON_DATA, _COMPILED_ESTONIAN_UNITS, _COMPILED_RUSSIAN_HOMOGRAPHS, _COMPILED_BRAND_FALLBACKS
+
+    if _LEXICON_DATA is not None:
+        return _LEXICON_DATA
+
+    candidate_paths = [
+        Path(__file__).resolve().parent.parent / "config" / "tts_lexicon.json",
+        Path("backend/app/config/tts_lexicon.json"),
+        Path("app/config/tts_lexicon.json"),
+    ]
+
+    loaded_data: Dict[str, Any] = {}
+    for p in candidate_paths:
+        if p.exists() and p.is_file():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    loaded_data = json.load(f)
+                break
+            except Exception as e:
+                logger.warning(f"Failed to read tts_lexicon.json from {p}: {e}")
+
+    _LEXICON_DATA = loaded_data or {}
+
+    # 1. Estonian Units
+    compiled_est: List[Tuple[re.Pattern, str]] = []
+    for pattern_str, repl in _LEXICON_DATA.get("estonian_units", {}).items():
+        try:
+            compiled_est.append((re.compile(pattern_str, re.IGNORECASE), repl))
+        except Exception as e:
+            logger.warning(f"Failed to compile estonian unit regex '{pattern_str}': {e}")
+    _COMPILED_ESTONIAN_UNITS = compiled_est
+
+    # 2. Brand Fallbacks
+    compiled_brands: List[Tuple[re.Pattern, str]] = []
+    for pattern_str, repl in _LEXICON_DATA.get("brand_fallbacks", {}).items():
+        try:
+            compiled_brands.append((re.compile(pattern_str), repl))
+        except Exception as e:
+            logger.warning(f"Failed to compile brand fallback regex '{pattern_str}': {e}")
+    _COMPILED_BRAND_FALLBACKS = compiled_brands
+
+    # 3. Russian Stress Homographs
+    compiled_homo: List[Tuple[re.Pattern, str]] = []
+    for pattern_str, repl in _LEXICON_DATA.get("russian_stress_homographs", {}).items():
+        try:
+            compiled_homo.append((re.compile(pattern_str, re.IGNORECASE), repl))
+        except Exception as e:
+            logger.warning(f"Failed to compile homograph regex '{pattern_str}': {e}")
+    _COMPILED_RUSSIAN_HOMOGRAPHS = compiled_homo
+
+    return _LEXICON_DATA
+
+
+def apply_phonetic_substitutions(text: str, is_estonian: bool = False) -> str:
+    """
+    Двухконтурная нормализация по правилам tts_lexicon.json:
+    - Если текст эстонский (is_estonian=True):
+      Применяет normalize_estonian_measurement_units (учет падежей ед.ч./партитива,
+      страницы lk, привязка к цифрам) и правила estonian_units из tts_lexicon.json.
+    - Если текст русский (is_estonian=False):
+      а) brand_fallbacks: замена иностранных брендов на русскую фонетику с ударением (Roblox -> Ро́блокс, Minecraft -> Ма́йнкрафт и т.д.).
+      б) russian_stress_homographs: расстановка знака ударения \u0301 над омографами (вычита́ем, прибавля́ем, де́лим, велопутеше́ствие, в два ша́га, зна́ком, со зна́ком и т.д.).
+    """
+    if not text:
+        return ""
+
+    _load_tts_lexicon()
+    t = text
+
+    if is_estonian:
+        t = normalize_estonian_measurement_units(t)
+        if _COMPILED_ESTONIAN_UNITS:
+            for pattern, repl in _COMPILED_ESTONIAN_UNITS:
+                t = pattern.sub(repl, t)
+        return t
+
+    # Русский контекст:
+    # 1. Brand fallbacks
+    if _COMPILED_BRAND_FALLBACKS:
+        for pattern, repl in _COMPILED_BRAND_FALLBACKS:
+            t = pattern.sub(repl, t)
+
+    # 2. Russian stress homographs
+    if _COMPILED_RUSSIAN_HOMOGRAPHS:
+        for pattern, repl in _COMPILED_RUSSIAN_HOMOGRAPHS:
+            def _repl_homo(m, r=repl):
+                orig = m.group(0)
+                if '\\1' in r or '\\g<' in r:
+                    res = m.expand(r)
+                else:
+                    res = r
+                if orig and orig[0].isupper():
+                    return res[0].upper() + res[1:]
+                return res[0].lower() + res[1:]
+            t = pattern.sub(_repl_homo, t)
+
+    # Подстраховка омографа «шага» (на 2 шага / 2 шага / в 2 шага -> ша́га)
+    def _repl_shaga_local(m):
+        prefix = m.group(1)
+        word = m.group(2)
+        shaga_stressed = "Ша\u0301га" if (word and word[0].isupper()) else "ша\u0301га"
+        return f"{prefix}{shaga_stressed}"
+
+    t = re.sub(
+        r'(?i)\b((?:(?:в|во|за|на|до|через|всего|ровно)\s+)?(?:два|две|три|четыре|два-три|2|3|4)\s+)(шага)\b',
+        _repl_shaga_local,
+        t,
+    )
+
+    # Дополнительная подстраховка: со зна́ком / знако́м с темой, зна́к, по три́, в два кувши́на, пёсик, раздели́, раздели́те
+    t = _apply_znakom_homograph(t)
+    t = re.sub(r'(?i)\bзнак(?![\u0301])\b', 'зна\u0301к', t)
+    t = re.sub(r'(?i)\bпо\s+тр[её]х\b', 'по три\u0301', t)
+    t = re.sub(r'(?i)\bв\s+две\s+кувшина\b', 'в два кувши\u0301на', t)
+    t = re.sub(r'(?i)\bпесик([а-яё]*)\b', r'пёсик\1', t)
+    t = re.sub(r'(?i)\bраздели(?![\u0301])\b', lambda m: "Раздели\u0301" if m.group(0)[0].isupper() else "раздели\u0301", t)
+    t = re.sub(r'(?i)\bразделите(?![\u0301])\b', lambda m: "Раздели\u0301те" if m.group(0)[0].isupper() else "раздели\u0301те", t)
+
+    # Дедупликация символов ударения
+    t = re.sub(r'\u0301+', '\u0301', t)
+
+    # Исправление ошибочной формы «четырёх» для неодушевленных существительных -> «четыре»
+    def _repl_chetyre(m):
+        orig = m.group(0)
+        noun = m.group(1)
+        word = "Четыре" if orig[0].isupper() else "четыре"
+        return f"{word} {noun}"
+
+    t = re.sub(
+        r'(?i)\bчетыр[её]х\s+(кувшин[а-я]*|банк[а-я]*|яблок[а-я]*|мешк[а-я]*|предмет[а-я]*|кубик[а-я]*|угол[а-я]*|сторон[а-я]*|групп[а-я]*)\b',
+        _repl_chetyre,
+        t,
+    )
+
+    return t
+
+
+def _apply_znakom_homograph(text: str) -> str:
+    """
+    Разрешает омограф «знаком» в зависимости от контекста:
+    - Математический знак (творительный падеж от «знак»): «со зна́ком», «перед зна́ком», «зна́ком плюс/минус» -> зна́ком.
+    - Краткое прилагательное («знаком с темой», «ты уже знаком»): ударение на второй слог -> знако́м.
+    Строго идемпотентна (не перезаписывает уже расставленное ударение \\u0301).
+    """
+    if not text:
+        return ""
+
+    def _cap(orig_word: str, target_lower: str) -> str:
+        return target_lower[0].upper() + target_lower[1:] if orig_word[0].isupper() else target_lower
+
+    _znakom_sign = "зна\u0301ком"
+    _znakom_adj = "знако\u0301м"
+    t = text
+
+    # 1. Предлоги творительного падежа перед словом «знаком» -> зна́ком
+    t = re.sub(
+        r'(?i)\b(со|под|над|перед|за|между)\s+(знаком)(?![\u0301])\b',
+        lambda m: f"{m.group(1)} {_cap(m.group(2), _znakom_sign)}",
+        t,
+    )
+
+    # 2. Определения при существительном «знаком» -> зна́ком
+    t = re.sub(
+        r'(?i)\b(математическим|арифметическим|противоположным|обратным|таким|этим|каким|нужным|другим|тем\s+же)\s+(знаком)(?![\u0301])\b',
+        lambda m: f"{m.group(1)} {_cap(m.group(2), _znakom_sign)}",
+        t,
+    )
+
+    # 3. «знаком» перед названием математического знака или символом -> зна́ком
+    t = re.sub(
+        r'(?i)\b(знаком)(?![\u0301])\b(?=\s+(?:плюс|минус|равно|умножения|умножить|умно\u0301жить|деления|разделить|сложения|вычитания|равенства|неравенства|больше|меньше|корня|вопроса|восклицания|[+\-−=<>:÷·•*×«"“]))',
+        lambda m: _cap(m.group(1), _znakom_sign),
+        t,
+    )
+
+    # 4. Краткое прилагательное «знаком с ...» / «уже знаком» -> знако́м
+    t = re.sub(
+        r'(?i)\b(знаком)(?![\u0301])\b(?=\s+(?:с|со|ли|нам|вам|тебе|мне|ему|ей|им)\b)',
+        lambda m: _cap(m.group(1), _znakom_adj),
+        t,
+    )
+    t = re.sub(
+        r'(?i)\b(ты|вы|он|не|уже|хорошо|близко|давно|лично)\s+(знаком)(?![\u0301])\b',
+        lambda m: f"{m.group(1)} {_cap(m.group(2), _znakom_adj)}",
+        t,
+    )
+
+    return t
+
+
+def is_chemical_formula_or_acronym(text: str) -> bool:
+    """
+    Определяет химические формулы и научно-технические аббревиатуры (CO2, H2O, O2, NaCl, H2SO4, DNA, ATP),
+    чтобы исключить их ложное автоопределение как эстонского языка.
+    """
+    if not text:
+        return False
+    cleaned = text.strip().strip("()[]{}\"'«»“”„")
+    if not cleaned or re.search(r'[а-яА-ЯёЁõäöüšžÕÄÖÜŠŽ]', cleaned):
+        return False
+
+    tokens = [tok.strip(".,;:!?") for tok in cleaned.split() if tok.strip(".,;:!?")]
+    if not tokens:
+        return False
+
+    for tok in tokens:
+        is_chem = bool(
+            re.fullmatch(r'\d*(?:[A-Z][a-z]?\d*[₀-₉²³⁺⁻]*){1,6}', tok)
+            and (re.search(r'[0-9₀-₉²³⁺⁻]', tok) or len(re.findall(r'[A-Z]', tok)) >= 2)
+        )
+        is_acronym = bool(re.fullmatch(r'[A-Z]{2,6}|pH', tok))
+        if not (is_chem or is_acronym):
+            return False
+
+    return True
+
+
+# Предварительная загрузка лексикона при старте модуля
+_load_tts_lexicon()
 
 
 # ==============================================================================
@@ -337,6 +581,52 @@ def int_to_russian_nominative(n: int) -> str:
     return int_to_russian_cardinal(n, gender="m")
 
 
+RUSSIAN_STRESSED_NUMERALS: Dict[int, str] = {
+    0: "ноль",
+    1: "оди\u0301н",
+    2: "два",
+    3: "три",
+    4: "четы\u0301ре",
+    5: "пять",
+    6: "шесть",
+    7: "семь",
+    8: "во\u0301семь",
+    9: "де\u0301вять",
+    10: "де\u0301сять",
+    11: "оди\u0301ннадцать",
+    12: "двена\u0301дцать",
+    13: "трина\u0301дцать",
+    14: "четы\u0301рнадцать",
+    15: "пятна\u0301дцать",
+    16: "шестна\u0301дцать",
+    17: "семна\u0301дцать",
+    18: "восемна\u0301дцать",
+    19: "девятна\u0301дцать",
+    20: "два\u0301дцать",
+    30: "три\u0301дцать",
+    40: "со\u0301рок",
+    50: "пятьдеся\u0301т",
+    60: "шестьдеся\u0301т",
+    70: "се\u0301мьдесят",
+    80: "во\u0301семьдесят",
+    90: "девяно\u0301сто",
+    100: "сто",
+}
+
+
+def int_to_russian_stressed_nominative(n: int) -> str:
+    """Возвращает число 0-100 в именительном падеже с корректно расставленными знаками ударения."""
+    if n in RUSSIAN_STRESSED_NUMERALS:
+        return RUSSIAN_STRESSED_NUMERALS[n]
+    if 21 <= n <= 99:
+        tens = (n // 10) * 10
+        units = n % 10
+        if units == 0:
+            return RUSSIAN_STRESSED_NUMERALS.get(tens, str(tens))
+        return f"{RUSSIAN_STRESSED_NUMERALS.get(tens, '')} {RUSSIAN_STRESSED_NUMERALS.get(units, '')}".strip()
+    return int_to_russian_cardinal(n)
+
+
 MATH_VAR_MAP = {
     "x": "икс", "X": "икс",
     "y": "игрек", "Y": "игрек",
@@ -345,25 +635,183 @@ MATH_VAR_MAP = {
     "c": "цэ", "C": "цэ",
 }
 
+RUSSIAN_FRACTION_DENOMINATORS: Dict[int, Tuple[str, str]] = {
+    2: ("вторая", "вторых"),
+    3: ("третья", "третьих"),
+    4: ("четвертая", "четвертых"),
+    5: ("пятая", "пятых"),
+    6: ("шестая", "шестых"),
+    7: ("седьмая", "седьмых"),
+    8: ("восьмая", "восьмых"),
+    9: ("девятая", "девятых"),
+    10: ("десятая", "десятых"),
+    11: ("одиннадцатая", "одиннадцатых"),
+    12: ("двенадцатая", "двенадцатых"),
+    15: ("пятнадцатая", "пятнадцатых"),
+    16: ("шестнадцатая", "шестнадцатых"),
+    20: ("двадцатая", "двадцатых"),
+    25: ("двадцать пятая", "двадцать пятых"),
+    50: ("пятидесятая", "пятидесятых"),
+    100: ("сотая", "сотых"),
+    1000: ("тысячная", "тысячных"),
+}
+
+
+def _russian_decimal_to_words(whole_str: str, frac_str: str) -> str:
+    """Преобразует десятичную дробь (3,5 -> три целых пять десятых) в корректную русскую форму."""
+    try:
+        whole = int(whole_str)
+        frac = int(frac_str)
+    except ValueError:
+        return f"{whole_str} запятая {frac_str}"
+
+    if whole > 999999 or len(frac_str) > 3:
+        return f"{whole_str} запятая {frac_str}"
+
+    whole_unit = "целая" if (whole % 10 == 1 and whole % 100 != 11) else "целых"
+    whole_words = f"{int_to_russian_cardinal(whole, 'f')} {whole_unit}"
+
+    denom_map = {
+        1: ("десятая", "десятых"),
+        2: ("сотая", "сотых"),
+        3: ("тысячная", "тысячных"),
+    }
+    sg_form, pl_form = denom_map[len(frac_str)]
+    frac_unit = sg_form if (frac % 10 == 1 and frac % 100 != 11) else pl_form
+    frac_words = f"{int_to_russian_cardinal(frac, 'f')} {frac_unit}"
+    return f"{whole_words} {frac_words}"
+
+
+def normalize_celsius_expressions(text: str) -> str:
+    """
+    Нормализует температуру в градусах Цельсия в русском контексте:
+    '-5 °C' -> 'минус пять градусов Цельсия', '1 °C' -> 'один градус Цельсия', '+20 °C' -> 'плюс двадцать градусов Цельсия'.
+    Поддерживает как латинскую 'C', так и кириллическую 'С'.
+    """
+    if not text or "°" not in text:
+        return text or ""
+
+    def _sign_prefix(sign_str: Optional[str]) -> str:
+        if not sign_str:
+            return ""
+        return "минус " if sign_str in ("-", "−") else "плюс "
+
+    def _repl_dec_c(m):
+        prefix = _sign_prefix(m.group(1))
+        dec_words = _russian_decimal_to_words(m.group(2), m.group(3))
+        return f"{prefix}{dec_words} градуса Цельсия"
+
+    t = re.sub(
+        r'(?<![0-9a-zA-Zа-яА-ЯёЁ])([+\-−])?\s*(\d{1,4}),(\d{1,3})\s*°\s*[CС](?![a-zA-Zа-яА-ЯёЁ])',
+        _repl_dec_c,
+        text,
+    )
+
+    def _repl_int_c(m):
+        prefix = _sign_prefix(m.group(1))
+        n = int(m.group(2))
+        num_words = int_to_russian_cardinal(n, "m")
+        last_two = n % 100
+        last_one = n % 10
+        if last_one == 1 and last_two != 11:
+            deg_word = "градус"
+        elif 2 <= last_one <= 4 and not (12 <= last_two <= 14):
+            deg_word = "градуса"
+        else:
+            deg_word = "градусов"
+        return f"{prefix}{num_words} {deg_word} Цельсия"
+
+    t = re.sub(
+        r'(?<![0-9a-zA-Zа-яА-ЯёЁ])([+\-−])?\s*(\d{1,4})\s*°\s*[CС](?![a-zA-Zа-яА-ЯёЁ])',
+        _repl_int_c,
+        t,
+    )
+    return t
+
+
+def normalize_russian_decimals(text: str) -> str:
+    """
+    Защищает и озвучивает десятичные дроби до запуска пунктуационных регулярок:
+    '3,5' -> 'три целых пять десятых', '0,25' -> 'ноль целых двадцать пять сотых'.
+    """
+    if not text:
+        return ""
+
+    # Обеспечиваем пробелы вокруг бинарного минуса/плюса рядом с десятичной дробью (3,5-2,5 -> 3,5 - 2,5)
+    t = re.sub(r'(?<=\d,\d)\s*([+\-−=])\s*(?=\d)', r' \1 ', text)
+    t = re.sub(r'(?<=\d)\s*([+\-−=])\s*(?=\d+,\d)', r' \1 ', t)
+
+    return re.sub(
+        r'(?<![0-9,])(\d{1,6}),(\d{1,6})(?![0-9,])',
+        lambda m: _russian_decimal_to_words(m.group(1), m.group(2)),
+        t,
+    )
+
+
+def normalize_russian_fractions(text: str) -> str:
+    """
+    Озвучивает компактные обыкновенные дроби до запуска слэш-регулярок:
+    '1/2' -> 'одна вторая', '1/4' -> 'одна четвертая', '3/4' -> 'три четвертых'.
+    Не затрагивает уравнения деления с пробелами или знаком '=' ('10 / 2 = 5').
+    """
+    if not text or "/" not in text:
+        return text or ""
+
+    def _repl_frac(m):
+        num = int(m.group(1))
+        denom = int(m.group(2))
+        if num == 0 or denom < 2:
+            return m.group(0)
+        forms = RUSSIAN_FRACTION_DENOMINATORS.get(denom)
+        if not forms:
+            ord_forms = ORDINAL_FORMS.get(denom)
+            if ord_forms and num % 10 == 1 and num % 100 != 11:
+                return f"{int_to_russian_cardinal(num, 'f')} {ord_forms[4]}"
+            return m.group(0)
+        denom_word = forms[0] if (num % 10 == 1 and num % 100 != 11) else forms[1]
+        return f"{int_to_russian_cardinal(num, 'f')} {denom_word}"
+
+    return re.sub(
+        r'(?<![:/\w\d.])\b(\d{1,2})/(\d{1,4})\b(?![:/\w\d.])(?!\s*=)',
+        _repl_frac,
+        text,
+    )
+
 
 def normalize_math_expressions(text: str) -> str:
     """
     Нормализует математические формулы, изолированные цифры и знаки в русском контексте:
+    - Десятичные и обыкновенные дроби: '3,5' -> 'три целых пять десятых', '1/2' -> 'одна вторая'.
+    - Температура: '-5 °C' -> 'минус пять градусов Цельсия'.
     - Сложение изолированных чисел: '9 + 3' -> 'девять плюс три'.
     - Перечисление цифр через союз 'и': '4 и 3' -> 'четыре и три'.
     - Деление двоеточием: '15 : 3 = 5' -> '15 разделить на 3 равно 5'.
-    - Вычитание: '9 - 3 = 6' -> '9 минус 3 равно 6'.
+    - Вычитание и сравнение: '9 - 3 = 6', '5 > 3' -> 'больше', '2 < 7' -> 'меньше'.
     - Защищает стандартные временные метки (14:30).
     """
     if not text:
         return ""
 
     has_cyrillic = bool(re.search(r'[а-яА-ЯёЁ]', text))
-    has_math_ops = bool(re.search(r'[=+*\/÷·×:]|(?<=[0-9a-zA-Z])\s*[-−]\s*(?=[0-9a-zA-Z])', text))
+    has_math_ops = bool(
+        re.search(
+            r'[=+*\/÷·×:<>≤≥°]|(?<=\d),(?=\d)|(?<=[0-9a-zA-Z])\s*[-−]\s*(?=[0-9a-zA-Z])',
+            text,
+        )
+    )
     if not (has_cyrillic or has_math_ops):
         return text
 
     t = text
+
+    # Защищаем XML/SSML/est теги при прямом вызове функции
+    protected_tags = []
+    def _mask_tag(m):
+        idx = len(protected_tags)
+        protected_tags.append(m.group(0))
+        return f"___MATH_TAG_{idx}___"
+
+    t = re.sub(r'</?(?:est|sub|say-as|lang|voice|break)\b[^>]*>', _mask_tag, t, flags=re.IGNORECASE)
 
     time_placeholders = []
     def mask_time(m):
@@ -372,6 +820,42 @@ def normalize_math_expressions(text: str) -> str:
         return f"___TIME_STAMP_{idx}___"
 
     t = re.sub(r'\b([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*(=|[+\-*\/÷·×]))', mask_time, t)
+
+    # Предварительная защита градусов Цельсия, обыкновенных и десятичных дробей
+    t = normalize_celsius_expressions(t)
+    t = normalize_russian_fractions(t)
+    t = normalize_russian_decimals(t)
+
+    # 0. Умножение чисел и выражений: dot ·, bullet •, *, ×, ✕, ✖
+    # 0.1. Умножение с равенством («4 · 5 = 20» -> «четы́ре умно́жить на пять равно́ два́дцать»)
+    def repl_mult_equation(m):
+        n1 = int(m.group(1))
+        n2 = int(m.group(2))
+        n3 = int(m.group(3))
+        w1 = int_to_russian_stressed_nominative(n1)
+        w2 = int_to_russian_stressed_nominative(n2)
+        w3 = int_to_russian_stressed_nominative(n3)
+        return f"{w1} умно́жить на {w2} равно́ {w3}"
+
+    t = re.sub(r'\b(\d{1,3})\s*[·•*×✕✖]\s*(\d{1,3})\s*=\s*(\d{1,4})\b', repl_mult_equation, t)
+
+    # 0.2. Умножение без знака равенства («4 · 5» -> «четы́ре умно́жить на пять»)
+    def repl_mult_expr(m):
+        n1 = int(m.group(1))
+        n2 = int(m.group(2))
+        w1 = int_to_russian_stressed_nominative(n1)
+        w2 = int_to_russian_stressed_nominative(n2)
+        return f"{w1} умно́жить на {w2}"
+
+    t = re.sub(r'\b(\d{1,3})\s*[·•*×✕✖]\s*(\d{1,3})\b', repl_mult_expr, t)
+    t = re.sub(r'(\d+)\s*[·•*×✕✖]\s*(\d+)', r'\1 умно́жить на \2', t)
+    t = re.sub(r'(?i)\b(ноль|один|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|\d+)\s*[·•*×✕✖]\s*(\d+)\b', r'\1 умно́жить на \2', t)
+    t = re.sub(r'(?<=[0-9a-zA-Z\)])\s*[*·•×✕✖]\s*(?=[0-9a-zA-Z\(])', ' умно́жить на ', t)
+
+    # 0.3. Явная замена операндов перед умножить / разделить в именительный падеж
+    t = re.sub(r'\b4\s+умно[́\u0301]?жить\b', 'четы́ре умно́жить', t)
+    t = re.sub(r'\b4\s+раздели[́\u0301]?ть\b', 'четы́ре разделить', t)
+    t = re.sub(r'\b(\d{1,2})\s+умно[́\u0301]?жить\b', lambda m: f"{int_to_russian_stressed_nominative(int(m.group(1)))} умно́жить", t)
 
     # 1. Сложение изолированных чисел («9 + 3» -> «девять плюс три»)
     def repl_addition(m):
@@ -388,27 +872,35 @@ def normalize_math_expressions(text: str) -> str:
         n3 = int(m.group(3))
         return f"{int_to_russian_cardinal(n1)}, {int_to_russian_cardinal(n2)} и {int_to_russian_cardinal(n3)}"
 
-    t = re.sub(r'\b(\d{1,4}),\s*(\d{1,4})\s+и\s+(\d{1,4})\b', repl_digits_and_3, t)
+    t = re.sub(r'\b(\d{1,4}),\s*(\d{1,4})\s+и\s+(\d{1,4})\b(?!\s*(?:умножить|умно́жить|разделить|плюс|минус|[+\-*\/=·•×]))', repl_digits_and_3, t)
 
     def repl_digits_and(m):
         n1 = int(m.group(1))
         n2 = int(m.group(2))
         return f"{int_to_russian_cardinal(n1)} и {int_to_russian_cardinal(n2)}"
 
-    t = re.sub(r'\b(\d{1,4})\s+и\s+(\d{1,4})\b', repl_digits_and, t)
+    t = re.sub(r'\b(\d{1,4})\s+и\s+(\d{1,4})\b(?!\s*(?:умножить|умно́жить|разделить|плюс|минус|[+\-*\/=·•×]))', repl_digits_and, t)
 
     # 3. Словесные описания знаков операций
     t = re.sub(r'(?i)знак\s*[«"“„]?\s*[:÷]\s*[»"”]?|(?<=\()[:÷](?=\))', 'знак «разделить» ', t)
-    t = re.sub(r'(?i)знак\s*[«"“„]?\s*[*·×]\s*[»"”]?|(?<=\()[*·×](?=\))', 'знак «умножить» ', t)
+    t = re.sub(r'(?i)знак\s*[«"“„]?\s*[*·•×✕✖]\s*[»"”]?|(?<=\()[*·•×✕✖](?=\))', 'знак «умно́жить» ', t)
     t = re.sub(r'(?i)знак\s*[«"“„]?\s*\+\s*[»"”]?|(?<=\()\+(?=\))', 'знак «плюс» ', t)
     t = re.sub(r'(?i)знак\s*[«"“„]?\s*[-−]\s*[»"”]?|(?<=\()[-−](?=\))', 'знак «минус» ', t)
 
     t = re.sub(r'(?<=[0-9a-zA-Z\)])\s*÷\s*(?=[0-9a-zA-Z\(])', ' разделить на ', t)
+    t = re.sub(r'(\d+)\s*/\s*(\d+)(?=\s*=)', r'\1 разделить на \2', t)
+    t = re.sub(r'(\d+)\s+/\s+(\d+)', r'\1 разделить на \2', t)
 
     # 4. Деление двоеточием между операндами
     t = re.sub(r'(\d+)\s*:\s*(\d+)', r'\1 разделить на \2', t)
     t = re.sub(r'(\b[a-zA-Z]\b)\s*:\s*(\d+|\b[a-zA-Z]\b)', r'\1 разделить на \2', t)
     t = re.sub(r'(\d+)\s*:\s*(\b[a-zA-Z]\b)', r'\1 разделить на \2', t)
+
+    # 4.1. Математические знаки сравнения (<=, >=, ≤, ≥, <, >)
+    t = re.sub(r'(?<=[0-9a-zA-Zа-яА-ЯёЁ\u0301\)])\s*(?:<=|≤)\s*(?=[+\-−]?[0-9a-zA-Zа-яА-ЯёЁ\(])', ' меньше или равно ', t)
+    t = re.sub(r'(?<=[0-9a-zA-Zа-яА-ЯёЁ\u0301\)])\s*(?:>=|≥)\s*(?=[+\-−]?[0-9a-zA-Zа-яА-ЯёЁ\(])', ' больше или равно ', t)
+    t = re.sub(r'(?<=[0-9a-zA-Zа-яА-ЯёЁ\u0301\)])\s*<\s*(?=[+\-−]?[0-9a-zA-Zа-яА-ЯёЁ\(])|\s+<\s+', ' меньше ', t)
+    t = re.sub(r'(?<=[0-9a-zA-Zа-яА-ЯёЁ\u0301\)])\s*>\s*(?=[+\-−]?[0-9a-zA-Zа-яА-ЯёЁ\(])|\s+>\s+', ' больше ', t)
 
     # 5. Текстовое двоеточие в списках и перечислениях заменяем на запятую
     t = re.sub(r',?[ \t]*:[ \t]*(?!\n)', ', ', t)
@@ -416,8 +908,7 @@ def normalize_math_expressions(text: str) -> str:
     t = re.sub(r'[ \t]+,', ',', t)
     t = re.sub(r',[ \t]*,', ',', t)
 
-    t = re.sub(r'(?<=[0-9a-zA-Z\)])\s*[*·×]\s*(?=[0-9a-zA-Z\(])', ' умножить на ', t)
-    t = re.sub(r'(?<=[0-9a-zA-Zа-яА-ЯёЁ])\s*\+\s*(?=[0-9a-zA-Zа-яА-ЯёЁ])|\s+\+\s+', ' плюс ', t)
+    t = re.sub(r'(?<=[0-9a-zA-Zа-яА-ЯёЁ\u0301])\s*\+\s*(?=[0-9a-zA-Zа-яА-ЯёЁ])|\s+\+\s+', ' плюс ', t)
     t = re.sub(r'\s*=\s*', ' равно ', t)
     t = re.sub(r'(?<=[0-9a-zA-Z])\s*[-−]\s*(?=[0-9a-zA-Z])|\s+[-−]\s+', ' минус ', t)
 
@@ -435,14 +926,17 @@ def normalize_math_expressions(text: str) -> str:
     )
 
     for var, rep in MATH_VAR_MAP.items():
-        t = re.sub(r'\b' + var + r'\b', rep, t)
+        t = re.sub(r'(?<!°)(?<!°\s)\b' + var + r'\b', rep, t)
 
-    t = re.sub(r'\b(плюс|минус|равно|разделить на|умножить на)\s+[aA]\b', r'\1 а', t)
-    t = re.sub(r'\b[aA]\s+(плюс|минус|равно|разделить на|умножить на)\b', r'а \1', t)
+    t = re.sub(r'\b(плюс|минус|равно|разделить на|умножить на|умно\u0301жить на)\s+[aA]\b', r'\1 а', t)
+    t = re.sub(r'\b[aA]\s+(плюс|минус|равно|разделить на|умножить на|умно\u0301жить на)\b', r'а \1', t)
     t = re.sub(r'\b(переменная|переменную|переменной|буква|букву|буквой)\s+[aA]\b', r'\1 а', t)
 
     for idx, orig_time in enumerate(time_placeholders):
         t = t.replace(f"___TIME_STAMP_{idx}___", orig_time)
+
+    for idx, orig_tag in enumerate(protected_tags):
+        t = t.replace(f"___MATH_TAG_{idx}___", orig_tag)
 
     t = re.sub(r'\s+', ' ', t).strip()
     return t
@@ -451,7 +945,7 @@ def normalize_math_expressions(text: str) -> str:
 def normalize_number_ranges(text: str) -> str:
     """
     Нормализует диапазоны чисел: '1-9' -> 'от 1 до 9'.
-    Исключает знаки вычитания и равенства (например, '9 - 3 = 6').
+    Исключает знаки вычитания, дроби и равенства (например, '9 - 3 = 6', '3,2 - 5,1').
     """
     if not text:
         return ""
@@ -466,7 +960,7 @@ def normalize_number_ranges(text: str) -> str:
             return f"от {n1} до {n2}"
         return m.group(0)
 
-    pattern = re.compile(r'\b(\d+)\s*[-–—]\s*(\d+)\b(?!\s*=)')
+    pattern = re.compile(r'(?<![,./\d\-−])\b(\d+)\s*[-–—]\s*(\d+)\b(?![,./\d])(?!\s*=)')
     return pattern.sub(repl, text)
 
 
@@ -798,6 +1292,19 @@ def normalize_russian_accents_and_yo(text: str) -> str:
     t = re.sub(r'(?i)\bвот\s+и\s+все\b', 'вот и всё', t)
     t = re.sub(r'(?i)\bвсе\s+(готово|верно|правильно|получилось|сходится)\b', r'всё \1', t)
 
+    # Восстановление буквы «ё»: песик -> пёсик
+    t = re.sub(r'(?i)\bпесик([а-яё]*)\b', r'пёсик\1', t)
+
+    # Исправление падежной ошибки модели: «по трёх» -> «по три́»
+    t = re.sub(r'(?i)\bпо\s+тр[её]х\b', 'по три́', t)
+
+    # Исправление согласования: «в две кувшина» -> «в два кувши́на»
+    t = re.sub(r'(?i)\bв\s+две\s+кувшина\b', 'в два кувши́на', t)
+
+    # Фиксация ударения: контекстный омограф «со зна́ком» vs «знако́м с темой», «знак» -> «зна́к»
+    t = _apply_znakom_homograph(t)
+    t = re.sub(r'(?i)\bзнак(?![\u0301])\b', lambda m: 'Зна\u0301к' if m.group(0)[0].isupper() else 'зна\u0301к', t)
+
     # Омограф «шага»: устойчивые выражения «в два ша́га», «за три ша́га», «в 2 ша́га»
     def repl_shaga(m):
         prefix = m.group(1)
@@ -845,7 +1352,6 @@ ESTONIAN_CORE_KEYWORDS = {
     "liidetav", "liidetavad", "liidetavat", "liidetava", "liidetavale",
     "vähendatav", "vähendatavat", "vähendatava", "vähendatavale",
     "vähendaja", "vähendajat", "vähendajale",
-    "summa", "summat", "summas", "summale",
     "vahe", "vahet", "vahes", "vahele",
     "korrutis", "korrutist", "korrutaja", "korrutatav",
     "jagatis", "jagatist", "jagatav", "jagaja",
@@ -859,65 +1365,299 @@ ESTONIAN_CORE_KEYWORDS = {
 }
 
 
-def normalize_estonian_measurement_units(text: str) -> str:
+ESTONIAN_UNIT_FORMS: Dict[str, Dict[str, str]] = {
+    "km²": {"nom": "ruutkilomeeter", "part": "ruutkilomeetrit", "stem": "ruutkilomeetri"},
+    "m²": {"nom": "ruutmeeter", "part": "ruutmeetrit", "stem": "ruutmeetri"},
+    "dm²": {"nom": "ruutdetsimeeter", "part": "ruutdetsimeetrit", "stem": "ruutdetsimeetri"},
+    "cm²": {"nom": "ruutsentimeeter", "part": "ruutsentimeetrit", "stem": "ruutsentimeetri"},
+    "mm²": {"nom": "ruutmillimeeter", "part": "ruutmillimeetrit", "stem": "ruutmillimeetri"},
+    "km³": {"nom": "kuupkilomeeter", "part": "kuupkilomeetrit", "stem": "kuupkilomeetri"},
+    "m³": {"nom": "kuupmeeter", "part": "kuupmeetrit", "stem": "kuupmeetri"},
+    "dm³": {"nom": "kuupdetsimeeter", "part": "kuupdetsimeetrit", "stem": "kuupdetsimeetri"},
+    "cm³": {"nom": "kuupsentimeeter", "part": "kuupsentimeetrit", "stem": "kuupsentimeetri"},
+    "mm³": {"nom": "kuupmillimeeter", "part": "kuupmillimeetrit", "stem": "kuupmillimeetri"},
+    "km": {"nom": "kilomeeter", "part": "kilomeetrit", "stem": "kilomeetri"},
+    "m": {"nom": "meeter", "part": "meetrit", "stem": "meetri"},
+    "cm": {"nom": "sentimeeter", "part": "sentimeetrit", "stem": "sentimeetri"},
+    "mm": {"nom": "millimeeter", "part": "millimeetrit", "stem": "millimeetri"},
+    "dm": {"nom": "detsimeeter", "part": "detsimeetrit", "stem": "detsimeetri"},
+    "kg": {"nom": "kilogramm", "part": "kilogrammi", "stem": "kilogrammi"},
+    "g": {"nom": "gramm", "part": "grammi", "stem": "grammi"},
+    "l": {"nom": "liiter", "part": "liitrit", "stem": "liitri"},
+    "t": {"nom": "tonn", "part": "tonni", "stem": "tonni"},
+    "s": {"nom": "sekund", "part": "sekundit", "stem": "sekundi"},
+    "sek": {"nom": "sekund", "part": "sekundit", "stem": "sekundi"},
+    "min": {"nom": "minut", "part": "minutit", "stem": "minuti"},
+    "h": {"nom": "tund", "part": "tundi", "stem": "tunni"},
+    "tk": {"nom": "tükk", "part": "tükki", "stem": "tüki"},
+    "kr": {"nom": "kroon", "part": "krooni", "stem": "krooni"},
+    "snt": {"nom": "sent", "part": "senti", "stem": "sendi"},
+    "lk": {"nom": "lehekülg", "part": "lehekülge", "stem": "lehekülje"},
+}
+
+ESTONIAN_CARDINAL_WORDS: Dict[int, str] = {
+    1: "üks", 2: "kaks", 3: "kolm", 4: "neli", 5: "viis",
+    6: "kuus", 7: "seitse", 8: "kaheksa", 9: "üheksa", 10: "kümme",
+    11: "üksteist", 12: "kaksteist", 13: "kolmteist", 14: "neliteist",
+    15: "viisteist", 16: "kuusteist", 17: "seitseteist", 18: "kaheksateist",
+    19: "üheksateist", 20: "kakskümmend",
+}
+
+ESTONIAN_FRACTION_DENOMINATORS: Dict[int, Tuple[str, str]] = {
+    2: ("kahendik", "kahendikku"),
+    3: ("kolmandik", "kolmandikku"),
+    4: ("neljandik", "neljandikku"),
+    5: ("viiendik", "viiendikku"),
+    6: ("kuuendik", "kuuendikku"),
+    7: ("seitsmendik", "seitsmendikku"),
+    8: ("kaheksandik", "kaheksandikku"),
+    9: ("üheksandik", "üheksandikku"),
+    10: ("kümnendik", "kümnendikku"),
+    12: ("kaheteistkümnendik", "kaheteistkümnendikku"),
+    20: ("kahekümnendik", "kahekümnendikku"),
+    100: ("sajandik", "sajandikku"),
+}
+
+
+def normalize_estonian_fractions(text: str) -> str:
     """
-    Нормализует сокращения единиц измерения в эстонском тексте:
-    - km -> kilomeetrit (1 km -> 1 kilomeeter, 5 km-st -> 5 kilomeetrist).
-    - cm -> sentimeetrit (1 cm -> 1 sentimeeter).
-    - mm -> millimeetrit (1 mm -> 1 millimeeter).
-    - dm -> detsimeetrit (1 dm -> 1 detsimeeter).
-    - m -> meetrit (1 m -> 1 meeter, 500 m -> 500 meetrit, исключая мат. переменные).
+    Озвучивает обыкновенные дроби в эстонском тексте:
+    '1/2' -> 'üks kahendik', '1/4' -> 'üks neljandik', '3/4' -> 'kolm neljandikku'.
+    Не затрагивает уравнения деления ('10 / 2 = 5').
+    """
+    if not text or "/" not in text:
+        return text or ""
+
+    def _repl_est_frac(m):
+        num = int(m.group(1))
+        denom = int(m.group(2))
+        if num == 0 or denom < 2:
+            return m.group(0)
+        forms = ESTONIAN_FRACTION_DENOMINATORS.get(denom)
+        if not forms:
+            return m.group(0)
+        num_word = ESTONIAN_CARDINAL_WORDS.get(num, str(num))
+        denom_word = forms[0] if num == 1 else forms[1]
+        return f"{num_word} {denom_word}"
+
+    return re.sub(
+        r'(?<![:/\w\d.])\b(\d{1,2})/(\d{1,3})\b(?![:/\w\d.])(?!\s*=)',
+        _repl_est_frac,
+        text,
+    )
+
+
+def normalize_estonian_math_signs(text: str) -> str:
+    """
+    Явно озвучивает знаки операций в эстонском режиме (lang=et):
+    '+' -> 'pluss', '-' -> 'miinus' (сохраняя падежные дефисы 5-ga, 10-ni), '=' -> 'võrdub'.
     """
     if not text:
         return ""
 
     t = text
+    t = re.sub(r'\s*\+\s*', ' pluss ', t)
+    t = re.sub(r'\s*=\s*', ' võrdub ', t)
 
-    # 1. km (kilomeetrit / kilomeeter)
-    t = re.sub(r'\b1\s*km\b', '1 kilomeeter', t, flags=re.IGNORECASE)
-    t = re.sub(r'\b(\d+)\s*km-(ga|st|sse|le|lt|s|na|ks)\b', r'\1 kilomeetri\2', t, flags=re.IGNORECASE)
-    t = re.sub(r'\b(\d+)\s*km\b', r'\1 kilomeetrit', t, flags=re.IGNORECASE)
-    t = re.sub(r'\bkm\b', 'kilomeetrit', t, flags=re.IGNORECASE)
+    # Бинарный минус с пробелами (9 - 3, m - 5) или в уравнении
+    t = re.sub(r'(?<=\S)\s+[-−]\s+(?=\S)', ' miinus ', t)
+    t = re.sub(
+        r'(\b\d+(?:\s+koma\s+\d+)?)\s*[-−]\s*(\d+(?:\s+koma\s+\d+)?)(?=\s*(?:võrdub|=))',
+        r'\1 miinus \2',
+        t,
+    )
+    # Унарный минус перед числом (-5 -> miinus 5)
+    t = re.sub(r'(?:^|(?<=[\s(]))[-−](?=\d)', 'miinus ', t)
 
-    # 2. cm (sentimeetrit / sentimeeter)
-    t = re.sub(r'\b1\s*cm\b', '1 sentimeeter', t, flags=re.IGNORECASE)
-    t = re.sub(r'\b(\d+)\s*cm-(ga|st|sse|le|lt|s|na|ks)\b', r'\1 sentimeetri\2', t, flags=re.IGNORECASE)
-    t = re.sub(r'\b(\d+)\s*cm\b', r'\1 sentimeetrit', t, flags=re.IGNORECASE)
-    t = re.sub(r'\bcm\b', 'sentimeetrit', t, flags=re.IGNORECASE)
+    return re.sub(r'\s+', ' ', t).strip()
 
-    # 3. mm (millimeetrit / millimeeter)
-    t = re.sub(r'\b1\s*mm\b', '1 millimeeter', t, flags=re.IGNORECASE)
-    t = re.sub(r'\b(\d+)\s*mm\b', r'\1 millimeetrit', t, flags=re.IGNORECASE)
-    t = re.sub(r'\bmm\b', 'millimeetrit', t, flags=re.IGNORECASE)
 
-    # 4. dm (detsimeetrit / detsimeeter)
-    t = re.sub(r'\b1\s*dm\b', '1 detsimeeter', t, flags=re.IGNORECASE)
-    t = re.sub(r'\b(\d+)\s*dm\b', r'\1 detsimeetrit', t, flags=re.IGNORECASE)
-    t = re.sub(r'\bdm\b', 'detsimeetrit', t, flags=re.IGNORECASE)
+def normalize_estonian_core_units(text: str) -> str:
+    """
+    Позиционно-независимая замена базовых сокращений единиц измерения в эстонском тексте:
+    kg, km, m, l, g, cm, mm, dm, tk, snt, kr.
+    Учитывает падеж:
+    - число оканчивается на 1 (кроме 11): именительный падеж (kilogramm, kilomeeter, meeter, liiter, gramm...).
+    - остальные числа: партитив (kilogrammi, kilomeetrit, meetrit, liitrit, grammi...).
+    Работает перед словами в середине предложения: '20 kg pirne' -> '20 kilogrammi pirne'.
+    """
+    if not text:
+        return ""
 
-    # 5. m (meetrit / meeter) - не заменяем если знак равенства или арифметика переменной (m + 5 = 10)
-    t = re.sub(r'\b1\s*m-(ga|st|sse|le|lt|s|na|ks)\b', r'1 meetri\1', t, flags=re.IGNORECASE)
-    t = re.sub(r'\b(\d+)\s*m-(ga|st|sse|le|lt|s|na|ks)\b', r'\1 meetri\2', t, flags=re.IGNORECASE)
-    t = re.sub(r'\b1\s*m\b(?!\s*(=|[+\-*\/÷·×]))', '1 meeter', t, flags=re.IGNORECASE)
-    t = re.sub(r'\b(\d+)\s*m\b(?!\s*(=|[+\-*\/÷·×]))', r'\1 meetrit', t, flags=re.IGNORECASE)
+    core_units_map = {
+        "kg": ("kilogramm", "kilogrammi"),
+        "km": ("kilomeeter", "kilomeetrit"),
+        "cm": ("sentimeeter", "sentimeetrit"),
+        "mm": ("millimeeter", "millimeetrit"),
+        "dm": ("detsimeeter", "detsimeetrit"),
+        "tk": ("tükk", "tükki"),
+        "snt": ("sent", "senti"),
+        "kr": ("kroon", "krooni"),
+        "m": ("meeter", "meetrit"),
+        "l": ("liiter", "liitrit"),
+        "g": ("gramm", "grammi"),
+    }
+
+    t = text
+    for u, (nom, part) in core_units_map.items():
+        pattern = rf'(\d+)\s*{re.escape(u)}\.?(?=\s|[.,!?:]|$)'
+        def _repl(m, n=nom, p=part):
+            num = int(m.group(1))
+            form = n if (num % 10 == 1 and num % 100 != 11) else p
+            return f"{m.group(1)} {form}"
+        t = re.sub(pattern, _repl, t, flags=re.IGNORECASE)
+    return t
+
+
+def normalize_estonian_measurement_units(text: str) -> str:
+    """
+    Нормализует сокращения единиц измерения в эстонском тексте:
+    - Поддерживает единицы площади и объема: m² -> ruutmeeter / ruutmeetrit, cm³ -> kuupsentimeetrit.
+    - Строгая привязка линейных единиц к предшествующим цифрам (?<=\\d)\\s*.
+    - Учет грамматического падежа:
+      • после 1 (или оканчивающихся на 1, кроме 11): именительный падеж ед.ч.
+      • после остальных чисел: партитив.
+    - Нумерация страниц: lk 42, lk. 42 -> lehekülg 42; 42 lk -> 42 lehekülge.
+    - Переменные формул без предшествующих цифр (s = v · t, m + 5 = 10) не заменяются.
+    - Падежные окончания чисел (6-l, 5-s) защищены от подмены на литры/секунды.
+    """
+    if not text:
+        return ""
+
+    t = text
+    # Канонизируем ^2 / ^3 для метрических единиц в ² / ³
+    t = re.sub(r'\b(km|cm|mm|dm|m)\^2\b', r'\1²', t, flags=re.IGNORECASE)
+    t = re.sub(r'\b(km|cm|mm|dm|m)\^3\b', r'\1³', t, flags=re.IGNORECASE)
+
+    # 1. Нумерация страниц: lk 42, lk. 42 -> lehekülg 42
+    t = re.sub(r'\blk\.?\s*(\d+)', r'lehekülg \1', t, flags=re.IGNORECASE)
+
+    area_vol_order = 'km²|cm²|mm²|dm²|m²|km³|cm³|mm³|dm³|m³'
+    linear_units_order = 'km|cm|mm|dm|kg|sek|min|snt|kr|tk|lk|m|g|l|t|s|h'
+    units_order = f'{area_vol_order}|{linear_units_order}'
+
+    # 2. Единицы измерения с падежными окончаниями через дефис: 5 km-st, 1 m-ga, 2 kg-le
+    def repl_case(m):
+        num = m.group(1)
+        unit = m.group(2).lower()
+        suffix = m.group(3)
+        forms = ESTONIAN_UNIT_FORMS.get(unit)
+        if forms:
+            return f"{num} {forms['stem']}{suffix}"
+        return m.group(0)
+
+    t = re.sub(
+        rf'\b(\d+)\s*({units_order})-(ga|st|sse|le|lt|s|na|ks|ni|ta)\b',
+        repl_case,
+        t,
+        flags=re.IGNORECASE,
+    )
+
+    # 2.1. Базовые единицы измерения (kg, km, m, l, g, cm, mm, dm, tk, snt, kr) перед словами/знаками
+    t = normalize_estonian_core_units(t)
+
+    # 3. Единицы измерения, привязанные к предшествующему числу
+    def repl_unit(m):
+        num_str = m.group(1)
+        unit = m.group(2).lower()
+        num = int(num_str)
+        forms = ESTONIAN_UNIT_FORMS.get(unit)
+        if not forms:
+            return m.group(0)
+        # Именительный ед.ч. после 1 (1, 21, 31, кроме 11), иначе партитив
+        if num % 10 == 1 and num % 100 != 11:
+            form = forms["nom"]
+        else:
+            form = forms["part"]
+        return f"{num_str} {form}"
+
+    t = re.sub(
+        rf'\b(\d+)\s*({units_order})\.?(?![a-zA-ZõäöüÕÄÖÜšžŠŽ0-9\-²³\u00b2\u00b3])',
+        repl_unit,
+        t,
+        flags=re.IGNORECASE,
+    )
+
+    # 4. Вопросительные и словарные конструкции с multi-letter единицами и единицами площади/объема
+    def repl_mitu(m):
+        prefix = m.group(1)
+        unit = m.group(2).lower()
+        forms = ESTONIAN_UNIT_FORMS.get(unit)
+        if forms:
+            return f"{prefix}{forms['part']}"
+        return m.group(0)
+
+    t = re.sub(rf'(?i)\b(mitu\s+)({area_vol_order}|km|cm|mm|dm|kg|g|l|tk)(?![a-zA-Z0-9])', repl_mitu, t)
+    t = re.sub(
+        rf'(?i)\b(ühik:\s*)({area_vol_order}|cm|mm|dm|km|kg)(?![a-zA-Z0-9])',
+        lambda m: f"{m.group(1)}{ESTONIAN_UNIT_FORMS[m.group(2).lower()]['part']}",
+        t,
+    )
+
+    # Изолированные единицы площади/объема с явной степенью ² / ³ (m² -> ruutmeeter, cm³ -> kuupsentimeetrit)
+    def _repl_standalone_area_vol(m):
+        u = m.group(1).lower()
+        forms = ESTONIAN_UNIT_FORMS.get(u)
+        if not forms:
+            return m.group(0)
+        return forms["nom"] if u == "m²" else forms["part"]
+
+    t = re.sub(rf'(?<![a-zA-Z0-9])\b({area_vol_order})(?![a-zA-Z0-9])', _repl_standalone_area_vol, t, flags=re.IGNORECASE)
 
     return t
 
 
-def normalize_text_for_estonian_tts(text: str) -> str:
+def normalize_text_for_estonian_tts(text: str, verbalize_math_signs: bool = False) -> str:
     """
     Нормализует эстонский текст:
-    - Единицы измерения (km -> kilomeetrit, cm -> sentimeetrit, m -> meetrit).
-    - Порядковые числительные с точкой (1. klass -> esimene klass, 4. klassis -> neljandas klassis).
-    - Для номеров без существительных (Harjutus 5.) срезает точку -> Harjutus 5.
-    - Удаляет крестики и спецсимволы умножения (×, ✕, ✖, *).
-    - Удаляет скобки [ ], { }, ( ).
+    - Десятичные дроби (3,5 -> 3 koma 5) и обыкновенные дроби (1/2 -> üks kahendik).
+    - Время (14:30) изолируется от деления и пунктуационных разрывов.
+    - Единицы измерения (km -> kilomeetrit, m² -> ruutmeeter / ruutmeetrit, cm³ -> kuupsentimeetrit).
+    - Порядковые числительные (1. klass -> esimene klass; 15. harjutus сохраняет точку для SSML ordinal).
+    - Для номеров в конце предложения без существительного (Vastus on 12.) срезает точку -> Vastus on 12.
+    - Заменяет математические знаки умножения (·, •, *, ×) на korda.
+    - В режиме verbalize_math_signs=True озвучивает + -> pluss, - -> miinus, = -> võrdub.
     - Сохраняет дефисы для падежных окончаний чисел (5-ga, 10-ni).
     """
     if not text:
         return ""
 
-    text = normalize_estonian_measurement_units(text)
+    # 1. До пунктуационных и математических регулярок защищаем время, десятичные и обыкновенные дроби
+    time_est: List[str] = []
+    def _mask_est_time(m):
+        idx = len(time_est)
+        time_est.append(m.group(0))
+        return f"ESTTIMEPLACEHOLDER{idx}ESTTIME"
+
+    t = re.sub(r'\b([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*(=|[+\-*\/÷·×]))', _mask_est_time, text)
+
+    # Десятичные дроби: 3,5 -> 3 koma 5
+    t = re.sub(r'(?<![0-9,])(\d+),(\d+)(?![0-9,])', r'\1 koma \2', t)
+
+    # Обыкновенные дроби: 1/2 -> üks kahendik, 1/4 -> üks neljandik, 3/4 -> kolm neljandikku
+    t = normalize_estonian_fractions(t)
+
+    # Единицы измерения и лексикон
+    t = normalize_estonian_measurement_units(t)
+    t = apply_phonetic_substitutions(t, is_estonian=True)
+
+    # Градусы Цельсия в эстонском контексте
+    t = re.sub(
+        r'\b(\d+)\s*°\s*[CС](?![a-zA-ZõäöüÕÄÖÜšžŠŽ])',
+        lambda m: f"{m.group(1)} {'kraad' if (int(m.group(1)) % 10 == 1 and int(m.group(1)) % 100 != 11) else 'kraadi'} Celsiust",
+        t,
+    )
+
+    # Замена знаков умножения на korda в эстонском контексте
+    t = re.sub(r'(\d+)\s*[·•*×✕✖]\s*(\d+)', r'\1 korda \2', t)
+    t = re.sub(r'(?<=\d)\s*[\u2715\u2716](?!\s*\d)', '', t)
+    t = re.sub(r'[\u2715\u2716]', '', t)
+
+    # Замена знаков деления на jagatud в эстонском контексте
+    t = re.sub(r'(\d+|\b[a-zA-Z]\b)\s*[:/÷]\s*(\d+|\b[a-zA-Z]\b)', r'\1 jagatud \2', t)
+
+    if verbalize_math_signs:
+        t = normalize_estonian_math_signs(t)
 
     est_ord_pattern = re.compile(
         r'\b(\d+)\.\s*(klass[a-zõäöü]*|harjutus[a-zõäöü]*|ülesan[a-zõäöü]*|osa[a-zõäöü]*)\b',
@@ -940,19 +1680,24 @@ def normalize_text_for_estonian_tts(text: str) -> str:
             w = forms[0]
         return f"{w} {noun}"
 
-    t = est_ord_pattern.sub(repl_est_ord, text)
+    t = est_ord_pattern.sub(repl_est_ord, t)
 
-    t = re.sub(r'[\u00d7\u2715\u2716*]', ' ', t)
     t = re.sub(r'[\[\]{}()]', ' ', t)
     t = re.sub(r'(?<=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])\s*/\s*(?=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])', ' või ', t)
     t = re.sub(r'\s+/\s+', ' või ', t)
     t = re.sub(r'[/\\|]', ' ', t)
-    t = re.sub(r'(\b\d+)\s*\.(?!\d)', r'\1 ', t)
+    # Сохраняем точку у порядковых числительных перед строчным эстонским существительным (15. harjutus)
+    t = re.sub(r'(\b\d+)\s*\.(?!\d|\s+[a-zõäöüšž]{2,})', r'\1 ', t)
     t = re.sub(r'(\d+)([,!?;:])', r'\1 \2', t)
     t = re.sub(r'([,!?;:])(\d+)', r'\1 \2', t)
     t = re.sub(r'(\d+)[-–—]+(?=(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)', r'\1-', t, flags=re.IGNORECASE)
     t = re.sub(r'(\d+)[-–—]+(?!(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)', r'\1 ', t, flags=re.IGNORECASE)
     t = re.sub(r'[-–—]+(\d+)', r' \1', t)
+
+    # Восстанавливаем маски времени в самом конце, чтобы 14:30 не разбивалось на 14 : 30
+    for idx, orig_tm in enumerate(time_est):
+        t = t.replace(f"ESTTIMEPLACEHOLDER{idx}ESTTIME", orig_tm)
+
     return re.sub(r'\s+', ' ', t).strip()
 
 
@@ -978,6 +1723,19 @@ def clean_text_for_speech(text: str) -> str:
         flags=re.IGNORECASE | re.DOTALL,
     )
 
+    sub_tags = []
+    def mask_sub_tag(match):
+        idx = len(sub_tags)
+        sub_tags.append(match.group(0))
+        return f"SSMLSUBTAGPLACEHOLDER{idx}SSMLSUBTAG"
+
+    t = re.sub(
+        r'<sub(?:\s+[^>]*)?>.*?<\s*/\s*sub\s*>',
+        mask_sub_tag,
+        t,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
     t = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', t)
     t = re.sub(r'(?<=[а-яА-ЯёЁ])\s*/\s*(?=[а-яА-ЯёЁ0-9])|(?<=[а-яА-ЯёЁ0-9])\s*/\s*(?=[а-яА-ЯёЁ])', ' или ', t)
     t = re.sub(r'(?:==>|-->|=>|->|→|⇒)', ' затем ', t)
@@ -988,7 +1746,12 @@ def clean_text_for_speech(text: str) -> str:
     t = re.sub(r'\b(затем|ранее)\s+\1\b', r'\1', t, flags=re.IGNORECASE)
 
     t = re.sub(r'#+', ' ', t)
+
+    # Защита знаков умножения при очистке Markdown
+    t = re.sub(r'(?<=[0-9a-zA-Z\)])\s*[*·•×✕✖]\s*(?=[0-9a-zA-Z\(])', ' ___MULT_STAR___ ', t)
     t = re.sub(r'\*+', ' ', t)
+    t = t.replace('___MULT_STAR___', ' * ')
+
     t = re.sub(r'_+', ' ', t)
     t = re.sub(r'[~`]+', ' ', t)
     t = re.sub(r'[\[\]]', ' ', t)
@@ -1002,6 +1765,9 @@ def clean_text_for_speech(text: str) -> str:
 
     for idx, orig_t in enumerate(est_tags):
         t = t.replace(f"ESTTAGPLACEHOLDER{idx}ESTTAG", orig_t)
+
+    for idx, orig_sub in enumerate(sub_tags):
+        t = t.replace(f"SSMLSUBTAGPLACEHOLDER{idx}SSMLSUBTAG", orig_sub)
 
     t = re.sub(r'\s+([,!?;:])', r'\1', t)
     return re.sub(r'[ \t]+', ' ', t).strip()
@@ -1036,6 +1802,19 @@ def normalize_text_for_speech(text: str, is_russian_context: bool = True) -> str
         flags=re.IGNORECASE | re.DOTALL,
     )
 
+    sub_tags = []
+    def mask_sub_tag(match):
+        idx = len(sub_tags)
+        sub_tags.append(match.group(0))
+        return f"SSMLSUBTAGPLACEHOLDER{idx}SSMLSUBTAG"
+
+    t = re.sub(
+        r'<sub(?:\s+[^>]*)?>.*?<\s*/\s*sub\s*>',
+        mask_sub_tag,
+        t,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
     est_quotes = []
     def mask_est_quote(match):
         q = match.group(0)
@@ -1048,6 +1827,9 @@ def normalize_text_for_speech(text: str, is_russian_context: bool = True) -> str
 
     t = re.sub(r'([«"“„][^»"”]+[»"”])', mask_est_quote, t)
 
+    t = normalize_celsius_expressions(t)
+    t = normalize_russian_fractions(t)
+    t = normalize_russian_decimals(t)
     t = normalize_russian_ordinals_with_dot(t)
     t = normalize_roman_numerals(t)
     t = normalize_number_ranges(t)
@@ -1056,26 +1838,178 @@ def normalize_text_for_speech(text: str, is_russian_context: bool = True) -> str
     for idx, orig_q in enumerate(est_quotes):
         t = t.replace(f"ESTQUOTEPLACEHOLDER{idx}ESTQUOTE", orig_q)
 
+    for idx, orig_sub in enumerate(sub_tags):
+        t = t.replace(f"SSMLSUBTAGPLACEHOLDER{idx}SSMLSUBTAG", orig_sub)
+
     for idx, orig_t in enumerate(est_tags):
         t = t.replace(f"ESTTAGPLACEHOLDER{idx}ESTTAG", orig_t)
 
     return re.sub(r'\s+', ' ', t).strip()
 
 
+CARD_HEADER_REGEX = re.compile(
+    r'^(?:(?:пример\s+решения(?:\s+(?:с\s+другими\s+числами|\(näidis\)|\(наидис\)))?)|'
+    r'(?:образец(?:\s+решения)?)|'
+    r'(?:näidis(?:\s+lahendus)?))\s*[:.\-—]?\s*',
+    re.IGNORECASE
+)
+
+
+def filter_card_headers_from_speech(text: str) -> str:
+    """
+    Исключает заголовок карточки («Пример решения», «Образец», «Näidis»,
+    «Пример решения с другими числами») из текста озвучки.
+    """
+    if not text:
+        return ""
+    t = CARD_HEADER_REGEX.sub('', text.strip())
+    # Если заголовок стоял отдельной строкой или перед точкой/двоеточием
+    t = re.sub(
+        r'^(?:пример\s+решения(?:\s+с\s+другими\s+числами)?|образец(?:\s+решения)?|näidis)\s*[.!?:;—\-]?\s+',
+        '',
+        t,
+        flags=re.IGNORECASE
+    )
+    return t.strip()
+
+
+ESTONIAN_DETECT_WORDS = {
+    # Core grammar & math keywords
+    "liidetav", "liidetavad", "liidetavat", "liidetava", "liidetavale",
+    "vähendatav", "vähendatavat", "vähendatava", "vähendatavale",
+    "vähendaja", "vähendajat", "vähendajale",
+    "vahe", "vahet", "vahes", "vahele",
+    "korrutis", "korrutist", "korrutaja", "korrutatav",
+    "jagatis", "jagatist", "jagatav", "jagaja",
+    "harjutus", "harjutuse", "harjutust", "harjutuses",
+    "ülesanne", "ülesande", "ülesannet", "ülesandes",
+    "vastus", "vastuse", "vastust", "vastuseks",
+    "küsimus", "küsimuse", "küsimust", "küsimusele",
+    "sadad", "kümned", "ühelised", "arvud", "arv",
+    "tere", "aitäh", "palun", "näide", "näited",
+    "tehe", "tehted", "lahutamine", "liitmine", "korrutamine", "jagamine",
+    # Task vocabulary & verbs
+    "jagas", "jagama", "jaga", "jagasid", "jaganud",
+    "võrdselt", "lemmikloomad", "lemmikloom", "lemmiklooma",
+    "mitu", "mitmel", "mitme",
+    "kapsad", "kapsast", "kapsaid", "kass", "koer", "loomad", "loom",
+    "on", "oli", "olid", "pole", "olnud",
+    "ja", "ning", "või", "kui", "palju", "kokku", "alles",
+    "arvuta", "lahenda", "kirjuta", "loe", "leia", "joonesta", "vaata",
+    "korda", "tükki", "meetrit", "sentimeetrit", "kilogrammi",
+    "toodi", "kauplus", "kauplusesse", "pirne", "pirnid", "õunad", "õunu", "suhkur", "suhkrut",
+}
+
+ENGLISH_BRAND_WORDS = {
+    "roblox", "minecraft", "lego", "mindstorms", "youtube", "tiktok", "tik", "tok",
+    "brawl", "stars", "fortnite", "google", "apple", "discord", "steam",
+    "playstation", "xbox", "scratch", "it", "ai", "wifi", "wi-fi", "python",
+    "wasd", "w", "a", "s", "d", "shift", "space", "enter", "ctrl", "alt", "esc", "escape"
+}
+
+
+def auto_tag_estonian_phrases(text: str) -> str:
+    """
+    Автоматически обнаруживает эстонские слова и словосочетания без тегов в русском тексте
+    (по эстонским буквам õ, ä, ö, ü, š, ž и словарным совпадениям вне brand_fallbacks)
+    и оборачивает их в теги <est>...</est> для маршрутизации в эстонский голос et-EE-AnuNeural.
+    """
+    if not text:
+        return ""
+
+    # Если во всем тексте нет кириллицы (чисто эстонский или английский текст), не оборачиваем
+    if not re.search(r'[а-яА-ЯёЁ]', text):
+        return text
+
+    # Защищаем уже существующие теги <est>...</est>
+    existing_tags = []
+    def mask_existing(m):
+        idx = len(existing_tags)
+        existing_tags.append(m.group(0))
+        return f"__EXISTING_EST_TAG_{idx}__"
+
+    t = re.sub(r'<\s*est(?:\s+[^>]*)?>.*?<\s*/\s*est\s*>', mask_existing, text, flags=re.IGNORECASE | re.DOTALL)
+
+    # Защищаем цитаты и круглые скобки (они уже маршрутизируются парсером сегментов)
+    existing_quotes = []
+    def mask_quotes(m):
+        idx = len(existing_quotes)
+        existing_quotes.append(m.group(0))
+        return f"__EXISTING_QUOTE_{idx}__"
+
+    t = re.sub(r'([\'\"«“][^\'\"»”]+[\'\"»”])', mask_quotes, t)
+    t = re.sub(r'(\([^\)]+\))', mask_quotes, t)
+
+    # Ищем последовательности латинских слов (включая эстонские диакритики)
+    pattern = re.compile(r'\b[a-zA-ZäöüõÄÖÜÕšžŠŽ0-9]+(?:\s+[a-zA-ZäöüõÄÖÜÕšžŠŽ0-9]+)*\b')
+
+    def repl_est_phrase(m):
+        phrase = m.group(0)
+        words = phrase.split()
+        if not words:
+            return phrase
+
+        # Исключаем химические формулы и аббревиатуры (CO2, H2O, DNA, ATP)
+        if is_chemical_formula_or_acronym(phrase):
+            return phrase
+
+        # Проверяем, не является ли вся фраза английскими брендами / клавишами
+        if all(w.lower() in ENGLISH_BRAND_WORDS for w in words):
+            return phrase
+
+        # Одиночные буквы переменных (x, y, z, a, b, c) не трогаем
+        if len(words) == 1 and words[0].lower() in {"x", "y", "z", "a", "b", "c"}:
+            return phrase
+
+        # Проверяем наличие специфических эстонских букв
+        has_est_chars = bool(re.search(r'[õäöüšžÕÄÖÜŠŽ]', phrase))
+
+        # Проверяем наличие известных эстонских слов
+        has_est_word = any(w.lower() in ESTONIAN_DETECT_WORDS for w in words)
+
+        if has_est_chars or has_est_word:
+            return f"<est>{phrase}</est>"
+
+        return phrase
+
+    t = pattern.sub(repl_est_phrase, t)
+
+    for idx, orig in enumerate(existing_quotes):
+        t = t.replace(f"__EXISTING_QUOTE_{idx}__", orig)
+
+    for idx, orig in enumerate(existing_tags):
+        t = t.replace(f"__EXISTING_EST_TAG_{idx}__", orig)
+
+    return t
+
+
 def prepare_speech_text(display_text: str, is_russian_context: bool = True) -> str:
     """
-    Главная точка входа для трансформации Display Text -> Speech Text:
-    - Защищает эстонские вставки (<est>...</est>).
-    - Выполняет базовую нормализацию (числа, математика, очистка разметки).
-    - Фонетически адаптирует англицизмы, бренды и аббревиатуры (Roblox -> Роблокс, Minecraft -> Майнкрафт, LEGO -> Лего, IT -> АйТи).
-    - Преобразует время (09:00 -> девять ноль-ноль, 14:30 -> четырнадцать тридцать).
-    - Расставляет знаки ударения для омографов («в два ша́га») и восстанавливает букву «ё».
+    Главная точка входа для трансформации Display Text -> Speech Text (линейный идемпотентный пайплайн):
+    1. Изоляция эстонских фрагментов <est>...</est>, неразмеченных эстонских цитат/скобок и автоматическое тегирование.
+    2. Защита чисел, десятичных/обыкновенных дробей, времени и градусов Цельсия до пунктуационных регулярок.
+    3. Базовая очистка и замена математических операций и знаков (·, •, *, ×, :, +, -, =, <, > в слова).
+    4. Единая словарная замена англицизмов/брендов без дублей (Roblox -> Ро́блокс, Minecraft -> Ма́йнкрафт и т.д.).
+    5. Русская грамматика и омографы (со зна́ком vs знако́м с темой, в два ша́га, вычита́ем, велопутеше́ствие).
+    6. Восстановление эстонских фрагментов и их нормализация по правилам эстонского языка.
+    Строго идемпотентна: prepare_speech_text(prepare_speech_text(x)) == prepare_speech_text(x).
     """
     if not display_text:
         return ""
 
+    has_cyrillic = bool(re.search(r'[а-яА-ЯёЁ]', display_text))
+    has_latin = bool(re.search(r'[a-zA-ZäöüõÄÖÜÕšžŠŽ]', display_text))
+
     if not is_russian_context:
         return normalize_text_for_estonian_tts(display_text)
+    elif not has_cyrillic and has_latin:
+        # Если в тексте нет кириллицы, но есть латинские слова, проверяем не является ли он чисто английскими брендами
+        raw_words = re.sub(r'[^a-zA-Z0-9\s-]', '', display_text).split()
+        if not (raw_words and all(w.lower() in ENGLISH_BRAND_WORDS for w in raw_words)):
+            return normalize_text_for_estonian_tts(display_text)
+
+    # ШАГ 1: Обнаружение и изоляция эстонских фрагментов
+    t = auto_tag_estonian_phrases(display_text)
 
     est_tags = []
     def mask_est_tag(match):
@@ -1086,39 +2020,202 @@ def prepare_speech_text(display_text: str, is_russian_context: bool = True) -> s
     t = re.sub(
         r'<\s*est(?:\s+[^>]*)?>.*?<\s*/\s*est\s*>',
         mask_est_tag,
-        display_text,
+        t,
         flags=re.IGNORECASE | re.DOTALL,
     )
 
+    sub_tags = []
+    def mask_sub_tag(match):
+        idx = len(sub_tags)
+        sub_tags.append(match.group(0))
+        return f"SSMLSUBTAGPLACEHOLDER{idx}SSMLSUBTAG"
+
+    t = re.sub(
+        r'<sub(?:\s+[^>]*)?>.*?<\s*/\s*sub\s*>',
+        mask_sub_tag,
+        t,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    t = filter_card_headers_from_speech(t)
+
+    # Защищаем эстонские цитаты и скобки (без кириллицы, брендов, формул и матем. знаков)
+    est_wrappers: List[str] = []
+    def _mask_est_wrapper(m):
+        full = m.group(0)
+        inner = full[1:-1].strip()
+        if (
+            len(inner) >= 2
+            and re.search(r'[a-zA-ZäöüõÄÖÜÕšžŠŽ]{2,}', inner)
+            and not re.search(r'[а-яА-ЯёЁ=+*÷·×<>°]|ESTTAGPLACEHOLDER|SSMLSUBTAGPLACEHOLDER', inner)
+            and not is_chemical_formula_or_acronym(inner)
+            and not all(w.lower() in ENGLISH_BRAND_WORDS for w in re.sub(r'[^a-zA-Z0-9\s-]', '', inner).split())
+        ):
+            idx = len(est_wrappers)
+            est_wrappers.append(full)
+            return f"ESTWRAPPLACEHOLDER{idx}ESTWRAP"
+        return full
+
+    t = re.sub(r'([\'\"«“„][^\'\"»”]+[\'\"»”])|(\([^\)]+\))', _mask_est_wrapper, t)
+
+    # ШАГ 2: Защита градусов Цельсия и дробей до пунктуационных/диапазонных/слэш-регулярок
+    t = normalize_celsius_expressions(t)
+    t = normalize_russian_fractions(t)
+    t = normalize_russian_decimals(t)
+
+    # ШАГ 3: Базовая очистка и замена математических операций и знаков
     t = clean_text_for_speech(t)
-    t = normalize_loanwords_and_brands(t)
+    t = normalize_russian_ordinals_with_dot(t)
+    t = normalize_roman_numerals(t)
+    t = normalize_number_ranges(t)
     t = normalize_time_expressions(t)
-    t = normalize_text_for_speech(t, is_russian_context=True)
-    t = normalize_russian_accents_and_yo(t)
+    t = normalize_math_expressions(t)
+
+    # ШАГ 4: Единая словарная замена англицизмов и брендов
+    t = normalize_loanwords_and_brands(t)
     t = apply_custom_phonetic_map(t)
 
+    # ШАГ 5: Русская грамматика, ударения омографов и буква ё
+    t = normalize_russian_accents_and_yo(t)
+    t = apply_phonetic_substitutions(t, is_estonian=False)
+    t = re.sub(r'\u0301+', '\u0301', t)
+
+    # ШАГ 6: Восстановление эстонских фрагментов и их нормализация
+    for idx, orig_w in enumerate(est_wrappers):
+        t = t.replace(f"ESTWRAPPLACEHOLDER{idx}ESTWRAP", orig_w)
+
+    for idx, orig_sub in enumerate(sub_tags):
+        t = t.replace(f"SSMLSUBTAGPLACEHOLDER{idx}SSMLSUBTAG", orig_sub)
+
     for idx, orig_t in enumerate(est_tags):
-        t = t.replace(f"ESTTAGPLACEHOLDER{idx}ESTTAG", orig_t)
+        m_tag = re.match(r'<\s*est(?:\s+[^>]*)?>(.*?)<\s*/\s*est\s*>', orig_t, flags=re.IGNORECASE | re.DOTALL)
+        if m_tag:
+            inner_est = m_tag.group(1).strip()
+            norm_est = normalize_text_for_estonian_tts(inner_est)
+            t = t.replace(f"ESTTAGPLACEHOLDER{idx}ESTTAG", f"<est>{norm_est}</est>")
+        else:
+            t = t.replace(f"ESTTAGPLACEHOLDER{idx}ESTTAG", orig_t)
 
     return re.sub(r'\s+', ' ', t).strip()
 
 
 def prepare_worked_example_speech(worked_example) -> str:
-    """Формирует слитный Speech Text для образца решения (Näidis)."""
+    """Формирует слитный Speech Text для образца решения (Näidis) БЕЗ озвучивания заголовка карточки."""
     if not worked_example:
         return ""
 
-    title = getattr(worked_example, "title", "Пример решения")
-    given = getattr(worked_example, "given", "")
-    steps = getattr(worked_example, "steps", [])
-    note = getattr(worked_example, "note", "")
+    given = getattr(worked_example, "given", "") or ""
+    steps = getattr(worked_example, "steps", []) or []
+    note = getattr(worked_example, "note", "") or ""
+
+    clean_given = filter_card_headers_from_speech(given)
+
+    valid_steps = [str(s).strip() for s in steps if s and str(s).strip()]
 
     formatted_steps = []
     ordinals = {1: "Первое", 2: "Второе", 3: "Третье", 4: "Четвертое", 5: "Пятое"}
-    for idx, s in enumerate(steps, 1):
+    for idx, s in enumerate(valid_steps, 1):
         clean_step = re.sub(r'^\d+[\.\)]\s*', '', str(s)).strip()
-        prefix = ordinals.get(idx, f"{idx}-е")
-        formatted_steps.append(f"{prefix}: {clean_step}")
+        if clean_step:
+            prefix = ordinals.get(idx, f"{idx}-е")
+            formatted_steps.append(f"{prefix}: {clean_step}")
 
-    full_text = f"{title}. {given}. Шаги решения: {'. '.join(formatted_steps)}. {note}".strip()
+    parts = []
+    if clean_given:
+        parts.append(clean_given)
+    if formatted_steps:
+        parts.append(f"Шаги решения: {'. '.join(formatted_steps)}")
+    if note:
+        parts.append(note)
+
+    full_text = ". ".join(parts).strip()
     return prepare_speech_text(full_text)
+
+
+def _escape_xml_chars(text: str) -> str:
+    """Экранирует специальные символы XML (&, <, >, \", ')."""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+def apply_ssml_sub_alias(text: str, word: str, alias: str) -> str:
+    """
+    Оборачивает слово в тег SSML <sub alias="...">слово</sub> в тексте
+    для явного форсирования произношения Azure TTS.
+    Защищает существующие теги <sub ...>...</sub> от повторного оборачивания.
+    """
+    sub_tags = []
+    def mask_sub(m):
+        idx = len(sub_tags)
+        sub_tags.append(m.group(0))
+        return f"__SSML_SUB_MASK_{idx}__"
+
+    t = re.sub(r'<sub\b[^>]*>.*?<\/sub>', mask_sub, text, flags=re.IGNORECASE | re.DOTALL)
+
+    clean_w = word.replace('\u0301', '')
+    pattern_str = r'\b' + ''.join(re.escape(c) + r'\u0301?' for c in clean_w) + r'\b'
+    pattern = re.compile(pattern_str, re.IGNORECASE)
+
+    esc_alias = _escape_xml_chars(alias)
+    def repl(m):
+        return f'<sub alias="{esc_alias}">{m.group(0)}</sub>'
+
+    t = pattern.sub(repl, t)
+
+    for idx, orig_sub in enumerate(sub_tags):
+        t = t.replace(f"__SSML_SUB_MASK_{idx}__", orig_sub)
+
+    return t
+
+
+def apply_russian_ssml_sub_aliases(text: str) -> str:
+    """
+    Оборачивает слова с нестабильным ударением в SSML <sub alias="...">слово</sub>:
+    1. «Велопутешествие» (и все падежные словоформы): устраняет побочное ударение на «ве́ло» в ru-RU-SvetlanaNeural,
+       принудительно устанавливая единое ударение через дефисный алиас «вело-путеше́ствие».
+    2. «Вычитаем» (и все формы: вычитает, вычитайте, вычитаемое, вычитай...): жестко фиксирует ударение
+       на гласной «а́» (<sub alias="вычита́ем">вычитаем</sub>).
+    """
+    sub_tags = []
+    def mask_sub(m):
+        idx = len(sub_tags)
+        sub_tags.append(m.group(0))
+        return f"__SSML_SUB_MASK_{idx}__"
+
+    # Защищаем уже существующие теги <sub ...>...</sub>
+    t = re.sub(r'<sub\b[^>]*>.*?<\/sub>', mask_sub, text, flags=re.IGNORECASE | re.DOTALL)
+
+    # 1. Велопутешествие и словоформы
+    def repl_velo(m: re.Match) -> str:
+        orig = m.group(0)
+        prefix = m.group(1)
+        ending = m.group(2).replace('\u0301', '')
+        alias = f"{prefix}-путеше\u0301стви{ending}"
+        return f'<sub alias="{alias}">{orig}</sub>'
+
+    p_velo = re.compile(r'\b([Вв]ело)[‑\-]?путеше\u0301?стви([а-яё\u0301]*)\b')
+    t = p_velo.sub(repl_velo, t)
+
+    # 2. Вычитаем, вычитает, вычитайте, вычитаемое и др. глагольные формы
+    def repl_vychit(m: re.Match) -> str:
+        orig = m.group(0)
+        prefix = m.group(1)
+        ending = m.group(2).replace('\u0301', '')
+        alias = f"{prefix}а\u0301{ending}"
+        return f'<sub alias="{alias}">{orig}</sub>'
+
+    p_vychit = re.compile(
+        r'\b([Вв]ычит)а\u0301?(ем[а-яё\u0301]*|ет[а-яё\u0301]*|йт[а-яё\u0301]*|й|ют|ете|ешь|л[а-яё\u0301]*|ть|я)\b'
+    )
+    t = p_vychit.sub(repl_vychit, t)
+
+    # Восстанавливаем защищенные теги
+    for idx, orig_sub in enumerate(sub_tags):
+        t = t.replace(f"__SSML_SUB_MASK_{idx}__", orig_sub)
+
+    return t

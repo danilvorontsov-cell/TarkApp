@@ -12,6 +12,7 @@ import {
   Platform,
   ScrollView,
   Image,
+  Linking,
 } from 'react-native';
 import {
   UserProfile,
@@ -90,7 +91,10 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
 
   const handleAvatarPress = async () => {
     await StorageService.saveProfileDraft({ nickname: name, grade: selectedGrade });
-    onOpenAvatarPicker?.();
+    onClose();
+    setTimeout(() => {
+      onOpenAvatarPicker?.();
+    }, 120);
   };
 
   const handleSave = async () => {
@@ -270,6 +274,15 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                       <Text style={styles.skipBtnText}>Продолжить как Ученик</Text>
                     </TouchableOpacity>
                   )}
+
+                  <TouchableOpacity
+                    style={styles.privacyLinkBtn}
+                    onPress={() => Linking.openURL('https://tarkapp.ee/privacy')}
+                    activeOpacity={0.7}
+                    accessibilityRole="link"
+                  >
+                    <Text style={styles.privacyLinkText}>🔒 Политика конфиденциальности</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             </TouchableWithoutFeedback>
@@ -498,5 +511,15 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#64748B',
+  },
+  privacyLinkBtn: {
+    paddingVertical: 6,
+    marginTop: 2,
+  },
+  privacyLinkText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#5FEDC5',
+    textDecorationLine: 'underline',
   },
 });
