@@ -422,3 +422,135 @@ def test_speak_endpoint_supports_is_speech_text(client, monkeypatch):
     assert resp.status_code == 200
     assert captured.get("is_speech_text") is True
     assert captured.get("text") == "kass"
+
+
+def test_socratic_scaffolding_and_verb_accents():
+    """Verify tutor prompt enforces Socratic scaffolding in advice, eliminates priming, and expands verb acute accents."""
+    from app.prompts.tutor_prompt import ESTONIAN_TUTOR_SYSTEM_PROMPT, build_tutor_user_prompt
+    from app.models.page_analysis import UserProfile
+
+    # 1. Direct answer hints banned in note / advice without negative priming
+    assert "ЗАПРЕТ ПРЯМОЙ ПОДСКАЗКИ В БЛОКЕ «СОВЕТ»" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "выбери знак деления" not in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "разливали компот поровну" not in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "Формула совета: [Отсылка к принципу разобранного примера] + [Наводящий вопрос на рассуждение]." in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "Вспомни, как мы распределяли предметы поровну в примере выше" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "Текст how_to_answer_speech обязан транскрибировать наводящий совет полностью" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+
+    # 2. Acute accents required on all solution step action verbs
+    required_verbs = [
+        "разлива́ем", "перелива́ем", "выбира́ем", "составля́ем", "вычита́ем",
+        "склады́ваем", "дели́м", "умножа́ем", "раскла́дываем", "счита́ем",
+        "получа́ем", "определя́ем"
+    ]
+    for verb in required_verbs:
+        # Check either precomposed/composed or combining unicode form
+        verb_combining = verb.replace("́", "\u0301")
+        assert (verb in ESTONIAN_TUTOR_SYSTEM_PROMPT) or (verb_combining in ESTONIAN_TUTOR_SYSTEM_PROMPT), f"Missing accented verb: {verb}"
+
+    # 3. User prompt includes student context and directive without duplicate rules
+    u_prompt = build_tutor_user_prompt(UserProfile(grade=3, nickname="Маша"))
+    assert "Проанализируй прикрепленные учебные материалы. Определи Режим (A или B)" in u_prompt
+    assert "ДАННЫЕ УЧЕНИКА:" in u_prompt
+    assert "Имя: Маша" in u_prompt
+    assert "Класс: 3 класс" in u_prompt
+    assert "Возрастная группа: primary" in u_prompt
+    assert "РАЗМЕТКА ОЗВУЧКИ (TTS)" not in u_prompt
+    assert "РЕЧЕВОЙ СЛОЙ (SPEECH)" not in u_prompt
+
+
+def test_speech_layer_generation_and_ssml_isolation():
+    """
+    Comprehensive verification of speech_layer generation and Azure SSML isolation:
+    1. PageAnalysisResponse correctly parses GeminiPageAnalysisSchema with speech_layer != None.
+    2. Speech fields are populated with words, no digits (0-9), no formula symbols (:, =, +).
+    3. Action verbs and terms contain Combining Acute Accents \u0301.
+    4. Advice block does not contain direct interface hints (e.g. 'выбери знак деления').
+    5. build_ssml with 'Если разлива́ем по́ровну, выбира́ем действие деле́ния. Пятнадцать разделить на три равно пять.'
+       preserves \u0301, bypasses formula normalizer, and avoids parasitic ESTONIAN_CORE_KEYWORDS slicing.
+    """
+    from app.models.page_analysis import (
+        GeminiPageAnalysisSchema,
+        PageAnalysisResponse,
+        LessonSpeechLayer,
+    )
+    from app.services.tts_service import build_ssml
+
+    # 1. Simulate Gemini Structured Outputs schema response
+    gemini_data = {
+        "task_title": "Деление: делимое, делитель и частное (Jagamine)",
+        "theme_explanation": "Деление — это когда мы раскладываем предметы поровну.",
+        "alternative_explanation": "Представь, что мы делим пирог на равные кусочки.",
+        "vocabulary": [
+            {"est": "jagamine", "ru": "деление", "example": "See on jagamine."},
+            {"est": "jagatav", "ru": "делимое", "example": "Esimene arv on jagatav."},
+            {"est": "jagaja", "ru": "делитель", "example": "Teine arv on jagaja."},
+        ],
+        "worked_example": {
+            "title": "Пример решения (Näidis)",
+            "given": "Было: 15 яблок на 3 тарелки",
+            "steps": ["1. Делим: 15 : 3 = 5", "2. Вывод: на каждой тарелке по 5 яблок"],
+            "note": "Вспомни, как мы распределяли предметы поровну в примере выше, и примени аналогичный способ к своим данным.",
+        },
+        "how_to_answer": "1. Найди в тексте задачи общее количество и число частей. 2. Рассуждай по правилу равных долей.",
+        "answer_template": "See on [jagamine] ja jagatis on [viis].",
+        "voice_prompt_script": "Привет! Давай разберём деление вместе!",
+        "theme_explanation_speech": "Деле\u0301ние — это когда мы раскла\u0301дываем предме\u0301ты по\u0301ровну на ра\u0301вные ча\u0301сти.",
+        "how_to_answer_speech": "Снача\u0301ла определя\u0301ем дели\u0301мое и дели\u0301тель, а затем де\u0301лим пе\u0301рвое число\u0301 на второ\u0301е полными словами.",
+        "worked_example_speech": "Если у нас пятнадцать яблок на три тарелки, мы де\u0301лим пятнадцать на три и получа\u0301ем по пять яблок на тарелке.",
+        "voice_prompt_script_speech": "Привет! Давай разберём деле\u0301ние вместе!",
+        "alternative_explanation_speech": "Представь, что мы де\u0301лим пирог на ра\u0301вные куски\u0301 для друзей.",
+    }
+
+    # Validate with Gemini schema and PageAnalysisResponse
+    gemini_schema_obj = GeminiPageAnalysisSchema.model_validate(gemini_data)
+    response = PageAnalysisResponse.model_validate(gemini_schema_obj.model_dump())
+
+    # Check 1.1: speech_layer is not None
+    assert response.speech_layer is not None
+    assert isinstance(response.speech_layer, LessonSpeechLayer)
+
+    # Check 1.2: speech fields populated with full words without digits (0-9) and formula signs (:, =, +)
+    for field_name in ["theme_explanation_speech", "how_to_answer_speech", "worked_example_speech"]:
+        val = getattr(response, field_name)
+        assert val is not None and len(val.strip()) > 0, f"{field_name} must not be empty"
+        assert not re.search(r'\d', val), f"{field_name} contains digits: {val}"
+        assert not re.search(r'[:=+*/]', val), f"{field_name} contains formula characters: {val}"
+
+    # Check 1.3: Combining Acute Accent \u0301 present in action verbs and terms
+    combining_accent = "\u0301"
+    all_speech_texts = " ".join([
+        response.theme_explanation_speech or "",
+        response.how_to_answer_speech or "",
+        response.worked_example_speech or "",
+    ])
+    assert combining_accent in all_speech_texts or "́" in all_speech_texts
+
+    # Check specific accented verbs / terms
+    assert any(w in all_speech_texts for w in ["раскла́дываем", "раскла\u0301дываем", "определя́ем", "определя\u0301ем", "получа́ем", "получа\u0301ем"])
+    assert any(w in all_speech_texts for w in ["дели́мое", "дели\u0301мое", "деле́ние", "деле\u0301ние"])
+
+    # Check 1.4: advice block free of direct UI hints
+    advice_note = response.worked_example.note
+    how_to_ans = response.how_to_answer
+    for forbidden in ["выбери знак деления", "выпадающем списке", "нажми пункт", "поставь минус"]:
+        assert forbidden not in advice_note.lower()
+        assert forbidden not in how_to_ans.lower()
+
+    # Check 2: Azure SSML isolation with exact test phrase
+    test_phrase = "Если разлива́ем по́ровну, выбира́ем действие деле́ния. Пятнадцать разделить на три равно пять."
+    ssml = build_ssml(test_phrase, is_speech_text=True)
+
+    # 2.1 Accents preserved in output XML
+    assert ("разлива́ем" in ssml or "разлива\u0301ем" in ssml)
+    assert ("по́ровну" in ssml or "по\u0301ровну" in ssml)
+    assert ("выбира́ем" in ssml or "выбира\u0301ем" in ssml)
+    assert ("деле́ния" in ssml or "деле\u0301ния" in ssml)
+
+    # 2.2 Words not broken into parasitic ESTONIAN_CORE_KEYWORDS segments
+    assert '<lang xml:lang="et-EE">' not in ssml
+    assert '<voice name="ru-RU-SvetlanaNeural">' in ssml
+
+    # 2.3 Math sign / legacy normalizer was not invoked (is_speech_text=True bypasses)
+    assert "<say-as" not in ssml
+    assert "<speak" in ssml and "</speak>" in ssml

@@ -28,6 +28,7 @@ export interface StepCardProps {
   onPlayAudio?: (text: string, id: string, speech_text?: string) => void;
   onCopyFormula?: (formula: string) => void;
   isFormula?: boolean;
+  showCopy?: boolean;
 }
 
 function hasMathFormula(text: string): boolean {
@@ -47,7 +48,8 @@ function areStepPropsEqual(prev: StepCardProps, next: StepCardProps): boolean {
     prev.audioId === next.audioId &&
     prev.isPlaying === next.isPlaying &&
     prev.isLoadingAudio === next.isLoadingAudio &&
-    prev.isFormula === next.isFormula
+    prev.isFormula === next.isFormula &&
+    prev.showCopy === next.showCopy
   );
 }
 
@@ -66,8 +68,10 @@ export const StepCard = React.memo<StepCardProps>(
     onPlayAudio,
     onCopyFormula,
     isFormula,
+    showCopy = true,
   }) => {
     const isMath = isFormula !== undefined ? isFormula : hasMathFormula(text);
+    const canCopy = Boolean(showCopy && onCopyFormula && isMath);
 
     const handleCopy = useCallback(async () => {
       try {
@@ -97,9 +101,9 @@ export const StepCard = React.memo<StepCardProps>(
         <View style={styles.stepContentCol}>
           <Text style={styles.stepText}>{text}</Text>
 
-          {(isMath || audioId) && (
+          {(canCopy || Boolean(audioId && onPlayAudio)) && (
             <View style={styles.stepActionsRow}>
-              {isMath && (
+              {canCopy && (
                 <TouchableOpacity
                   style={styles.actionPill}
                   onPress={handleCopy}
@@ -147,6 +151,7 @@ export interface LessonStepListProps {
   audioPrefix?: string;
   onPlayAudio?: (text: string, id: string, speech_text?: string) => void;
   onCopyFormula?: (formula: string) => void;
+  showCopy?: boolean;
 }
 
 const STEP_ITEM_HEIGHT = 68;
@@ -164,6 +169,7 @@ export const LessonStepList: React.FC<LessonStepListProps> = ({
   audioPrefix = 'step',
   onPlayAudio,
   onCopyFormula,
+  showCopy = true,
 }) => {
   const validSteps = (steps || []).filter(
     (step) => step && (typeof step === 'string' ? step.trim().length > 0 : Boolean(step.text && step.text.trim().length > 0))
@@ -210,10 +216,11 @@ export const LessonStepList: React.FC<LessonStepListProps> = ({
           isLoadingAudio={isLoadingAudio}
           onPlayAudio={onPlayAudio}
           onCopyFormula={onCopyFormula}
+          showCopy={showCopy}
         />
       );
     },
-    [audioPrefix, activePlayingId, loadingAudioId, onPlayAudio, onCopyFormula]
+    [audioPrefix, activePlayingId, loadingAudioId, onPlayAudio, onCopyFormula, showCopy]
   );
 
   if (cleanSteps.length === 0) {
@@ -259,6 +266,7 @@ export const LessonStepList: React.FC<LessonStepListProps> = ({
             isLoadingAudio={isLoadingAudio}
             onPlayAudio={onPlayAudio}
             onCopyFormula={onCopyFormula}
+            showCopy={showCopy}
           />
         );
       })}
@@ -274,11 +282,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     marginBottom: 12,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     borderRadius: 12,
     padding: 10,
     borderWidth: 1,
-    borderColor: '#E9ECEF',
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   stepNumberBadge: {
     width: 28,
@@ -291,7 +299,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   stepNumberText: {
-    color: '#FFFFFF',
+    color: '#064E3B',
     fontWeight: '700',
     fontSize: 14,
   },
@@ -301,7 +309,7 @@ const styles = StyleSheet.create({
   stepText: {
     fontSize: 15,
     lineHeight: 22,
-    color: '#212529',
+    color: '#F1F5F9',
     fontWeight: '500',
   },
   stepActionsRow: {
@@ -311,31 +319,36 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   actionPill: {
-    backgroundColor: '#E7F5FF',
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 6,
     alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.3)',
   },
   actionPillText: {
-    color: '#1C7ED6',
+    color: '#38BDF8',
     fontSize: 12,
     fontWeight: '600',
   },
   audioPill: {
-    backgroundColor: '#20C997',
+    backgroundColor: 'rgba(95, 237, 197, 0.15)',
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 6,
     alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(95, 237, 197, 0.3)',
   },
   audioPillActive: {
-    backgroundColor: '#E03131',
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    borderColor: 'rgba(239, 68, 68, 0.4)',
   },
   audioPillText: {
-    color: '#FFFFFF',
+    color: '#5FEDC5',
     fontSize: 12,
     fontWeight: '600',
   },

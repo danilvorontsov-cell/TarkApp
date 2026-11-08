@@ -146,3 +146,42 @@ test('Scenario 6: Cache key differentiation by grade and tier, and vocabulary sp
     'App.tsx passes cleanEstTags as speech_text for v.example'
   );
 });
+
+test('Scenario 7: Dark theme step card styling and copy button suppression in Näidis', () => {
+  const lcPath = path.join(mobileDir, 'src', 'components', 'LessonCard.tsx');
+  const lcContent = fs.readFileSync(lcPath, 'utf8');
+
+  // Verify dark theme styling for step rows and text
+  assert.match(
+    lcContent,
+    /stepRow:\s*\{[^}]*backgroundColor:\s*['"]rgba\(255,\s*255,\s*255,\s*0\.05\)['"]/s,
+    'stepRow must use dark transparent background'
+  );
+  assert.match(
+    lcContent,
+    /stepText:\s*\{[^}]*color:\s*['"]#F1F5F9['"]/s,
+    'stepText must use light slate text #F1F5F9'
+  );
+
+  // Verify showCopy prop support
+  assert.match(
+    lcContent,
+    /showCopy\?:/i,
+    'StepCardProps must accept showCopy prop'
+  );
+  assert.match(
+    lcContent,
+    /canCopy\s*=\s*Boolean\(showCopy\s*&&\s*onCopyFormula\s*&&\s*isMath\)/,
+    'StepCard only renders copy button when showCopy is true and onCopyFormula is provided'
+  );
+
+  // Verify App.tsx explicitly disables copy button in Näidis
+  const appPath = path.join(mobileDir, 'App.tsx');
+  const appContent = fs.readFileSync(appPath, 'utf8');
+
+  assert.match(
+    appContent,
+    /audioPrefix="we_step"[\s\S]*?showCopy=\{false\}/,
+    'App.tsx disables copy button in WorkedExample / Näidis'
+  );
+});

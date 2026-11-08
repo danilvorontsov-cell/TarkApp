@@ -2282,7 +2282,7 @@ function MainApp() {
                     .map((step) => cleanEstTags(step).replace(/^\d+[\.\)]\s*/, '').trim())
                     .filter(Boolean)}
                   audioPrefix="we_step"
-                  onCopyFormula={handleCopyFormula}
+                  showCopy={false}
                 />
               </View>
 
@@ -2364,7 +2364,7 @@ function MainApp() {
                     <LessonStepList
                       steps={validSteps}
                       audioPrefix="how_step"
-                      onCopyFormula={handleCopyFormula}
+                      showCopy={false}
                     />
                   </View>
                 );

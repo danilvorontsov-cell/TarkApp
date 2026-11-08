@@ -255,7 +255,7 @@ class WorkedExample(BaseModel):
     )
     note: Optional[str] = Field(
         default="По этому же образцу сделай примеры из своего учебника!",
-        description="Поясняющий вывод или подсказка для самостоятельного решения"
+        description="Сократический наводящий вывод или совет для самостоятельного решения без прямых подсказок правильного ответа"
     )
     speech_text: Optional[str] = Field(
         default=None,
@@ -371,7 +371,7 @@ class GeminiPageAnalysisSchema(BaseModel):
     )
     how_to_answer: str = Field(
         ...,
-        description="Пошаговая инструкция, как ребенку решить задание или ответить на вопрос самому"
+        description="Пошаговая инструкция и сократический алгоритм рассуждения, как ребенку решить задание или ответить на вопрос самому без прямых подсказок вариантов"
     )
     answer_template: str = Field(
         ...,
@@ -387,7 +387,7 @@ class GeminiPageAnalysisSchema(BaseModel):
     )
     how_to_answer_speech: str = Field(
         ...,
-        description="Алгоритм решения полными словами для озвучки"
+        description="Полный алгоритм рассуждения словами для озвучки, передающий наводящую мысль полностью и связно без сокращения до телеграфного стиля"
     )
     worked_example_speech: Optional[str] = Field(
         default=None,
