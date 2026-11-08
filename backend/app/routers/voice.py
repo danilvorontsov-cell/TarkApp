@@ -166,6 +166,11 @@ async def text_to_speech(
             detail="Параметр 'text' не может быть пустым.",
         )
 
+    logger.info(
+        f"[TTS_INTERCEPT] ENDPOINT GET {request.url.path} called: text={repr(clean_text[:120])} (len={len(clean_text)}), "
+        f"lang={lang}, bilingual={bilingual}, grade={grade}, tier={tier}, is_speech_text={is_speech_text}"
+    )
+
     # Проверка политики озвучки для старших звеньев (7-12 классы)
     resolved_tier = tier or (AgeTier.from_grade(grade) if grade else None)
     if resolved_tier and not is_full_audio_enabled(resolved_tier):
@@ -274,6 +279,11 @@ async def text_to_speech_post(
             detail="Параметр 'text' не может быть пустым.",
         )
 
+    logger.info(
+        f"[TTS_INTERCEPT] ENDPOINT POST {request.url.path} called: text={repr(clean_text[:120])} (len={len(clean_text)}), "
+        f"lang={payload.lang}, bilingual={payload.bilingual}, grade={payload.grade}, tier={payload.tier}, is_speech_text={payload.is_speech_text}"
+    )
+
     resolved_tier = None
     if payload.tier:
         try:
@@ -374,6 +384,11 @@ async def speak_word(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Параметр 'text' не может быть пустым.",
         )
+
+    logger.info(
+        f"[TTS_INTERCEPT] ENDPOINT GET {request.url.path} called: text={repr(clean_text[:120])} (len={len(clean_text)}), "
+        f"lang={lang}, is_speech_text={is_speech_text}"
+    )
 
     try:
         voice = VOICE_MAP.get(lang.lower(), VOICE_MAP["et"])

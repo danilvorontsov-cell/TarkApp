@@ -554,3 +554,73 @@ def test_speech_layer_generation_and_ssml_isolation():
     # 2.3 Math sign / legacy normalizer was not invoked (is_speech_text=True bypasses)
     assert "<say-as" not in ssml
     assert "<speak" in ssml and "</speak>" in ssml
+
+
+def test_layer_separation_and_accent_sanitization():
+    """
+    Verify:
+    1. Visual fields in StepItem, WorkedExample, PageAnalysisResponse are sanitized of \u0301.
+    2. Speech fields retain \u0301.
+    3. Prompts mandate verbatim worked_example_speech and mandatory <est>...</est> for cities/timestamps.
+    """
+    from app.models.page_analysis import StepItem, WorkedExample, PageAnalysisResponse, GeminiPageAnalysisSchema
+    from app.prompts.tutor_prompt import ESTONIAN_TUTOR_SYSTEM_PROMPT
+
+    # 1. StepItem sanitization
+    step = StepItem(text="Выбира́ем де́йствие", speech_text="выбира́ем де́йствие")
+    assert step.text == "Выбираем действие"
+    assert "\u0301" in step.speech_text or "́" in step.speech_text
+
+    # 2. WorkedExample sanitization of visual fields
+    we = WorkedExample(
+        title="Приме́р реше́ния (Näidis)",
+        given="Если разлива́ем по́ровну",
+        steps=["1. Дели́м: 15 : 3 = 5", "2. Получа́ем 5"],
+        note="Вспомни, как распределя́ли по́ровну",
+        speech_text="Если разлива́ем по́ровну, де́лим пятнадцать на три...",
+    )
+    assert we.title == "Пример решения (Näidis)"
+    assert we.given == "Если разливаем поровну"
+    assert we.steps == ["1. Делим: 15 : 3 = 5", "2. Получаем 5"]
+    assert we.note == "Вспомни, как распределяли поровну"
+    assert "\u0301" in we.speech_text or "́" in we.speech_text
+
+    # 3. PageAnalysisResponse end-to-end sanitization
+    data = {
+        "task_title": "Деле́ние чисел",
+        "theme_explanation": "Тема объясня́ет деление",
+        "alternative_explanation": "Альт объясне́ние",
+        "vocabulary": [{"est": "jagamine", "ru": "деление", "example": "See on jagamine"}],
+        "worked_example": {
+            "title": "Приме́р",
+            "given": "Дано́ 15 яблок",
+            "steps": ["15 : 3 = 5"],
+            "note": "Сове́т",
+        },
+        "how_to_answer": "Инструкция как счита́ть",
+        "answer_template": "See on [jagamine].",
+        "voice_prompt_script": "Приве́т!",
+        "theme_explanation_speech": "Тема объясня́ет деле́ние полными словами",
+        "how_to_answer_speech": "Инструкция как счита́ть полными словами",
+        "worked_example_speech": "Дано́ пятнадцать яблок. Пятнадцать разделить на три равно пять. Сове́т.",
+    }
+    resp = PageAnalysisResponse.model_validate(data)
+    assert resp.task_title == "Деление чисел"
+    assert resp.theme_explanation == "Тема объясняет деление"
+    assert resp.alternative_explanation == "Альт объяснение"
+    assert resp.how_to_answer == "Инструкция как считать"
+    assert resp.voice_prompt_script == "Привет!"
+    assert resp.worked_example.given == "Дано 15 яблок"
+    assert resp.worked_example.note == "Совет"
+
+    # Speech layer retains accents
+    assert ("деле́ние" in resp.theme_explanation_speech or "деле\u0301ние" in resp.theme_explanation_speech)
+    assert ("Дано́" in resp.worked_example_speech or "Дано\u0301" in resp.worked_example_speech)
+    assert ("Сове́т" in resp.worked_example_speech or "Сове\u0301т" in resp.worked_example_speech)
+
+    # 4. Prompt verification for layer separation, verbatim speech formula and Estonian tags
+    assert "РАЗГРАНИЧЕНИЕ ВИЗУАЛЬНОГО И РЕЧЕВОГО СЛОЕВ" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "СТРОГАЯ СТРУКТУРА WORKED_EXAMPLE_SPEECH (ЗАПРЕТ ВОЛЬНОГО ПЕРЕСКАЗА)" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "[Дословный текст given] + [Шаг 1 полными словами]" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "<est>kell on 9.00</est>" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "<est>Narva</est>" in ESTONIAN_TUTOR_SYSTEM_PROMPT

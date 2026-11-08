@@ -1,6 +1,20 @@
+import re
 from enum import Enum
 from typing import Any, List, Optional, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+def strip_combining_accents(v: Any) -> Any:
+    """Removes Combining Acute Accent (\u0301) and related stress markers from display text."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        return re.sub(r'[\u0301\u0341]', '', v)
+    if isinstance(v, list):
+        return [strip_combining_accents(item) for item in v]
+    if isinstance(v, dict):
+        return {k: strip_combining_accents(val) for k, val in v.items()}
+    return v
 
 
 class AgeTier(str, Enum):
@@ -166,7 +180,7 @@ class StepItem(BaseModel):
         s = str(v or "").strip()
         if not s:
             raise ValueError("Поле 'text' шага не может быть пустым")
-        return s
+        return strip_combining_accents(s)
 
     @model_validator(mode="after")
     def fallback_speech_text(self) -> "StepItem":
@@ -187,7 +201,12 @@ class SelfSolveStep(BaseModel):
         s = str(v or "").strip()
         if not s:
             raise ValueError("Поле 'text' шага не может быть пустым")
-        return s
+        return strip_combining_accents(s)
+
+    @field_validator("hint", mode="before")
+    @classmethod
+    def sanitize_hint(cls, v: Any) -> Optional[str]:
+        return strip_combining_accents(v)
 
     @model_validator(mode="after")
     def fallback_speech_text(self) -> "SelfSolveStep":
@@ -209,7 +228,12 @@ class LessonCard(BaseModel):
         s = str(v or "").strip()
         if not s:
             raise ValueError("Поле 'text' карточки не может быть пустым")
-        return s
+        return strip_combining_accents(s)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def sanitize_title(cls, v: Any) -> Optional[str]:
+        return strip_combining_accents(v)
 
     @model_validator(mode="after")
     def fallback_speech_text(self) -> "LessonCard":
@@ -262,15 +286,20 @@ class WorkedExample(BaseModel):
         description="Речевой слой для TTS примера решения"
     )
 
+    @field_validator("title", "given", "note", mode="before")
+    @classmethod
+    def sanitize_worked_example_text(cls, v: Any) -> Any:
+        return strip_combining_accents(v)
+
     @field_validator("steps", mode="before")
     @classmethod
     def clean_steps(cls, v) -> List[str]:
         if not v:
             return []
         if isinstance(v, list):
-            return [str(s).strip() for s in v if s and str(s).strip()]
+            return [strip_combining_accents(str(s).strip()) for s in v if s and str(s).strip()]
         if isinstance(v, str):
-            cleaned = str(v).strip()
+            cleaned = strip_combining_accents(str(v).strip())
             return [cleaned] if cleaned else []
         return []
 
@@ -316,9 +345,9 @@ class SelfSolveGuide(BaseModel):
         if v is None:
             return None
         if isinstance(v, list):
-            return [str(s).strip() for s in v if s and str(s).strip()]
+            return [strip_combining_accents(str(s).strip()) for s in v if s and str(s).strip()]
         if isinstance(v, str):
-            cleaned = str(v).strip()
+            cleaned = strip_combining_accents(str(v).strip())
             return [cleaned] if cleaned else []
         return []
 
@@ -406,6 +435,16 @@ class GeminiPageAnalysisSchema(BaseModel):
         description="Флаг пригодности снимка: False, если фото не читаемое/размытое и выдан обучающий fallback"
     )
 
+    @field_validator("task_title", "theme_explanation", "how_to_answer", "voice_prompt_script", mode="before")
+    @classmethod
+    def sanitize_schema_visual_strings(cls, v: Any) -> str:
+        return strip_combining_accents(str(v or ""))
+
+    @field_validator("alternative_explanation", mode="before")
+    @classmethod
+    def sanitize_schema_alt_visual(cls, v: Any) -> Optional[str]:
+        return strip_combining_accents(v)
+
 
 class PageAnalysisResponse(GeminiPageAnalysisSchema):
     lesson_id: Optional[str] = Field(
@@ -446,18 +485,34 @@ class PageAnalysisResponse(GeminiPageAnalysisSchema):
         if isinstance(data, dict):
             for key in ("steps", "guided_steps", "actions"):
                 if key in data and isinstance(data[key], list):
-                    data[key] = [str(s).strip() for s in data[key] if s and str(s).strip()]
+                    data[key] = [strip_combining_accents(str(s).strip()) for s in data[key] if s and str(s).strip()]
+            for display_key in ("task_title", "theme_explanation", "alternative_explanation", "how_to_answer", "voice_prompt_script"):
+                if display_key in data and data[display_key]:
+                    data[display_key] = strip_combining_accents(data[display_key])
             if "worked_example" in data and isinstance(data["worked_example"], dict):
-                we_steps = data["worked_example"].get("steps")
-                if isinstance(we_steps, list):
-                    data["worked_example"]["steps"] = [str(s).strip() for s in we_steps if s and str(s).strip()]
+                we = data["worked_example"]
+                if "steps" in we and isinstance(we["steps"], list):
+                    we["steps"] = [strip_combining_accents(str(s).strip()) for s in we["steps"] if s and str(s).strip()]
+                if "given" in we and we["given"]:
+                    we["given"] = strip_combining_accents(we["given"])
+                if "note" in we and we["note"]:
+                    we["note"] = strip_combining_accents(we["note"])
+                if "title" in we and we["title"]:
+                    we["title"] = strip_combining_accents(we["title"])
         return data
 
     @model_validator(mode="after")
     def populate_speech_layer(self) -> "PageAnalysisResponse":
         try:
-            if self.worked_example and getattr(self.worked_example, "steps", None):
-                self.worked_example.steps = [str(s).strip() for s in self.worked_example.steps if s and str(s).strip()]
+            if self.worked_example:
+                if getattr(self.worked_example, "steps", None):
+                    self.worked_example.steps = [strip_combining_accents(str(s).strip()) for s in self.worked_example.steps if s and str(s).strip()]
+                if getattr(self.worked_example, "given", None):
+                    self.worked_example.given = strip_combining_accents(self.worked_example.given)
+                if getattr(self.worked_example, "note", None):
+                    self.worked_example.note = strip_combining_accents(self.worked_example.note)
+                if getattr(self.worked_example, "title", None):
+                    self.worked_example.title = strip_combining_accents(self.worked_example.title)
 
             v_speech = (self.voice_prompt_script_speech or "").strip() or self.voice_prompt_script or ""
             th_speech = (self.theme_explanation_speech or "").strip() or self.theme_explanation or ""

@@ -613,6 +613,20 @@ def _release_synthesizer(synthesizer: Any) -> None:
         pass
 
 
+def _format_accent_diagnostics(text: str) -> dict:
+    has_accent = "\u0301" in text
+    accented_words = []
+    if has_accent:
+        for word in text.split():
+            if "\u0301" in word:
+                utf8_hex = " ".join(f"{b:02X}" for b in word.encode("utf-8"))
+                accented_words.append(f"{word} (hex: {utf8_hex})")
+    return {
+        "present": has_accent,
+        "words": accented_words,
+    }
+
+
 def _synthesize_azure_ssml(ssml: str) -> bytes:
     """Синхронный вызов Azure Speech SDK speak_ssml_async().get() с пулом синтезаторов и синглтоном SpeechConfig."""
     if speechsdk is None:
@@ -627,6 +641,15 @@ def _synthesize_azure_ssml(ssml: str) -> bytes:
     synthesizer = _acquire_synthesizer(speech_config)
 
     azure_ssml = ssml.replace("ru-RU-SvetlanaMultilingualNeural", "ru-RU-SvetlanaNeural")
+    has_accent = "\u0301" in azure_ssml
+    accent_words = [w for w in azure_ssml.split() if "\u0301" in w]
+    logger.info("=" * 60)
+    logger.info(f"[TTS_INTERCEPT] >>> OUTGOING SSML TO AZURE SDK (len={len(azure_ssml)}):")
+    logger.info(f"[TTS_INTERCEPT] FINAL SSML PAYLOAD:\n{azure_ssml}")
+    logger.info(f"[TTS_INTERCEPT] CONTAINS COMBINING ACUTE (\\u0301): {has_accent}")
+    if has_accent:
+        logger.info(f"[TTS_INTERCEPT] ACCENTED WORDS: {accent_words}")
+    logger.info("=" * 60)
     try:
         result = synthesizer.speak_ssml_async(azure_ssml).get()
     except Exception:
@@ -635,6 +658,7 @@ def _synthesize_azure_ssml(ssml: str) -> bytes:
 
     if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
         _release_synthesizer(synthesizer)
+        logger.info(f"[TTS_INTERCEPT] Azure Speech SDK completed: {len(result.audio_data)} bytes received")
         return result.audio_data
     elif result.reason == speechsdk.ResultReason.Canceled:
         details = result.cancellation_details
@@ -677,11 +701,23 @@ async def get_or_synthesize_audio(
         return b""
     ssml_hash = hashlib.md5(ssml.encode("utf-8")).hexdigest()
 
+    ssml_text = ssml
+    has_accent = "\u0301" in ssml_text
+    logger.info("=" * 60)
+    logger.info(f"[TTS_INTERCEPT] INCOMING TEXT: {repr(text)}")
+    logger.info(f"[TTS_INTERCEPT] FLAGS: is_speech_text={is_speech_text}, voice={voice}, bilingual={bilingual}, grade={grade}, tier={tier}")
+    logger.info(f"[TTS_INTERCEPT] FINAL SSML PAYLOAD:\n{ssml_text}")
+    logger.info(f"[TTS_INTERCEPT] CONTAINS COMBINING ACUTE (\\u0301): {has_accent}")
+    if has_accent:
+        accent_words = [w for w in ssml_text.split() if "\u0301" in w]
+        logger.info(f"[TTS_INTERCEPT] ACCENTED WORDS: {accent_words}")
+    logger.info("=" * 60)
+
     # 1. Быстрый возврат из оперативной памяти
     if ssml_hash in _TTS_STREAM_CACHE:
         if isinstance(_TTS_STREAM_CACHE, OrderedDict):
             _TTS_STREAM_CACHE.move_to_end(ssml_hash)
-        logger.info(f"Serving TTS from RAM cache (md5={ssml_hash[:10]}...)")
+        logger.info(f"[TTS_INTERCEPT] CACHE STATUS: RAM_HIT (hash={ssml_hash})")
         return _TTS_STREAM_CACHE[ssml_hash]
 
     # 2. Проверка единого локального файлового кэша на диске
@@ -701,7 +737,7 @@ async def get_or_synthesize_audio(
                         os.utime(cache_file, None)
                     except OSError:
                         pass
-                    logger.info(f"Serving TTS from disk cache: {cache_file} (md5={ssml_hash[:10]}...)")
+                    logger.info(f"[TTS_INTERCEPT] CACHE STATUS: DISK_HIT (hash={ssml_hash}, path={cache_file})")
                     _store_in_memory_cache(_TTS_STREAM_CACHE, ssml_hash, cached_bytes)
                     return cached_bytes
                 else:
@@ -713,7 +749,7 @@ async def get_or_synthesize_audio(
     # 3. Дедупликация: если для этого SSML уже запущен запрос, ожидаем текущую задачу с таймаутом
     existing_task = _IN_FLIGHT_TASKS.get(ssml_hash)
     if existing_task is not None and not existing_task.done():
-        logger.info(f"Awaiting in-flight Azure Speech task for md5={ssml_hash[:10]}...")
+        logger.info(f"[TTS_INTERCEPT] CACHE STATUS: AWAITING_IN_FLIGHT (hash={ssml_hash})")
         try:
             return await asyncio.wait_for(asyncio.shield(existing_task), timeout=AZURE_SYNTHESIS_TIMEOUT_SEC)
         except Exception:
@@ -722,7 +758,7 @@ async def get_or_synthesize_audio(
     # 4. Синтез через Azure Speech SDK с жестким таймаутом 10.0 с и гарантированной очисткой _IN_FLIGHT_TASKS
     async def _worker() -> bytes:
         try:
-            logger.info(f"Synthesizing audio via Azure Speech SDK (md5={ssml_hash[:10]}...)")
+            logger.info(f"[TTS_INTERCEPT] CACHE STATUS: AZURE_SYNTHESIS (hash={ssml_hash})")
             audio_bytes = await asyncio.wait_for(
                 asyncio.to_thread(_synthesize_azure_ssml, ssml),
                 timeout=AZURE_SYNTHESIS_TIMEOUT_SEC,
@@ -732,7 +768,7 @@ async def get_or_synthesize_audio(
                     AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
                     cache_file.write_bytes(audio_bytes)
                     _enforce_disk_cache_limits(AUDIO_CACHE_DIR)
-                    logger.info(f"Cached audio to disk: {cache_file} ({len(audio_bytes)} bytes)")
+                    logger.info(f"[TTS_INTERCEPT] Cached audio to disk: {cache_file} ({len(audio_bytes)} bytes)")
                 except Exception as write_err:
                     logger.warning(f"Failed to write audio cache file {cache_file}: {write_err}")
 
