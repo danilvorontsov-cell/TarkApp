@@ -346,9 +346,8 @@ class LessonSpeechLayer(BaseModel):
 
 class GeminiPageAnalysisSchema(BaseModel):
     """
-    Компактная выходная JSON-схема для Gemini Structured Outputs (только Display-слой).
-    Исключает дублирующие поля speech_layer и *_speech для экономии ~25-30% выходных токенов
-    и ускорения генерации; speech_layer вычисляется детерминированно на бэкенде (< 1 мс).
+    Выходная JSON-схема для Gemini Structured Outputs (Display-слой и Speech-слой).
+    Генерирует чистые отображаемые тексты и напрямую подготовленный речевой слой без цифр и формул.
     """
     task_title: str = Field(
         ...,
@@ -381,6 +380,26 @@ class GeminiPageAnalysisSchema(BaseModel):
     voice_prompt_script: str = Field(
         ...,
         description="Короткий поддерживающий текст (2-3 предложения) для мгновенной озвучки ребенку"
+    )
+    theme_explanation_speech: str = Field(
+        ...,
+        description="Текст объяснения темы полными словами для озвучки без цифр и формул"
+    )
+    how_to_answer_speech: str = Field(
+        ...,
+        description="Алгоритм решения полными словами для озвучки"
+    )
+    worked_example_speech: Optional[str] = Field(
+        default=None,
+        description="Разбор примера полными словами"
+    )
+    voice_prompt_script_speech: Optional[str] = Field(
+        default=None,
+        description="Приветствие диктора полными словами"
+    )
+    alternative_explanation_speech: Optional[str] = Field(
+        default=None,
+        description="Speech-слой для alternative_explanation"
     )
     is_acceptable: Optional[bool] = Field(
         default=True,
@@ -439,28 +458,27 @@ class PageAnalysisResponse(GeminiPageAnalysisSchema):
         try:
             if self.worked_example and getattr(self.worked_example, "steps", None):
                 self.worked_example.steps = [str(s).strip() for s in self.worked_example.steps if s and str(s).strip()]
-            from app.services.tts_normalizer import (
-                prepare_speech_text,
-                prepare_worked_example_speech,
-                filter_card_headers_from_speech,
-            )
 
-            v_speech = self.voice_prompt_script_speech or prepare_speech_text(self.voice_prompt_script)
-            th_speech = self.theme_explanation_speech or prepare_speech_text(self.theme_explanation)
-            alt_speech = self.alternative_explanation_speech or (
-                prepare_speech_text(self.alternative_explanation) if self.alternative_explanation else None
-            )
-            how_speech = self.how_to_answer_speech or prepare_speech_text(self.how_to_answer)
-            ex_speech = self.worked_example_speech or (
-                prepare_worked_example_speech(self.worked_example) if self.worked_example else None
-            )
+            v_speech = (self.voice_prompt_script_speech or "").strip() or self.voice_prompt_script or ""
+            th_speech = (self.theme_explanation_speech or "").strip() or self.theme_explanation or ""
+            alt_speech = (self.alternative_explanation_speech or "").strip() or self.alternative_explanation
+            how_speech = (self.how_to_answer_speech or "").strip() or self.how_to_answer or ""
+
+            ex_speech = (self.worked_example_speech or "").strip()
+            if not ex_speech and self.worked_example:
+                parts = []
+                if self.worked_example.given:
+                    parts.append(self.worked_example.given)
+                if self.worked_example.steps:
+                    parts.extend(self.worked_example.steps)
+                if self.worked_example.note:
+                    parts.append(self.worked_example.note)
+                ex_speech = " ".join(parts) if parts else None
 
             self.voice_prompt_script_speech = v_speech
             self.theme_explanation_speech = th_speech
             self.alternative_explanation_speech = alt_speech
             self.how_to_answer_speech = how_speech
-            if ex_speech:
-                ex_speech = filter_card_headers_from_speech(ex_speech)
             self.worked_example_speech = ex_speech
 
             if not self.speech_text or not self.speech_text.strip():

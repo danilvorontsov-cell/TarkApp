@@ -116,3 +116,33 @@ test('Scenario 5: App.tsx handles empty steps and passes speech_text to audio', 
     'App.tsx worked_example steps formatting cleans ordinal prefixes'
   );
 });
+
+test('Scenario 6: Cache key differentiation by grade and tier, and vocabulary speech_text passing', () => {
+  const aqmPath = path.join(mobileDir, 'src', 'services', 'audioQueueManager.ts');
+  const aqmContent = fs.readFileSync(aqmPath, 'utf8');
+
+  assert.match(
+    aqmContent,
+    /_g\$\{gKey\}_/,
+    'getFilePath must incorporate grade in filename'
+  );
+  assert.match(
+    aqmContent,
+    /\$\{tKey\}_/,
+    'getFilePath must incorporate tier in filename'
+  );
+
+  const appPath = path.join(mobileDir, 'App.tsx');
+  const appContent = fs.readFileSync(appPath, 'utf8');
+
+  assert.match(
+    appContent,
+    /handlePlayAudio\(cleanEstTags\(v\.est\),\s*'et',\s*`vocab_\$\{idx\}`, false,\s*cleanEstTags\(v\.est\)\)/,
+    'App.tsx passes cleanEstTags as speech_text for v.est'
+  );
+  assert.match(
+    appContent,
+    /handlePlayAudio\(cleanEstTags\(v\.example\),\s*'et',\s*`vocab_ex_\$\{idx\}`, false,\s*cleanEstTags\(v\.example\)\)/,
+    'App.tsx passes cleanEstTags as speech_text for v.example'
+  );
+});

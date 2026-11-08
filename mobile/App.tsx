@@ -1454,7 +1454,7 @@ function MainApp() {
     } else {
       setExpandedWord(item.est);
       // Auto pronounce Estonian word with +20% volume
-      handlePlayAudio(item.est, 'et', `saved_vocab_${item.est}`);
+      handlePlayAudio(cleanEstTags(item.est), 'et', `saved_vocab_${item.est}`, false, cleanEstTags(item.est));
     }
   };
 
@@ -2139,7 +2139,7 @@ function MainApp() {
                             isVocabActive && styles.vocabCircleSpeakerActive,
                             isVocabPaused && styles.vocabCircleSpeakerPaused,
                           ]}
-                          onPress={() => handlePlayAudio(cleanEstTags(v.est), 'et', `vocab_${idx}`)}
+                          onPress={() => handlePlayAudio(cleanEstTags(v.est), 'et', `vocab_${idx}`, false, cleanEstTags(v.est))}
                           accessibilityLabel={`Озвучить слово ${v.est}`}
                         >
                           {loadingAudioId === `vocab_${idx}` ? (
@@ -2175,7 +2175,7 @@ function MainApp() {
                             isExActive && styles.vocabCircleSpeakerActive,
                             isExPaused && styles.vocabCircleSpeakerPaused,
                           ]}
-                          onPress={() => handlePlayAudio(cleanEstTags(v.example), 'et', `vocab_ex_${idx}`)}
+                          onPress={() => handlePlayAudio(cleanEstTags(v.example), 'et', `vocab_ex_${idx}`, false, cleanEstTags(v.example))}
                           accessibilityLabel={`Озвучить пример ${v.example}`}
                         >
                           {loadingAudioId === `vocab_ex_${idx}` ? (
@@ -2633,7 +2633,7 @@ function MainApp() {
                                   isItemActive && styles.vocabCardSpeakerActive,
                                   isItemPaused && styles.vocabCardSpeakerPaused,
                                 ]}
-                                onPress={() => handlePlayAudio(cleanEstTags(item.est), 'et', `saved_vocab_${item.est}`)}
+                                onPress={() => handlePlayAudio(cleanEstTags(item.est), 'et', `saved_vocab_${item.est}`, false, cleanEstTags(item.est))}
                               >
                                 {loadingAudioId === `saved_vocab_${item.est}` ? (
                                   <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.7 }] }} />
@@ -2664,7 +2664,7 @@ function MainApp() {
                                     isExActive && styles.vocabCardSpeakerActive,
                                     isExPaused && styles.vocabCardSpeakerPaused,
                                   ]}
-                                  onPress={() => handlePlayAudio(cleanEstTags(item.example), 'et', `saved_ex_${item.est}`)}
+                                  onPress={() => handlePlayAudio(cleanEstTags(item.example), 'et', `saved_ex_${item.est}`, false, cleanEstTags(item.example))}
                                 >
                                   {loadingAudioId === `saved_ex_${item.est}` ? (
                                     <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.7 }] }} />

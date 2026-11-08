@@ -1,9 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const resolvePath = (p) => fs.existsSync(p) ? p : path.resolve(__dirname, '..', p.replace(/^mobile\//, ''));
 
 test('Scenario 1: SHOW_CUBES_DEMO feature flag exists and is defaulted to false', () => {
-  const featuresContent = fs.readFileSync('mobile/src/config/features.ts', 'utf-8');
+  const featuresContent = fs.readFileSync(resolvePath('mobile/src/config/features.ts'), 'utf-8');
   assert.match(
     featuresContent,
     /export\s+const\s+SHOW_CUBES_DEMO\s*=\s*false;/,
@@ -12,7 +18,7 @@ test('Scenario 1: SHOW_CUBES_DEMO feature flag exists and is defaulted to false'
 });
 
 test('Scenario 2: DrawerMenu gates the cubes demo menu item behind SHOW_CUBES_DEMO / showCubesDemo', () => {
-  const drawerContent = fs.readFileSync('mobile/src/components/DrawerMenu.tsx', 'utf-8');
+  const drawerContent = fs.readFileSync(resolvePath('mobile/src/components/DrawerMenu.tsx'), 'utf-8');
 
   // Verify import
   assert.match(
@@ -33,7 +39,7 @@ test('Scenario 2: DrawerMenu gates the cubes demo menu item behind SHOW_CUBES_DE
 });
 
 test('Scenario 3: HomeScreen quick demo button is conditionally hidden by SHOW_CUBES_DEMO', () => {
-  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+  const appContent = fs.readFileSync(resolvePath('mobile/App.tsx'), 'utf-8');
 
   // Verify import
   assert.match(
@@ -51,7 +57,7 @@ test('Scenario 3: HomeScreen quick demo button is conditionally hidden by SHOW_C
 });
 
 test('Scenario 4: LessonScreen top control bar demo switch button is hidden by SHOW_CUBES_DEMO', () => {
-  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+  const appContent = fs.readFileSync(resolvePath('mobile/App.tsx'), 'utf-8');
 
   // Verify top bar demo switch button is wrapped
   assert.match(
@@ -62,7 +68,7 @@ test('Scenario 4: LessonScreen top control bar demo switch button is hidden by S
 });
 
 test('Scenario 5: TaskVisualizer block under voice hint is conditionally hidden by SHOW_CUBES_DEMO', () => {
-  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+  const appContent = fs.readFileSync(resolvePath('mobile/App.tsx'), 'utf-8');
 
   // Verify TaskVisualizer is conditionally rendered
   assert.match(
@@ -73,8 +79,8 @@ test('Scenario 5: TaskVisualizer block under voice hint is conditionally hidden 
 });
 
 test('Scenario 6: TaskVisualizer component code and animation logic are preserved intact', () => {
-  assert.ok(fs.existsSync('mobile/src/components/TaskVisualizer.tsx'), 'TaskVisualizer.tsx must exist');
-  const visualizerContent = fs.readFileSync('mobile/src/components/TaskVisualizer.tsx', 'utf-8');
+  assert.ok(fs.existsSync(resolvePath('mobile/src/components/TaskVisualizer.tsx')), 'TaskVisualizer.tsx must exist');
+  const visualizerContent = fs.readFileSync(resolvePath('mobile/src/components/TaskVisualizer.tsx'), 'utf-8');
 
   // Verify core visualization elements and styles exist
   assert.match(visualizerContent, /export const TaskVisualizer/);

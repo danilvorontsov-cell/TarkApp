@@ -360,3 +360,65 @@ def test_client_audio_cache_version_and_invalidation():
     assert "storedVersion < AUDIO_CACHE_VERSION" in aqm_content
     assert "deleteAsync" in aqm_content
     assert "deleteAsync" in ap_content
+
+
+def test_gemini_schema_structured_outputs_speech_fields():
+    """Verify GeminiPageAnalysisSchema includes speech layer fields for structured outputs."""
+    from app.models.page_analysis import GeminiPageAnalysisSchema
+    props = GeminiPageAnalysisSchema.model_json_schema().get("properties", {})
+    required = GeminiPageAnalysisSchema.model_json_schema().get("required", [])
+
+    assert "theme_explanation_speech" in props
+    assert "how_to_answer_speech" in props
+    assert "worked_example_speech" in props
+    assert "voice_prompt_script_speech" in props
+    assert "alternative_explanation_speech" in props
+    assert "theme_explanation_speech" in required
+    assert "how_to_answer_speech" in required
+
+
+def test_ssml_isolation_keywords_and_accents():
+    """
+    Verify SSML generator preserves acute accents \u0301 and does not slice
+    ESTONIAN_CORE_KEYWORDS or re-normalize quotes when is_speech_text=True.
+    """
+    from app.services.tts_service import build_ssml, parse_bilingual_segments
+
+    # 1. Combining acute accent preservation
+    speech_with_accents = "У нас есть дели\u0301мое и вычита\u0301емое."
+    ssml = build_ssml(speech_with_accents, is_speech_text=True)
+    assert "дели\u0301мое" in ssml or "дели́мое" in ssml
+    assert "вычита\u0301емое" in ssml or "вычита́емое" in ssml
+    assert "ru-RU-SvetlanaNeural" in ssml
+
+    # 2. No Estonian keywords carved out from Russian text when is_speech_text=True
+    # 'summa' is in ESTONIAN_CORE_KEYWORDS. In normal text it might get sliced,
+    # but in speech_text it remains in the Russian voice block
+    russian_speech = "Полученная сумма чисел равна десяти."
+    ssml_kw = build_ssml(russian_speech, is_speech_text=True)
+    assert "<lang xml:lang=\"et-EE\">" not in ssml_kw
+
+    # 3. parse_bilingual_segments disables normalize_text_for_estonian_tts when is_speech_text=True
+    segs = parse_bilingual_segments("Слово «kass» означает кошка.", is_speech_text=True)
+    assert any(s[0] == "kass" for s in segs)
+
+
+def test_speak_endpoint_supports_is_speech_text(client, monkeypatch):
+    """Verify GET /api/v1/voice/speak accepts is_speech_text and passes to tts_service."""
+    captured = {}
+    async def mock_synth(text, voice="et-EE-AnuNeural", bilingual=False, grade=None, tier=None, is_speech_text=False):
+        captured["text"] = text
+        captured["voice"] = voice
+        captured["is_speech_text"] = is_speech_text
+        return b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x44" * 300
+
+    from app.routers import voice as voice_router
+    monkeypatch.setattr(voice_router, "get_or_synthesize_audio", mock_synth)
+
+    resp = client.get(
+        "/api/v1/voice/speak?text=kass&lang=et&is_speech_text=true",
+        headers={"X-Device-ID": "dev-test-device-0001"},
+    )
+    assert resp.status_code == 200
+    assert captured.get("is_speech_text") is True
+    assert captured.get("text") == "kass"

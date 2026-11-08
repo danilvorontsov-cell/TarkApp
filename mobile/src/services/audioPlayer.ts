@@ -385,7 +385,7 @@ export async function playTts(
       await ensureAudioCacheDir(cacheDir);
 
       const hashStr = getFileHash(synthText);
-      const localFilePath = `${cacheDir}${lang}_${bilingual ? 'bi' : 'mono'}_${hashStr}.mp3`;
+      const localFilePath = `${cacheDir}${lang}_${bilingual ? 'bi' : 'mono'}_g${effectiveGrade || 1}_${effectiveTier || 'pri'}_${hashStr}.mp3`;
       await FileSystem.writeAsStringAsync(localFilePath, base64Data, {
         encoding: FileSystem.EncodingType.Base64,
       });

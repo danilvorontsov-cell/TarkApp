@@ -344,11 +344,11 @@ def test_idempotency_ssml_breaks_and_compact_schema():
     req = Request(scope)
     assert get_device_or_ip(req) == "203.0.113.10:dev-abc-123"
 
-    # 5. Компактная схема GeminiPageAnalysisSchema не содержит speech_layer и *_speech
+    # 5. GeminiPageAnalysisSchema содержит поля речевого слоя, но не контейнер speech_layer
     schema_props = GeminiPageAnalysisSchema.model_json_schema().get("properties", {})
     assert "speech_layer" not in schema_props
-    assert "voice_prompt_script_speech" not in schema_props
-    assert "theme_explanation_speech" not in schema_props
+    assert "voice_prompt_script_speech" in schema_props
+    assert "theme_explanation_speech" in schema_props
 
     # А PageAnalysisResponse детерминированно заполняет speech_layer менее чем за 5 мс
     t0 = time.perf_counter()

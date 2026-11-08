@@ -1,5 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const resolvePath = (p) => fs.existsSync(p) ? p : path.resolve(__dirname, '..', p.replace(/^mobile\//, ''));
+const readMobileFile = (p) => fs.readFileSync(resolvePath(p), 'utf-8');
 
 test('Scenario 1: Session state invalidation on logout prevents in-flight analysis resurrection', async () => {
   let sessionLessons = [{ id: 'lesson_1', title: 'Loomad metsas' }];
@@ -79,7 +87,7 @@ test('Scenario 2: Logout clears all active lesson cards and returns to empty stu
 
 test('Scenario 3: Alternative explanation badge tokens conform to Dark Nordic contrast spec', async () => {
   const fs = await import('node:fs');
-  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+  const appContent = readMobileFile('mobile/App.tsx', 'utf-8');
 
   // Verify badge styles in App.tsx
   assert.match(
@@ -109,7 +117,7 @@ test('Scenario 3: Alternative explanation badge tokens conform to Dark Nordic co
 
 test('Scenario 4: Fullscreen LoadingOverlay is imported and rendered on loading state', async () => {
   const fs = await import('node:fs');
-  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+  const appContent = readMobileFile('mobile/App.tsx', 'utf-8');
 
   assert.match(
     appContent,
@@ -138,8 +146,8 @@ test('Scenario 4: Fullscreen LoadingOverlay is imported and rendered on loading 
 
 test('Scenario 5: Concave downward arch header geometry and burger touch priority', async () => {
   const fs = await import('node:fs');
-  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
-  const drawerContent = fs.readFileSync('mobile/src/components/DrawerMenu.tsx', 'utf-8');
+  const appContent = readMobileFile('mobile/App.tsx', 'utf-8');
+  const drawerContent = readMobileFile('mobile/src/components/DrawerMenu.tsx', 'utf-8');
 
   // Verify headerBar has flat bottom, position: 'relative', zIndex: 10, elevation: 10
   assert.match(
@@ -172,7 +180,7 @@ test('Scenario 5: Concave downward arch header geometry and burger touch priorit
 
 test('Scenario 6: Immediate loading state on camera and gallery selection', async () => {
   const fs = await import('node:fs');
-  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+  const appContent = readMobileFile('mobile/App.tsx', 'utf-8');
 
   // handleTakePhoto immediately calls setLoading(true) before image optimization
   assert.match(
@@ -191,7 +199,7 @@ test('Scenario 6: Immediate loading state on camera and gallery selection', asyn
 
 test('Scenario 7: Näidis badge, step numbers, and next task button contrast tokens', async () => {
   const fs = await import('node:fs');
-  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+  const appContent = readMobileFile('mobile/App.tsx', 'utf-8');
 
   // naidisBadge and naidisBadgeText
   assert.match(
@@ -217,8 +225,8 @@ test('Scenario 7: Näidis badge, step numbers, and next task button contrast tok
 
 test('Scenario 8: Drawer footer branding and Header vertical gradient', async () => {
   const fs = await import('node:fs');
-  const drawerContent = fs.readFileSync('mobile/src/components/DrawerMenu.tsx', 'utf-8');
-  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
+  const drawerContent = readMobileFile('mobile/src/components/DrawerMenu.tsx', 'utf-8');
+  const appContent = readMobileFile('mobile/App.tsx', 'utf-8');
 
   // Verify Drawer footer text
   assert.match(
@@ -237,10 +245,10 @@ test('Scenario 8: Drawer footer branding and Header vertical gradient', async ()
 
 test('Scenario 9: End-to-end Graphite & Mint WCAG contrast audit across all components', async () => {
   const fs = await import('node:fs');
-  const appContent = fs.readFileSync('mobile/App.tsx', 'utf-8');
-  const comingSoonContent = fs.readFileSync('mobile/src/components/ComingSoonCard.tsx', 'utf-8');
-  const avatarModalContent = fs.readFileSync('mobile/src/components/AvatarPickerModal.tsx', 'utf-8');
-  const licenseModalContent = fs.readFileSync('mobile/src/components/LicenseActivationModal.tsx', 'utf-8');
+  const appContent = readMobileFile('mobile/App.tsx', 'utf-8');
+  const comingSoonContent = readMobileFile('mobile/src/components/ComingSoonCard.tsx', 'utf-8');
+  const avatarModalContent = readMobileFile('mobile/src/components/AvatarPickerModal.tsx', 'utf-8');
+  const licenseModalContent = readMobileFile('mobile/src/components/LicenseActivationModal.tsx', 'utf-8');
 
   // Verify App.tsx outline buttons and translucent badges use #5FEDC5
   assert.match(appContent, /tierBadgeText:\s*\{[^}]*color:\s*['"]#5FEDC5['"]/s);
@@ -264,8 +272,8 @@ test('Scenario 9: End-to-end Graphite & Mint WCAG contrast audit across all comp
 
 test('Scenario 10: PaywallScreen invoice endpoint and Graphite & Mint email input styling', async () => {
   const fs = await import('node:fs');
-  const paywallContent = fs.readFileSync('mobile/src/screens/PaywallScreen.tsx', 'utf-8');
-  const apiContent = fs.readFileSync('mobile/src/services/api.ts', 'utf-8');
+  const paywallContent = readMobileFile('mobile/src/screens/PaywallScreen.tsx', 'utf-8');
+  const apiContent = readMobileFile('mobile/src/services/api.ts', 'utf-8');
 
   // Verify real invoice endpoint in api.ts
   assert.match(apiContent, /\/api\/v1\/license\/invoice/);
@@ -293,8 +301,8 @@ test('Scenario 10: PaywallScreen invoice endpoint and Graphite & Mint email inpu
 
 test('Scenario 11: Invoice UI displays clean user-friendly messaging without technical SMTP / .env leaks', async () => {
   const fs = await import('node:fs');
-  const paywallContent = fs.readFileSync('mobile/src/screens/PaywallScreen.tsx', 'utf-8');
-  const apiContent = fs.readFileSync('mobile/src/services/api.ts', 'utf-8');
+  const paywallContent = readMobileFile('mobile/src/screens/PaywallScreen.tsx', 'utf-8');
+  const apiContent = readMobileFile('mobile/src/services/api.ts', 'utf-8');
 
   // Verify Closed Beta banner
   assert.match(paywallContent, /Пилотный запуск \(Closed Beta\)/);
@@ -318,8 +326,8 @@ test('Scenario 11: Invoice UI displays clean user-friendly messaging without tec
 
 test('Scenario 12: Recipient is Tark Systems OÜ and explanation format is concise (Tarkapp, <INV-NUMBER>)', async () => {
   const fs = await import('node:fs');
-  const paywallContent = fs.readFileSync('mobile/src/screens/PaywallScreen.tsx', 'utf-8');
-  const subContent = fs.readFileSync('mobile/src/utils/subscription.ts', 'utf-8');
+  const paywallContent = readMobileFile('mobile/src/screens/PaywallScreen.tsx', 'utf-8');
+  const subContent = readMobileFile('mobile/src/utils/subscription.ts', 'utf-8');
 
   // Recipient must be Tark Systems OÜ
   assert.match(subContent, /recipient_name:\s*['"]Tark Systems OÜ['"]/);

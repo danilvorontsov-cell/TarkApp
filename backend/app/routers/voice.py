@@ -366,6 +366,7 @@ async def speak_word(
     request: Request,
     text: str = Query(..., min_length=1, max_length=300, description="Слово или короткая фраза"),
     lang: str = Query(default="et", description="Язык произношения ('et' или 'ru')"),
+    is_speech_text: bool = Query(default=False, description="Флаг: текст уже подготовлен для TTS"),
 ):
     clean_text = text.strip()
     if not clean_text:
@@ -376,7 +377,9 @@ async def speak_word(
 
     try:
         voice = VOICE_MAP.get(lang.lower(), VOICE_MAP["et"])
-        audio_bytes = await get_or_synthesize_audio(clean_text, voice=voice, bilingual=False)
+        audio_bytes = await get_or_synthesize_audio(
+            clean_text, voice=voice, bilingual=False, is_speech_text=is_speech_text
+        )
 
         if not audio_bytes:
             raise HTTPException(
@@ -384,7 +387,7 @@ async def speak_word(
                 detail="Не удалось озвучить слово.",
             )
 
-        audio_hash = hashlib.sha256(f"{voice}:{clean_text.lower()}".encode("utf-8")).hexdigest()
+        audio_hash = hashlib.sha256(f"{voice}:{is_speech_text}:{clean_text.lower()}".encode("utf-8")).hexdigest()
         file_path = AUDIO_STATIC_DIR / f"{audio_hash}.mp3"
         try:
             if not file_path.exists() or file_path.stat().st_size != len(audio_bytes):

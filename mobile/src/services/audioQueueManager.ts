@@ -193,9 +193,19 @@ class AudioQueueManagerClass {
     return getFileHash(str);
   }
 
-  private getFilePath(textOrItem: string | { text: string; speech_text?: string }, lang: string, bilingual: boolean): string {
+  public getFilePath(
+    textOrItem: string | { text: string; speech_text?: string; grade?: number; tier?: string },
+    lang: string,
+    bilingual: boolean,
+    grade?: number,
+    tier?: string
+  ): string {
     const raw = typeof textOrItem === 'string' ? textOrItem : (textOrItem.speech_text || textOrItem.text);
-    const key = `${lang}_${bilingual ? 'bi' : 'mono'}_${this.getFileHash(raw)}`;
+    const effGrade = grade !== undefined ? grade : (typeof textOrItem !== 'string' ? textOrItem.grade : undefined);
+    const effTier = tier !== undefined ? tier : (typeof textOrItem !== 'string' ? textOrItem.tier : undefined);
+    const gKey = effGrade || 1;
+    const tKey = effTier || 'pri';
+    const key = `${lang}_${bilingual ? 'bi' : 'mono'}_g${gKey}_${tKey}_${this.getFileHash(raw)}`;
     return `${this.cacheDir}${key}.mp3`;
   }
 
@@ -529,7 +539,25 @@ class AudioQueueManagerClass {
   public async downloadItem(item: AudioQueueItem, baseUrl: string = API_BASE_URL): Promise<boolean> {
     const textToSynthesize = (item.speech_text && item.speech_text.trim()) ? item.speech_text.trim() : item.text;
     const isSpeechText = Boolean(item.speech_text && item.speech_text.trim());
-    const targetFile = this.getFilePath(textToSynthesize, item.lang, item.bilingual);
+
+    let grade = item.grade;
+    let tier = item.tier;
+    if (grade === undefined || tier === undefined) {
+      try {
+        const raw = await AsyncStorage.getItem('@tarkapp_user_profile');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (grade === undefined) grade = Number(parsed.grade) || 1;
+          if (tier === undefined) tier = typeof parsed.tier === 'string' && parsed.tier ? parsed.tier : 'primary';
+        }
+      } catch {}
+      if (grade === undefined) grade = 1;
+      if (tier === undefined) tier = 'primary';
+      item.grade = grade;
+      item.tier = tier;
+    }
+
+    const targetFile = this.getFilePath(textToSynthesize, item.lang, item.bilingual, item.grade, item.tier);
     this.currentDownloadingId = item.id;
     item.status = 'LOADING';
     this.notify();
@@ -559,20 +587,6 @@ class AudioQueueManagerClass {
       }
 
       const activeBaseUrl = resolveBaseUrl(baseUrl);
-      let grade = item.grade;
-      let tier = item.tier;
-      if (grade === undefined || tier === undefined) {
-        try {
-          const raw = await AsyncStorage.getItem('@tarkapp_user_profile');
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (grade === undefined) grade = Number(parsed.grade) || 1;
-            if (tier === undefined) tier = typeof parsed.tier === 'string' && parsed.tier ? parsed.tier : 'primary';
-          }
-        } catch {}
-        if (grade === undefined) grade = 1;
-        if (tier === undefined) tier = 'primary';
-      }
 
       let httpStatus = 200;
       if (textToSynthesize.length > 200) {
@@ -797,7 +811,7 @@ class AudioQueueManagerClass {
 
     // Check existing item in queue
     let item = this.queue.get(id);
-    const targetFile = this.getFilePath(speechText, lang, bilingual);
+    const targetFile = this.getFilePath(speechText, lang, bilingual, grade, tier);
 
     // Fast check: is it already on disk and non-empty?
     if (!item || item.status !== 'READY') {

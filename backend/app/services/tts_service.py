@@ -259,24 +259,29 @@ def _is_pure_english_brand_or_key(text: str) -> bool:
     return bool(words) and all(w in ENGLISH_COMMON_TERMS for w in words)
 
 
-def parse_bilingual_segments(text: str, already_normalized: bool = False) -> List[Tuple[str, str]]:
+def parse_bilingual_segments(
+    text: str,
+    already_normalized: bool = False,
+    is_speech_text: bool = False,
+) -> List[Tuple[str, str]]:
     """
     Разбивает двуязычный текст на последовательные сегменты (текст, голос):
     - Приоритет 1: Фрагменты внутри тегов <est>...</est> отправляются эстонскому диктору (et-EE-AnuNeural).
     - Приоритет 2: Фразы на эстонском языке в кавычках или термины в скобках без кириллицы (исключая формулы CO2, H2O и бренды).
     - Весь остальной текст озвучивается русским голосом (ru-RU-SvetlanaNeural).
     - Если во всем тексте нет кириллицы (чистый эстонский текст) — отправляется эстонскому диктору.
+    - При is_speech_text=True: отключена вторичная нормализация для защиты грамматических форм и ударений.
     """
     if not text or not text.strip():
         return [(text or "", DEFAULT_VOICE)]
 
-    if not already_normalized:
+    if not already_normalized and not is_speech_text:
         text = auto_tag_estonian_phrases(text)
         text = normalize_text_for_speech(text, is_russian_context=True)
 
     # 1. Если во всём тексте нет кириллицы вообще — озвучиваем целиком эстонским диктором
     if not re.search(r'[а-яА-ЯёЁ]', text):
-        clean_est = text.strip() if already_normalized else normalize_text_for_estonian_tts(text.strip())
+        clean_est = text.strip() if (is_speech_text or already_normalized) else normalize_text_for_estonian_tts(text.strip())
         return [(clean_est or text.strip(), ESTONIAN_VOICE)]
 
     # 2. Ищем эстонские фрагменты в русском тексте
@@ -319,7 +324,11 @@ def parse_bilingual_segments(text: str, already_normalized: bool = False) -> Lis
             if clean_prefix:
                 raw_segments.append((clean_prefix, DEFAULT_VOICE))
 
-        clean_est = est_content if (already_normalized and is_from_tag) else normalize_text_for_estonian_tts(est_content)
+        clean_est = (
+            est_content.strip()
+            if (is_speech_text or (already_normalized and is_from_tag))
+            else normalize_text_for_estonian_tts(est_content)
+        )
         if clean_est:
             raw_segments.append((clean_est, ESTONIAN_VOICE))
 
@@ -503,33 +512,38 @@ def build_ssml(
     has_est_tag = bool(re.search(r'<\s*est(?:\s+[^>]*)?>', prepared_text, re.IGNORECASE))
 
     if bilingual or has_est_tag or (is_explicit_est_voice and re.search(r'[a-zA-ZäöüõÄÖÜÕšžŠŽ]', prepared_text)):
-        segments = parse_bilingual_segments(prepared_text, already_normalized=True)
+        segments = parse_bilingual_segments(prepared_text, already_normalized=True, is_speech_text=is_speech_text)
     else:
         segments = [(prepared_text, DEFAULT_VOICE)]
 
     # Выделяем ключевые эстонские термины из русских фрагментов в отдельные блоки эстонского диктора
-    expanded_segments: List[Tuple[str, str]] = []
-    p_est_kw = re.compile(r'\b(' + '|'.join(re.escape(k) for k in ESTONIAN_CORE_KEYWORDS) + r')\b', re.IGNORECASE)
+    # При is_speech_text=True пропускаем вырезание ESTONIAN_CORE_KEYWORDS из русских блоков,
+    # чтобы предотвратить паразитный разрыв русской речи эстонским диктором
+    if not is_speech_text:
+        expanded_segments: List[Tuple[str, str]] = []
+        p_est_kw = re.compile(r'\b(' + '|'.join(re.escape(k) for k in ESTONIAN_CORE_KEYWORDS) + r')\b', re.IGNORECASE)
 
-    for s_text, s_voice in segments:
-        if s_voice == DEFAULT_VOICE:
-            last_pos = 0
-            for m in p_est_kw.finditer(s_text):
-                if m.start() > last_pos:
-                    pre = s_text[last_pos:m.start()]
-                    if pre.strip():
-                        expanded_segments.append((pre, DEFAULT_VOICE))
-                kw = m.group(0)
-                expanded_segments.append((kw, ESTONIAN_VOICE))
-                last_pos = m.end()
-            if last_pos < len(s_text):
-                post = s_text[last_pos:]
-                if post.strip():
-                    expanded_segments.append((post, DEFAULT_VOICE))
-        else:
-            expanded_segments.append((s_text, s_voice))
+        for s_text, s_voice in segments:
+            if s_voice == DEFAULT_VOICE:
+                last_pos = 0
+                for m in p_est_kw.finditer(s_text):
+                    if m.start() > last_pos:
+                        pre = s_text[last_pos:m.start()]
+                        if pre.strip():
+                            expanded_segments.append((pre, DEFAULT_VOICE))
+                    kw = m.group(0)
+                    expanded_segments.append((kw, ESTONIAN_VOICE))
+                    last_pos = m.end()
+                if last_pos < len(s_text):
+                    post = s_text[last_pos:]
+                    if post.strip():
+                        expanded_segments.append((post, DEFAULT_VOICE))
+            else:
+                expanded_segments.append((s_text, s_voice))
 
-    final_segments = _stitch_and_clean_segments(expanded_segments, prepared_text)
+        final_segments = _stitch_and_clean_segments(expanded_segments, prepared_text)
+    else:
+        final_segments = segments
 
     voice_blocks: List[str] = []
     for seg_text, seg_voice in final_segments:
