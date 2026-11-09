@@ -436,7 +436,6 @@ def test_custom_phonetic_map_accents():
     # 4. SSML integration
     ssml = build_ssml("В Roblox мы вычитаем числа и планируем велопутешествие.")
     assert "Ро\u0301блокс" in ssml
-    assert '<sub alias="отнимаем">вычитаем</sub>' in ssml
     assert "велопутеше\u0301ствие" in ssml
 
 
@@ -469,19 +468,12 @@ def test_estonian_measurement_units_normalization():
 def test_math_actions_speech_sanitization():
     from app.services.tts_service import build_ssml, sanitize_math_actions_speech
 
-    # 1. Direct unit checks for sanitize_math_actions_speech
-    assert '<sub alias="Отнимаем">Вычитаем</sub>' in sanitize_math_actions_speech("Шаг третий. Вычитаем из суммы первое число.")
-    assert '<sub alias="отнимаем">вычитаем</sub>' in sanitize_math_actions_speech("Затем мы вычитаем второе число.")
-    assert '<sub alias="отнимаем">вычитаем</sub>' in sanitize_math_actions_speech("Если мы вы́читаем число.")
-    assert '<sub alias="отнимаем">вычитаем</sub>' in sanitize_math_actions_speech("Если мы вы\u0301читаем число.")
-    assert "вычита\u0301ли" in sanitize_math_actions_speech("Вспомни, как мы вычитали детальки.")
-    assert "вычита\u0301емое" in sanitize_math_actions_speech("Уменьшаемое, вычитаемое и разность.")
-    assert "вычита\u0301ть" in sanitize_math_actions_speech("Нужно вычитать по порядку.")
+    # 1. Phoneme tags pass through sanitize_math_actions_speech untouched
+    phrase = 'Шаг третий: <phoneme alphabet="ipa" ph="vɨt͡ɕɪˈtajɪm">вычитаем</phoneme> из суммы первое число.'
+    assert '<phoneme alphabet="ipa" ph="vɨt͡ɕɪˈtajɪm">вычитаем</phoneme>' in sanitize_math_actions_speech(phrase)
 
-    # 2. Integration check with build_ssml and is_speech_text=True (production Gemini voice payload)
-    ssml = build_ssml(
-        "Шаг третий. Вычитаем из суммы первое число: семь минус пять равно два.",
-        is_speech_text=True,
-    )
-    assert '<sub alias="Отнимаем">Вычитаем</sub>' in ssml
+    # 2. Integration check with build_ssml and is_speech_text=True: phoneme tag is whitelisted and not escaped
+    ssml = build_ssml(phrase, is_speech_text=True)
+    assert '<phoneme alphabet="ipa" ph="vɨt͡ɕɪˈtajɪm">вычитаем</phoneme>' in ssml
+    assert "&lt;phoneme" not in ssml
     assert "<voice name=\"ru-RU-SvetlanaNeural\">" in ssml

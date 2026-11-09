@@ -294,6 +294,16 @@ def parse_bilingual_segments(
         return [(clean_est or text.strip(), ESTONIAN_VOICE)]
 
     # 2. Ищем эстонские фрагменты в русском тексте
+    # Защищаем любые теги кроме <est> и </est> (например, <phoneme alphabet="ipa" ph="...">...</phoneme>),
+    # чтобы кавычки в атрибутах тегов не распознавались ошибочно как эстонские фразы.
+    masked_tags: List[str] = []
+    def mask_tag(m: re.Match) -> str:
+        idx = len(masked_tags)
+        masked_tags.append(m.group(0))
+        return f"__BILINGUAL_TAG_{idx}__"
+
+    text_to_scan = re.sub(r'<(?!/?est\b)[^>]+>', mask_tag, text)
+
     pattern = re.compile(
         r'<\s*est(?:\s+[^>]*)?>(.*?)<\s*/\s*est\s*>'
         r'|[\'\"«“]([a-zA-ZäöüõÄÖÜÕšžŠŽ0-9\s\.,\?!-]{2,})[\'\"»”]'
@@ -302,7 +312,7 @@ def parse_bilingual_segments(
     )
 
     matches: List[Tuple[int, int, str, bool]] = []
-    for m in pattern.finditer(text):
+    for m in pattern.finditer(text_to_scan):
         tag_val = m.group(1)
         quote_val = m.group(2)
         paren_val = m.group(3)
@@ -320,18 +330,23 @@ def parse_bilingual_segments(
             if val and not _is_pure_english_brand_or_key(val) and not is_chemical_formula_or_acronym(val):
                 matches.append((m.start(), m.end(), val, False))
 
+    def _unmask_bilingual(s: str) -> str:
+        for idx, orig_tag in enumerate(masked_tags):
+            s = s.replace(f"__BILINGUAL_TAG_{idx}__", orig_tag)
+        return s
+
     if not matches:
-        return [(text.strip(), DEFAULT_VOICE)]
+        return [(_unmask_bilingual(text.strip()), DEFAULT_VOICE)]
 
     raw_segments: List[Tuple[str, str]] = []
     last_idx = 0
 
     for start, end, est_content, is_from_tag in matches:
         if start > last_idx:
-            prefix = text[last_idx:start]
+            prefix = text_to_scan[last_idx:start]
             clean_prefix = prefix.rstrip(' ([«"“„')
             if clean_prefix:
-                raw_segments.append((clean_prefix, DEFAULT_VOICE))
+                raw_segments.append((_unmask_bilingual(clean_prefix), DEFAULT_VOICE))
 
         clean_est = (
             est_content.strip()
@@ -339,32 +354,33 @@ def parse_bilingual_segments(
             else normalize_text_for_estonian_tts(est_content)
         )
         if clean_est:
-            raw_segments.append((clean_est, ESTONIAN_VOICE))
+            raw_segments.append((_unmask_bilingual(clean_est), ESTONIAN_VOICE))
 
-        trailing_wrapper = re.match(r'^[\s)\]»"”„]*', text[end:])
+        trailing_wrapper = re.match(r'^[\s)\]»"”„]*', text_to_scan[end:])
         if trailing_wrapper:
             last_idx = end + trailing_wrapper.end()
         else:
             last_idx = end
 
-    if last_idx < len(text):
-        suffix = text[last_idx:]
+    if last_idx < len(text_to_scan):
+        suffix = text_to_scan[last_idx:]
         clean_suffix = suffix.strip(' .')
         if clean_suffix:
-            raw_segments.append((clean_suffix, DEFAULT_VOICE))
+            raw_segments.append((_unmask_bilingual(clean_suffix), DEFAULT_VOICE))
 
     return _stitch_and_clean_segments(raw_segments, text)
 
 
 def _escape_ssml(text: str) -> str:
-    """Экранирует специальные символы XML для корректного SSML, защищая существующие теги <sub alias="...">."""
-    sub_tags = []
-    def mask_sub(m):
-        idx = len(sub_tags)
-        sub_tags.append(m.group(0))
-        return f"__SSML_SUB_PROTECTED_{idx}__"
+    """Экранирует специальные символы XML для корректного SSML, защищая теги <phoneme ...>...</phoneme> и <sub ...>...</sub>."""
+    protected_tags = []
+    def mask_tag(m):
+        idx = len(protected_tags)
+        protected_tags.append(m.group(0))
+        return f"__SSML_PROTECTED_TAG_{idx}__"
 
-    t = re.sub(r'<sub\b[^>]*>.*?<\/sub>', mask_sub, text, flags=re.IGNORECASE | re.DOTALL)
+    # Белый список тегов (whitelist): защищаем <phoneme ...>...</phoneme> и <sub ...>...</sub> от экранирования
+    t = re.sub(r'<(phoneme|sub)\b[^>]*>.*?<\/\1>', mask_tag, text, flags=re.IGNORECASE | re.DOTALL)
 
     t = (
         t.replace("&", "&amp;")
@@ -374,8 +390,8 @@ def _escape_ssml(text: str) -> str:
         .replace("'", "&apos;")
     )
 
-    for idx, orig in enumerate(sub_tags):
-        t = t.replace(f"__SSML_SUB_PROTECTED_{idx}__", orig)
+    for idx, orig in enumerate(protected_tags):
+        t = t.replace(f"__SSML_PROTECTED_TAG_{idx}__", orig)
 
     return t
 
@@ -462,67 +478,11 @@ def _format_estonian_ssml_segment(seg_text: str, is_speech_text: bool = False) -
 
 def sanitize_math_actions_speech(text: str) -> str:
     """
-    Гарантия нормативного произношения и ударения в математических операциях для Azure Speech (ru-RU-SvetlanaNeural).
-    Движок часто ошибочно путает математическое действие 'вычита́ть / вычита́ем'
-    с совершенным видом 'вы́читать' (вы́читать текст / вы́читаем огрехи) и ставит ударение на приставку ('вы́читаем').
-    Поскольку Azure Neural G2P отсекает Combining Acute (\\u0301) на кириллице, для формы 'вычитаем'
-    подменяем произношение через гарантированный SSML sub alias: <sub alias="отнимаем">вычитаем</sub>.
-    Для остальных форм (вычита́емое, вычита́ть, вычита́л) проставляет Combining Acute (\\u0301) на суффикс.
+    Санитизация речевого слоя.
+    Ударения для омографов размечаются через нативный SSML-тег <phoneme alphabet="ipa" ph="...">.
     """
     if not text:
         return text
-
-    # Защищаем уже существующие теги <sub ...>...</sub>
-    sub_tags = []
-    def mask_sub(m: re.Match) -> str:
-        idx = len(sub_tags)
-        sub_tags.append(m.group(0))
-        return f"__SSML_SUB_MASK_{idx}__"
-
-    text = re.sub(r'<sub\b[^>]*>.*?<\/sub>', mask_sub, text, flags=re.IGNORECASE | re.DOTALL)
-
-    # 1. Для слова 'вычитаем' (включая любые варианты с ударениями: вычитаем, вы́читаем, вычита́ем):
-    # Подменяем произношение через SSML sub alias: <sub alias="отнимаем">вычитаем</sub> (или <sub alias="Отнимаем">Вычитаем</sub>)
-    def _sub_alias_vychitaem(match: re.Match) -> str:
-        orig = match.group(0)
-        clean = orig.replace('\u0301', '').replace('\u00b4', '').replace('\u02ca', '').replace('́', '')
-        if clean.islower():
-            return f'<sub alias="отнимаем">{clean}</sub>'
-        else:
-            return f'<sub alias="Отнимаем">{clean}</sub>'
-
-    text = re.sub(
-        r'\b[Вв]ы[\u0301\u00b4\u02cá]?чит[аa][\u0301\u00b4\u02cá]?ем\b',
-        _sub_alias_vychitaem,
-        text,
-    )
-
-    # 2. Для остальных форм (вычитает, вычитайте, вычитаемое, вычитал, вычитать) проставляем Combining Acute на -а́-:
-    def _repl_vychit(match: re.Match) -> str:
-        orig = match.group(0)
-        clean_word = orig.replace('\u0301', '').replace('\u00b4', '').replace('\u02ca', '').replace('́', '')
-        m_end = re.match(r'^(вычит)а?(.*)$', clean_word, re.IGNORECASE)
-        if m_end:
-            prefix = clean_word[:5]
-            ending = m_end.group(2)
-            return f"{prefix}а\u0301{ending}"
-        return "Вычита\u0301ем" if orig[0].isupper() else "вычита\u0301ем"
-
-    text = re.sub(
-        r'\b[Вв]ы[\u0301\u00b4\u02cá]чит[аa][\u0301\u00b4\u02cá]?(ет[а-яё]*|ешь|ют|ете|ли|л|ла|ть|я|ем[а-яё]+)\b',
-        _repl_vychit,
-        text,
-    )
-    text = re.sub(
-        r'\b([Вв]ычит)[аa](ет[а-яё]*|ешь|ют|ете|ли|л|ла|ть|я|ем[а-яё]+)\b',
-        _repl_vychit,
-        text,
-    )
-
-    # Восстанавливаем защищенные теги
-    for idx, orig_sub in enumerate(sub_tags):
-        text = text.replace(f"__SSML_SUB_MASK_{idx}__", orig_sub)
-
     return text
 
 
