@@ -24,6 +24,7 @@ from app.routers.translate import router as translate_router
 from app.routers.feedback import router as feedback_router
 from app.routers.license import router as license_router
 from app.routers.telegram import router as telegram_router, legacy_telegram_router
+from app.routers.admin import router as admin_router
 from app.services.telegram_alert import send_telegram_alert, start_telegram_polling
 from app.middleware.security import (
     SecurityHeadersMiddleware,
@@ -178,6 +179,7 @@ app.include_router(feedback_router)
 app.include_router(license_router)
 app.include_router(telegram_router)
 app.include_router(legacy_telegram_router)
+app.include_router(admin_router)
 
 # Mount ONLY isolated static audio subdirectory (never expose root static/ or private invoices)
 static_audio_dir = Path("static") / "audio"

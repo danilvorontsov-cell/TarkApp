@@ -175,6 +175,8 @@ async def register_telegram_bot_commands() -> bool:
             {"command": "commands", "description": "Показать все доступные команды и быстрые кнопки"},
             {"command": "stats", "description": "Статистика пользователей и активных лицензий"},
             {"command": "gen", "description": "Инструкция по генерации ключей доступа"},
+            {"command": "tts_last", "description": "Последний запрос и SSML озвучки"},
+            {"command": "tts_errors", "description": "Последняя ошибка синтеза речи"},
             {"command": "help", "description": "Помощь по работе с ботом"},
         ]
     }
@@ -566,7 +568,61 @@ async def handle_admin_telegram_command(
             "reply": reply_msg,
         }
 
-    # 5. Handle /commands, /help or /start
+    # 5. Handle /tts_last and /tts_errors
+    elif command in ("/tts_last", "/tts_errors"):
+        from app.models.tts_audit import TTSAuditLog
+        sess = db or SessionLocal()
+        try:
+            query = sess.query(TTSAuditLog)
+            if command == "/tts_errors":
+                query = query.filter((TTSAuditLog.status != "SUCCESS") | (TTSAuditLog.error_message.isnot(None)))
+            log_record = query.order_by(TTSAuditLog.id.desc()).first()
+
+            if not log_record:
+                reply_msg = f"🎙 <b>{'Ошибок' if command == '/tts_errors' else 'Записей'} синтеза речи пока не зафиксировано.</b>"
+            else:
+                acc_label = "✅ Да" if log_record.has_accents else "❌ Нет"
+                est_label = "✅ Да" if log_record.has_estonian else "❌ Нет"
+                speech_label = "✅ Да (is_speech_text)" if log_record.is_speech_text else "ℹ️ Обычный"
+                status_icon = "🟢" if log_record.status == "SUCCESS" else "🔴"
+                time_str = log_record.created_at.strftime('%Y-%m-%d %H:%M:%S UTC')
+                raw_ssml = (log_record.final_ssml or "").strip()
+                safe_ssml = html.escape(raw_ssml[:1800])
+                if len(raw_ssml) > 1800:
+                    safe_ssml += "\n... [truncated]"
+
+                reply_msg = (
+                    f"🎙 <b>Аудит TTS #{log_record.id} {status_icon} ({log_record.status})</b>\n\n"
+                    f"📅 <b>Время:</b> <code>{time_str}</code>\n"
+                    f"🔗 <b>Эндпоинт:</b> <code>{html.escape(log_record.endpoint or '')}</code>\n"
+                    f"🏷 <b>Слой:</b> {speech_label} | <b>Кэш:</b> <code>{log_record.cache_status or 'N/A'}</code>\n"
+                    f"⏱ <b>Длительность:</b> {log_record.duration_ms or 0:.1f} мс\n"
+                    f"🔤 <b>Ударения:</b> {acc_label} | <b>Эстонские теги:</b> {est_label}\n\n"
+                    f"📝 <b>Входящий текст:</b>\n<code>{html.escape(log_record.incoming_text[:600])}</code>\n\n"
+                    f"📄 <b>Результирующий SSML:</b>\n<code>{safe_ssml}</code>"
+                )
+                if log_record.error_message:
+                    reply_msg += f"\n\n⚠️ <b>Ошибка:</b>\n<code>{html.escape(log_record.error_message)}</code>"
+        finally:
+            if not db:
+                sess.close()
+
+        if target_chat:
+            await send_telegram_message(
+                text=reply_msg,
+                parse_mode="HTML",
+                message_thread_id=message_thread_id,
+                chat_id=target_chat,
+            )
+
+        return {
+            "handled": True,
+            "authorized": True,
+            "command": command.replace("/", ""),
+            "reply": reply_msg,
+        }
+
+    # 6. Handle /commands, /help or /start
     elif command in ("/commands", "/help", "/start"):
         reply_msg = (
             f"🛠 <b>Административная панель TarkApp</b>\n\n"
@@ -574,6 +630,8 @@ async def handle_admin_telegram_command(
             f"• <code>/commands</code> — показать все доступные команды и быстрые кнопки\n"
             f"• <code>/stats</code> — статистика пользователей и активных лицензий\n"
             f"• <code>/gen &lt;кол-во&gt; &lt;дни&gt;</code> — генерация ключей доступа\n"
+            f"• <code>/tts_last</code> — последний запрос и SSML озвучки\n"
+            f"• <code>/tts_errors</code> — последняя ошибка синтеза речи\n"
             f"• <code>/help</code> — помощь по работе с ботом\n\n"
             f"💡 <b>Примеры генерации ключей:</b>\n"
             f"• <code>/gen 1 30</code> — 1 ключ на 1 месяц (30 дней)\n"

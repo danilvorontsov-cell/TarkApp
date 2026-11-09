@@ -49,18 +49,24 @@ async def _call_synthesize_safely(
     grade: Optional[int],
     tier: Optional[str] = None,
     is_speech_text: bool = False,
+    device_id: Optional[str] = None,
+    endpoint: str = "/api/v1/voice/tts",
 ) -> bytes:
     try:
         sig = inspect.signature(synth_func)
+        kwargs = {
+            "voice": voice,
+            "bilingual": bilingual,
+            "grade": grade,
+            "tier": tier,
+        }
         if "is_speech_text" in sig.parameters or any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values()):
-            return await synth_func(
-                clean_text,
-                voice=voice,
-                bilingual=bilingual,
-                grade=grade,
-                tier=tier,
-                is_speech_text=is_speech_text,
-            )
+            kwargs["is_speech_text"] = is_speech_text
+        if "device_id" in sig.parameters or any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values()):
+            kwargs["device_id"] = device_id
+        if "endpoint" in sig.parameters or any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values()):
+            kwargs["endpoint"] = endpoint
+        return await synth_func(clean_text, **kwargs)
     except Exception:
         pass
     return await synth_func(
@@ -189,6 +195,7 @@ async def text_to_speech(
     is_bilingual = bilingual or lang.lower() == "bilingual"
     voice = "bilingual" if is_bilingual else VOICE_MAP.get(lang.lower(), DEFAULT_VOICE)
     tier_str = resolved_tier.value if resolved_tier else None
+    dev_id = request.query_params.get("device_id") or request.headers.get("x-device-id")
 
     try:
         audio_bytes = await _call_synthesize_safely(
@@ -199,6 +206,8 @@ async def text_to_speech(
             grade=grade,
             tier=tier_str,
             is_speech_text=is_speech_text,
+            device_id=dev_id,
+            endpoint=request.url.path,
         )
 
         if not audio_bytes:
@@ -310,6 +319,7 @@ async def text_to_speech_post(
     is_bilingual = payload.bilingual or payload.lang.lower() == "bilingual"
     voice = "bilingual" if is_bilingual else VOICE_MAP.get(payload.lang.lower(), DEFAULT_VOICE)
     tier_str = resolved_tier.value if resolved_tier else payload.tier
+    dev_id = getattr(payload, "device_id", None) or request.headers.get("x-device-id")
 
     try:
         audio_bytes = await _call_synthesize_safely(
@@ -320,6 +330,8 @@ async def text_to_speech_post(
             grade=payload.grade,
             tier=tier_str,
             is_speech_text=payload.is_speech_text,
+            device_id=dev_id,
+            endpoint=request.url.path,
         )
 
         if not audio_bytes:
@@ -391,9 +403,15 @@ async def speak_word(
     )
 
     try:
+        dev_id = request.query_params.get("device_id") or request.headers.get("x-device-id")
         voice = VOICE_MAP.get(lang.lower(), VOICE_MAP["et"])
         audio_bytes = await get_or_synthesize_audio(
-            clean_text, voice=voice, bilingual=False, is_speech_text=is_speech_text
+            clean_text,
+            voice=voice,
+            bilingual=False,
+            is_speech_text=is_speech_text,
+            device_id=dev_id,
+            endpoint=request.url.path,
         )
 
         if not audio_bytes:

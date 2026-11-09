@@ -9,6 +9,7 @@ LOGS_DIR = BASE_DIR / "logs"
 
 APP_LOG_PATH = LOGS_DIR / "app.log"
 ERROR_LOG_PATH = LOGS_DIR / "error.log"
+TTS_AUDIT_LOG_PATH = LOGS_DIR / "tts_audit.log"
 
 MAX_BYTES = 10 * 1024 * 1024  # 10 MB per log file
 BACKUP_COUNT = 5               # Keep up to 5 rotated backup files
@@ -64,6 +65,20 @@ def setup_logging() -> None:
             console_handler.addFilter(sensitive_filter)
             root_logger.addHandler(console_handler)
 
+        # 4. Dedicated Rotating File Handler for TTS Audit
+        tts_audit_handler = RotatingFileHandler(
+            TTS_AUDIT_LOG_PATH,
+            maxBytes=MAX_BYTES,
+            backupCount=BACKUP_COUNT,
+            encoding="utf-8",
+        )
+        tts_audit_handler.setLevel(logging.INFO)
+        tts_audit_handler.setFormatter(logging.Formatter("%(message)s"))
+        tts_audit_handler.addFilter(sensitive_filter)
+        tts_audit_inst = logging.getLogger("tarkapp.tts_audit")
+        tts_audit_inst.setLevel(logging.INFO)
+        tts_audit_inst.addHandler(tts_audit_handler)
+
     # Dedicated error logger
     error_logger = logging.getLogger("tarkapp.error")
     error_logger.setLevel(logging.ERROR)
@@ -72,3 +87,4 @@ def setup_logging() -> None:
 # Initialize loggers for modules to import
 app_logger = logging.getLogger("tarkapp")
 error_logger = logging.getLogger("tarkapp.error")
+tts_audit_logger = logging.getLogger("tarkapp.tts_audit")

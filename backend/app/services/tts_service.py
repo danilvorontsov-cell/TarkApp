@@ -1,13 +1,19 @@
 import asyncio
 from collections import OrderedDict
+from datetime import datetime, timezone
 import hashlib
+import json
 import logging
 import os
 from pathlib import Path
 import queue
 import re
 import threading
+import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+import uuid
+
+import anyio.to_thread
 
 try:
     import azure.cognitiveservices.speech as speechsdk
@@ -15,6 +21,9 @@ except ImportError:
     speechsdk = None
 
 from app.config import settings
+from app.database import SessionLocal
+from app.logger import tts_audit_logger
+from app.models.tts_audit import TTSAuditLog
 
 logger = logging.getLogger(__name__)
 
@@ -627,6 +636,102 @@ def _format_accent_diagnostics(text: str) -> dict:
     }
 
 
+def log_tts_audit(
+    raw_incoming_text: str,
+    final_ssml: Optional[str] = None,
+    endpoint: str = "/api/v1/voice/tts",
+    is_speech_text: bool = False,
+    device_id: Optional[str] = None,
+    user_tier: Optional[str] = None,
+    grade: Optional[int] = None,
+    cache_status: str = "AZURE_SYNTHESIS",
+    status: str = "SUCCESS",
+    error_message: Optional[str] = None,
+    duration_ms: float = 0.0,
+) -> None:
+    """
+    Персистентно логирует запрос озвучки:
+    1. Запись структурированного JSON в logs/tts_audit.log + дубль в sys.stdout.
+    2. Асинхронная вставка в таблицу tts_audit_logs базы данных.
+    Работает строго в try...finally/except, ни при каких условиях не роняя процесс синтеза.
+    """
+    try:
+        ssml_str = final_ssml or ""
+        has_accents = "\u0301" in ssml_str or "\u0301" in raw_incoming_text
+        accented_words = [w for w in (ssml_str or raw_incoming_text).split() if "\u0301" in w]
+        has_estonian = (
+            "<est>" in raw_incoming_text
+            or 'xml:lang="et-EE"' in ssml_str
+            or "et-EE" in ssml_str
+        )
+
+        audit_record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "request_id": f"tts_{uuid.uuid4().hex[:10]}",
+            "device_id": device_id,
+            "user_tier": user_tier,
+            "grade": grade,
+            "endpoint": endpoint,
+            "is_speech_text": is_speech_text,
+            "raw_incoming_text": raw_incoming_text,
+            "final_ssml": final_ssml,
+            "has_combining_accents": has_accents,
+            "accented_words": accented_words,
+            "has_estonian_tags": has_estonian,
+            "duration_ms": round(duration_ms, 2),
+            "cache_status": cache_status,
+            "azure_result": status,
+            "error_message": error_message,
+        }
+
+        # 1. Запись в логгер tarkapp.tts_audit (файл logs/tts_audit.log и stdout)
+        json_line = json.dumps(audit_record, ensure_ascii=False)
+        tts_audit_logger.info(json_line)
+
+        # 2. Запись в базу данных
+        def _write_db():
+            try:
+                with SessionLocal() as db_sess:
+                    db_log = TTSAuditLog(
+                        endpoint=endpoint,
+                        device_id=device_id,
+                        is_speech_text=is_speech_text,
+                        incoming_text=raw_incoming_text,
+                        final_ssml=final_ssml,
+                        has_accents=has_accents,
+                        has_estonian=has_estonian,
+                        status=status,
+                        error_message=error_message,
+                        cache_status=cache_status,
+                        duration_ms=round(duration_ms, 2),
+                    )
+                    db_sess.add(db_log)
+                    db_sess.commit()
+
+                    total_count = db_sess.query(TTSAuditLog).count()
+                    if total_count > 1050:
+                        oldest_ids = (
+                            db_sess.query(TTSAuditLog.id)
+                            .order_by(TTSAuditLog.id.asc())
+                            .limit(total_count - 1000)
+                            .all()
+                        )
+                        if oldest_ids:
+                            del_ids = [row[0] for row in oldest_ids]
+                            db_sess.query(TTSAuditLog).filter(TTSAuditLog.id.in_(del_ids)).delete(synchronize_session=False)
+                            db_sess.commit()
+            except Exception as db_err:
+                logger.warning(f"Could not write TTSAuditLog to database: {db_err}")
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(anyio.to_thread.run_sync(_write_db))
+        except RuntimeError:
+            _write_db()
+    except Exception as audit_err:
+        logger.warning(f"Failed in log_tts_audit: {audit_err}")
+
+
 def _synthesize_azure_ssml(ssml: str) -> bytes:
     """Синхронный вызов Azure Speech SDK speak_ssml_async().get() с пулом синтезаторов и синглтоном SpeechConfig."""
     if speechsdk is None:
@@ -679,113 +784,147 @@ async def get_or_synthesize_audio(
     grade: Optional[int] = None,
     tier: Optional[str] = None,
     is_speech_text: bool = False,
+    device_id: Optional[str] = None,
+    endpoint: str = "/api/v1/voice/tts",
 ) -> bytes:
     """
     Получает готовый байтовый буфер аудио (MP3) с единым дисковым кэшем
-    (static/audio/cache/{md5}.mp3 + LRU-ротация), RAM-кэшем, жестким таймаутом 10с
-    и гарантированной очисткой _IN_FLIGHT_TASKS в блоке finally.
+    (static/audio/cache/{md5}.mp3 + LRU-ротация), RAM-кэшем, жестким таймаутом 10с,
+    гарантированной очисткой _IN_FLIGHT_TASKS и персистентным аудитом в logs/tts_audit.log и БД.
     """
+    start_time = time.perf_counter()
+    cache_status = "AZURE_SYNTHESIS"
+    audit_status = "SUCCESS"
+    error_msg = None
+    ssml = None
+
     clean_text = text.strip()
     if not clean_text:
         return b""
 
-    ssml = build_ssml(
-        clean_text,
-        voice=voice,
-        bilingual=bilingual,
-        grade=grade,
-        tier=tier,
-        is_speech_text=is_speech_text,
-    )
-    if not ssml:
-        return b""
-    ssml_hash = hashlib.md5(ssml.encode("utf-8")).hexdigest()
-
-    ssml_text = ssml
-    has_accent = "\u0301" in ssml_text
-    logger.info("=" * 60)
-    logger.info(f"[TTS_INTERCEPT] INCOMING TEXT: {repr(text)}")
-    logger.info(f"[TTS_INTERCEPT] FLAGS: is_speech_text={is_speech_text}, voice={voice}, bilingual={bilingual}, grade={grade}, tier={tier}")
-    logger.info(f"[TTS_INTERCEPT] FINAL SSML PAYLOAD:\n{ssml_text}")
-    logger.info(f"[TTS_INTERCEPT] CONTAINS COMBINING ACUTE (\\u0301): {has_accent}")
-    if has_accent:
-        accent_words = [w for w in ssml_text.split() if "\u0301" in w]
-        logger.info(f"[TTS_INTERCEPT] ACCENTED WORDS: {accent_words}")
-    logger.info("=" * 60)
-
-    # 1. Быстрый возврат из оперативной памяти
-    if ssml_hash in _TTS_STREAM_CACHE:
-        if isinstance(_TTS_STREAM_CACHE, OrderedDict):
-            _TTS_STREAM_CACHE.move_to_end(ssml_hash)
-        logger.info(f"[TTS_INTERCEPT] CACHE STATUS: RAM_HIT (hash={ssml_hash})")
-        return _TTS_STREAM_CACHE[ssml_hash]
-
-    # 2. Проверка единого локального файлового кэша на диске
-    cache_file = AUDIO_CACHE_DIR / f"{ssml_hash}.mp3"
-    if cache_file.is_file():
-        try:
-            cached_size = cache_file.stat().st_size
-            if cached_size < MIN_VALID_AUDIO_BYTES:
-                logger.warning(
-                    f"Purging corrupted/truncated audio cache file {cache_file} (size={cached_size} bytes)"
-                )
-                cache_file.unlink(missing_ok=True)
-            else:
-                cached_bytes = cache_file.read_bytes()
-                if is_valid_mp3_buffer(cached_bytes):
-                    try:
-                        os.utime(cache_file, None)
-                    except OSError:
-                        pass
-                    logger.info(f"[TTS_INTERCEPT] CACHE STATUS: DISK_HIT (hash={ssml_hash}, path={cache_file})")
-                    _store_in_memory_cache(_TTS_STREAM_CACHE, ssml_hash, cached_bytes)
-                    return cached_bytes
-                else:
-                    logger.warning(f"Purging invalid MP3 header cache file {cache_file}")
-                    cache_file.unlink(missing_ok=True)
-        except Exception as read_err:
-            logger.warning(f"Failed reading cache file {cache_file}: {read_err}")
-
-    # 3. Дедупликация: если для этого SSML уже запущен запрос, ожидаем текущую задачу с таймаутом
-    existing_task = _IN_FLIGHT_TASKS.get(ssml_hash)
-    if existing_task is not None and not existing_task.done():
-        logger.info(f"[TTS_INTERCEPT] CACHE STATUS: AWAITING_IN_FLIGHT (hash={ssml_hash})")
-        try:
-            return await asyncio.wait_for(asyncio.shield(existing_task), timeout=AZURE_SYNTHESIS_TIMEOUT_SEC)
-        except Exception:
-            _IN_FLIGHT_TASKS.pop(ssml_hash, None)
-
-    # 4. Синтез через Azure Speech SDK с жестким таймаутом 10.0 с и гарантированной очисткой _IN_FLIGHT_TASKS
-    async def _worker() -> bytes:
-        try:
-            logger.info(f"[TTS_INTERCEPT] CACHE STATUS: AZURE_SYNTHESIS (hash={ssml_hash})")
-            audio_bytes = await asyncio.wait_for(
-                asyncio.to_thread(_synthesize_azure_ssml, ssml),
-                timeout=AZURE_SYNTHESIS_TIMEOUT_SEC,
-            )
-            if is_valid_mp3_buffer(audio_bytes):
-                try:
-                    AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                    cache_file.write_bytes(audio_bytes)
-                    _enforce_disk_cache_limits(AUDIO_CACHE_DIR)
-                    logger.info(f"[TTS_INTERCEPT] Cached audio to disk: {cache_file} ({len(audio_bytes)} bytes)")
-                except Exception as write_err:
-                    logger.warning(f"Failed to write audio cache file {cache_file}: {write_err}")
-
-                _store_in_memory_cache(_TTS_STREAM_CACHE, ssml_hash, audio_bytes)
-            return audio_bytes
-        finally:
-            _IN_FLIGHT_TASKS.pop(ssml_hash, None)
-
-    task = asyncio.create_task(_worker())
-    _IN_FLIGHT_TASKS[ssml_hash] = task
-    task.add_done_callback(lambda _: _IN_FLIGHT_TASKS.pop(ssml_hash, None))
-
     try:
-        return await asyncio.wait_for(asyncio.shield(task), timeout=AZURE_SYNTHESIS_TIMEOUT_SEC)
+        ssml = build_ssml(
+            clean_text,
+            voice=voice,
+            bilingual=bilingual,
+            grade=grade,
+            tier=tier,
+            is_speech_text=is_speech_text,
+        )
+        if not ssml:
+            audit_status = "ERROR"
+            error_msg = "build_ssml returned empty SSML"
+            return b""
+        ssml_hash = hashlib.md5(ssml.encode("utf-8")).hexdigest()
+
+        ssml_text = ssml
+        has_accent = "\u0301" in ssml_text
+        logger.info("=" * 60)
+        logger.info(f"[TTS_INTERCEPT] INCOMING TEXT: {repr(text)}")
+        logger.info(f"[TTS_INTERCEPT] FLAGS: is_speech_text={is_speech_text}, voice={voice}, bilingual={bilingual}, grade={grade}, tier={tier}")
+        logger.info(f"[TTS_INTERCEPT] FINAL SSML PAYLOAD:\n{ssml_text}")
+        logger.info(f"[TTS_INTERCEPT] CONTAINS COMBINING ACUTE (\\u0301): {has_accent}")
+        if has_accent:
+            accent_words = [w for w in ssml_text.split() if "\u0301" in w]
+            logger.info(f"[TTS_INTERCEPT] ACCENTED WORDS: {accent_words}")
+        logger.info("=" * 60)
+
+        # 1. Быстрый возврат из оперативной памяти
+        if ssml_hash in _TTS_STREAM_CACHE:
+            if isinstance(_TTS_STREAM_CACHE, OrderedDict):
+                _TTS_STREAM_CACHE.move_to_end(ssml_hash)
+            cache_status = "RAM_HIT"
+            logger.info(f"[TTS_INTERCEPT] CACHE STATUS: RAM_HIT (hash={ssml_hash})")
+            return _TTS_STREAM_CACHE[ssml_hash]
+
+        # 2. Проверка единого локального файлового кэша на диске
+        cache_file = AUDIO_CACHE_DIR / f"{ssml_hash}.mp3"
+        if cache_file.is_file():
+            try:
+                cached_size = cache_file.stat().st_size
+                if cached_size < MIN_VALID_AUDIO_BYTES:
+                    logger.warning(
+                        f"Purging corrupted/truncated audio cache file {cache_file} (size={cached_size} bytes)"
+                    )
+                    cache_file.unlink(missing_ok=True)
+                else:
+                    cached_bytes = cache_file.read_bytes()
+                    if is_valid_mp3_buffer(cached_bytes):
+                        try:
+                            os.utime(cache_file, None)
+                        except OSError:
+                            pass
+                        cache_status = "DISK_HIT"
+                        logger.info(f"[TTS_INTERCEPT] CACHE STATUS: DISK_HIT (hash={ssml_hash}, path={cache_file})")
+                        _store_in_memory_cache(_TTS_STREAM_CACHE, ssml_hash, cached_bytes)
+                        return cached_bytes
+                    else:
+                        logger.warning(f"Purging invalid MP3 header cache file {cache_file}")
+                        cache_file.unlink(missing_ok=True)
+            except Exception as read_err:
+                logger.warning(f"Failed reading cache file {cache_file}: {read_err}")
+
+        # 3. Дедупликация: если для этого SSML уже запущен запрос, ожидаем текущую задачу с таймаутом
+        existing_task = _IN_FLIGHT_TASKS.get(ssml_hash)
+        if existing_task is not None and not existing_task.done():
+            cache_status = "AWAITING_IN_FLIGHT"
+            logger.info(f"[TTS_INTERCEPT] CACHE STATUS: AWAITING_IN_FLIGHT (hash={ssml_hash})")
+            try:
+                return await asyncio.wait_for(asyncio.shield(existing_task), timeout=AZURE_SYNTHESIS_TIMEOUT_SEC)
+            except Exception:
+                _IN_FLIGHT_TASKS.pop(ssml_hash, None)
+
+        # 4. Синтез через Azure Speech SDK с жестким таймаутом 10.0 с и гарантированной очисткой _IN_FLIGHT_TASKS
+        cache_status = "AZURE_SYNTHESIS"
+        async def _worker() -> bytes:
+            try:
+                logger.info(f"[TTS_INTERCEPT] CACHE STATUS: AZURE_SYNTHESIS (hash={ssml_hash})")
+                audio_bytes = await asyncio.wait_for(
+                    asyncio.to_thread(_synthesize_azure_ssml, ssml),
+                    timeout=AZURE_SYNTHESIS_TIMEOUT_SEC,
+                )
+                if is_valid_mp3_buffer(audio_bytes):
+                    try:
+                        AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                        cache_file.write_bytes(audio_bytes)
+                        _enforce_disk_cache_limits(AUDIO_CACHE_DIR)
+                        logger.info(f"[TTS_INTERCEPT] Cached audio to disk: {cache_file} ({len(audio_bytes)} bytes)")
+                    except Exception as write_err:
+                        logger.warning(f"Failed to write audio cache file {cache_file}: {write_err}")
+
+                    _store_in_memory_cache(_TTS_STREAM_CACHE, ssml_hash, audio_bytes)
+                return audio_bytes
+            finally:
+                _IN_FLIGHT_TASKS.pop(ssml_hash, None)
+
+        task = asyncio.create_task(_worker())
+        _IN_FLIGHT_TASKS[ssml_hash] = task
+        task.add_done_callback(lambda _: _IN_FLIGHT_TASKS.pop(ssml_hash, None))
+
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=AZURE_SYNTHESIS_TIMEOUT_SEC)
+        finally:
+            if task.done():
+                _IN_FLIGHT_TASKS.pop(ssml_hash, None)
+    except Exception as exc:
+        audit_status = "ERROR"
+        error_msg = str(exc)
+        raise
     finally:
-        if task.done():
-            _IN_FLIGHT_TASKS.pop(ssml_hash, None)
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        log_tts_audit(
+            raw_incoming_text=text,
+            final_ssml=ssml,
+            endpoint=endpoint,
+            is_speech_text=is_speech_text,
+            device_id=device_id,
+            user_tier=tier,
+            grade=grade,
+            cache_status=cache_status,
+            status=audit_status,
+            error_message=error_msg,
+            duration_ms=duration_ms,
+        )
 
 
 async def generate_speech_stream(

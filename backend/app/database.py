@@ -77,6 +77,7 @@ def init_db():
     """Initializes database schema and tables."""
     # Import all models to ensure they are registered with Base.metadata
     from app.models.license import Device, AccessKey  # noqa: F401
+    from app.models.tts_audit import TTSAuditLog  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
     # Lightweight migration & WAL verification

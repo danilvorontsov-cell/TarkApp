@@ -624,3 +624,50 @@ def test_layer_separation_and_accent_sanitization():
     assert "[Дословный текст given] + [Шаг 1 полными словами]" in ESTONIAN_TUTOR_SYSTEM_PROMPT
     assert "<est>kell on 9.00</est>" in ESTONIAN_TUTOR_SYSTEM_PROMPT
     assert "<est>Narva</est>" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+
+
+def test_tts_audit_logging_and_admin_endpoint(client):
+    """Verify log_tts_audit writes to logs/tts_audit.log, database, and GET /api/v1/admin/tts-logs returns records."""
+    from app.services.tts_service import log_tts_audit
+    from app.models.tts_audit import TTSAuditLog
+    from app.database import SessionLocal
+    from app.logger import TTS_AUDIT_LOG_PATH
+
+    # 1. Direct call to log_tts_audit
+    sample_text = "Дели́мое пятнадцать разделить на три"
+    sample_ssml = '<speak version="1.0"><voice name="ru-RU-SvetlanaNeural">Дели́мое пятнадцать разделить на три</voice></speak>'
+    log_tts_audit(
+        raw_incoming_text=sample_text,
+        final_ssml=sample_ssml,
+        endpoint="/api/v1/voice/tts",
+        is_speech_text=True,
+        device_id="test-audit-device-01",
+        user_tier="primary",
+        grade=3,
+        cache_status="AZURE_SYNTHESIS",
+        status="SUCCESS",
+        duration_ms=45.2,
+    )
+
+    # 2. Check database record
+    with SessionLocal() as db:
+        record = db.query(TTSAuditLog).filter(TTSAuditLog.device_id == "test-audit-device-01").order_by(TTSAuditLog.id.desc()).first()
+        assert record is not None
+        assert record.is_speech_text is True
+        assert record.has_accents is True
+        assert record.status == "SUCCESS"
+        assert record.duration_ms == 45.2
+
+    # 3. Check admin endpoint GET /api/v1/admin/tts-logs
+    resp = client.get("/api/v1/admin/tts-logs?limit=5")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "items" in data
+    assert "total" in data
+    assert data["total"] >= 1
+    found = any(item["device_id"] == "test-audit-device-01" for item in data["items"])
+    assert found is True
+
+    # 4. Check log file exists
+    assert TTS_AUDIT_LOG_PATH.exists()
+

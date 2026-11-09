@@ -805,10 +805,7 @@ export async function analyzePage(
       Accept: 'application/json',
       'X-Device-ID': deviceId,
     };
-    const currentToken = getAuthToken();
-    const token = currentToken
-      ? await ensureSignedAuthToken((profile.nickname || 'Друг').slice(0, 50), baseUrl)
-      : null;
+    const token = await ensureSignedAuthToken((profile.nickname || 'Друг').slice(0, 50), baseUrl);
     if (token) {
       const safeToken = toSafeHeaderAscii(token);
       headers['Authorization'] = `Bearer ${safeToken}`;
@@ -900,10 +897,7 @@ export async function analyzePagesJson(
       Accept: 'application/json',
       'X-Device-ID': deviceId,
     };
-    const currentToken = getAuthToken();
-    const token = currentToken
-      ? await ensureSignedAuthToken((profile.nickname || 'Ученик').slice(0, 50), baseUrl)
-      : null;
+    const token = await ensureSignedAuthToken((profile.nickname || 'Ученик').slice(0, 50), baseUrl);
     if (token) {
       const safeToken = toSafeHeaderAscii(token);
       headers['Authorization'] = `Bearer ${safeToken}`;
@@ -982,9 +976,9 @@ export async function appendPageJson(
       Accept: 'application/json',
       'X-Device-ID': deviceId,
     };
-    const currentToken = getAuthToken();
-    if (currentToken) {
-      const safeToken = toSafeHeaderAscii(currentToken);
+    const token = await ensureSignedAuthToken('Ученик', baseUrl);
+    if (token) {
+      const safeToken = toSafeHeaderAscii(token);
       headers['Authorization'] = `Bearer ${safeToken}`;
       headers['X-Auth-Token'] = safeToken;
     }
