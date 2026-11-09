@@ -273,6 +273,32 @@ function MainApp() {
   const subInfo = getSubscriptionInfo(licenseStatus);
   const isPro = subInfo.isPro;
 
+  // Mutable ref to access latest UI and modal states inside Android hardware BackHandler
+  // without triggering a full re-initialization of profile/history/analysis
+  const backHandlerStateRef = useRef({
+    isDrawerOpen,
+    isProfileSetupModalVisible,
+    isAvatarModalVisible,
+    isPaywallVisible,
+    isKeyModalVisible,
+    isTrialBlockedModalVisible,
+    currentTab,
+    analysis,
+  });
+
+  useEffect(() => {
+    backHandlerStateRef.current = {
+      isDrawerOpen,
+      isProfileSetupModalVisible,
+      isAvatarModalVisible,
+      isPaywallVisible,
+      isKeyModalVisible,
+      isTrialBlockedModalVisible,
+      currentTab,
+      analysis,
+    };
+  });
+
   useEffect(() => {
     isMountedRef.current = true;
     StorageService.getProfile().then(async (saved) => {
@@ -445,38 +471,40 @@ function MainApp() {
 
     // Hardware Back button handler for Android: closes open modals or returns to camera/home
     const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (isDrawerOpen) {
+      const state = backHandlerStateRef.current;
+      if (state.isDrawerOpen) {
         setIsDrawerOpen(false);
         return true;
       }
-      if (isProfileSetupModalVisible) {
+      if (state.isProfileSetupModalVisible) {
         setIsProfileSetupModalVisible(false);
         return true;
       }
-      if (isAvatarModalVisible) {
+      if (state.isAvatarModalVisible) {
         setIsAvatarModalVisible(false);
         return true;
       }
-      if (isPaywallVisible) {
+      if (state.isPaywallVisible) {
         setIsPaywallVisible(false);
         return true;
       }
-      if (isKeyModalVisible) {
+      if (state.isKeyModalVisible) {
         setIsKeyModalVisible(false);
         return true;
       }
-      if (isTrialBlockedModalVisible) {
+      if (state.isTrialBlockedModalVisible) {
         setIsTrialBlockedModalVisible(false);
         return true;
       }
-      if (currentTab !== 'study') {
+      if (state.currentTab !== 'study') {
         setCurrentTab('study');
         return true;
       }
       // If viewing a lesson card, back button returns to clean home screen
-      if (analysis !== null) {
+      if (state.analysis !== null) {
         AudioQueueManager.stopAndClear().catch(() => {});
         setAnalysis(null);
+        initialLessonAnalysisRef.current = null;
         setCapturedImages([]);
         setCapturedImageUri(null);
         setIsSaved(false);
@@ -516,16 +544,7 @@ function MainApp() {
       setOnTrialExpiredListener(null);
       setOnAuthRequiredListener(null);
     };
-  }, [
-    isDrawerOpen,
-    isProfileSetupModalVisible,
-    isAvatarModalVisible,
-    isPaywallVisible,
-    isKeyModalVisible,
-    isTrialBlockedModalVisible,
-    currentTab,
-    analysis,
-  ]);
+  }, []);
 
   const scrollToTaskTop = useCallback(() => {
     if (scrollTimerRef.current) {
@@ -1906,6 +1925,7 @@ function MainApp() {
               onPress={() => {
                 AudioQueueManager.stop();
                 setAnalysis(null);
+                initialLessonAnalysisRef.current = null;
                 setCapturedImages([]);
                 setCapturedImageUri(null);
               }}
