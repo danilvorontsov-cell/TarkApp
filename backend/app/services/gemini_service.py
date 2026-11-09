@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -111,10 +112,13 @@ class GeminiTutorService:
                     temperature=0.2 if attempt == 0 else 0.1,
                 )
 
-                response = await self.client.aio.models.generate_content(
-                    model=self.model,
-                    contents=contents,
-                    config=config,
+                response = await asyncio.wait_for(
+                    self.client.aio.models.generate_content(
+                        model=self.model,
+                        contents=contents,
+                        config=config,
+                    ),
+                    timeout=50.0,
                 )
 
                 # Check if response.parsed was populated by the SDK
@@ -128,6 +132,19 @@ class GeminiTutorService:
                     result = self._parse_json_response(raw_text)
 
                 return result
+
+            except (asyncio.TimeoutError, TimeoutError) as e:
+                logger.warning(
+                    f"Gemini API timed out after 50s (attempt {attempt + 1}): {e}"
+                )
+                last_err = e
+                if attempt == 0:
+                    continue
+                raise GeminiServiceError(
+                    "Время ожидания ответа от Google GenAI истекло. Пожалуйста, повторите попытку.",
+                    status_code=504,
+                    is_quota_error=False,
+                ) from e
 
             except APIError as e:
                 err_msg = str(e)
@@ -584,10 +601,13 @@ class GeminiTutorService:
                 response_schema=MoreExamplesResponse,
                 temperature=0.3,
             )
-            response = await self.client.aio.models.generate_content(
-                model=self.model,
-                contents=[prompt],
-                config=config,
+            response = await asyncio.wait_for(
+                self.client.aio.models.generate_content(
+                    model=self.model,
+                    contents=[prompt],
+                    config=config,
+                ),
+                timeout=30.0,
             )
             if hasattr(response, "parsed") and isinstance(response.parsed, MoreExamplesResponse):
                 return response.parsed.templates
@@ -705,10 +725,13 @@ class GeminiTutorService:
                 temperature=0.1,
             )
 
-            response = await self.client.aio.models.generate_content(
-                model=self.model,
-                contents=contents,
-                config=config,
+            response = await asyncio.wait_for(
+                self.client.aio.models.generate_content(
+                    model=self.model,
+                    contents=contents,
+                    config=config,
+                ),
+                timeout=30.0,
             )
 
             if hasattr(response, "parsed") and isinstance(response.parsed, QuickTranslateResponse):

@@ -18,7 +18,7 @@ export function resolveBaseUrl(baseUrl?: string): string {
 }
 
 export const API_TIMEOUT_MS = 60000;
-export const ANALYZE_TIMEOUT_MS = 25000;
+export const ANALYZE_TIMEOUT_MS = 60000;
 
 // Module-level controller for page analysis requests:
 // Cancels previous in-flight requests on duplicate submissions and prevents parallel hanging calls.
@@ -67,7 +67,7 @@ export async function fetchWithTimeout(
     });
   } catch (err: any) {
     if (err?.name === 'AbortError' || controller.signal.aborted) {
-      if (timeoutMs <= 30000) {
+      if (timeoutMs <= 60000) {
         throw new Error(
           'Сервер долго обрабатывает страницу. Проверьте интернет и попробуйте еще раз'
         );
