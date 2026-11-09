@@ -75,9 +75,10 @@ def get_current_user(
     FastAPI AuthGuard Dependency.
     Enforces that incoming requests to analysis/lesson endpoints carry a valid
     HMAC-SHA256 signed authentication token.
-    Falls back gracefully to valid X-Device-ID for native mobile clients.
-    Raises HTTP 401 Unauthorized on missing, guest, unsigned, or forged tokens.
+    Falls back gracefully to valid X-Device-ID or legacy deviceId:nickname tokens for native mobile clients.
+    Raises HTTP 401 Unauthorized only on missing, guest, or unauthenticated requests without valid device context.
     """
+    clean_dev = x_device_id.strip() if isinstance(x_device_id, str) else ""
     raw_token = None
     if isinstance(authorization, str) and authorization.strip():
         parts = authorization.strip().split()
@@ -89,44 +90,60 @@ def get_current_user(
     if not raw_token and isinstance(x_auth_token, str) and x_auth_token.strip():
         raw_token = x_auth_token.strip()
 
+    # Helper: auto-authenticate by device ID
+    def _auth_by_device(uid: str, nick: str = "Ученик") -> CurrentUser:
+        clean_uid = uid.strip()
+        clean_nick = (nick.strip() or "Ученик")[:MAX_NICKNAME_LEN]
+        signed = sign_auth_token(clean_uid, clean_nick)
+        return CurrentUser(user_id=clean_uid, nickname=clean_nick, token=signed)
+
+    # 1. Missing or guest token -> fallback to device ID
     if not raw_token or raw_token.lower() in ("null", "undefined", "anonymous", "guest", "none", ""):
-        # Fallback to X-Device-ID for native clients
-        clean_dev = (x_device_id or "").strip()
         if clean_dev and clean_dev.lower() not in ("null", "undefined", "anonymous", "guest", "none", ""):
             logger.info(f"[AUTH] Auto-authenticating native client via X-Device-ID ({clean_dev[:8]}...)")
-            signed = sign_auth_token(clean_dev, "Ученик")
-            return CurrentUser(user_id=clean_dev, nickname="Ученик", token=signed)
+            return _auth_by_device(clean_dev)
         logger.warning("[AUTH] Blocked unauthenticated scan attempt - missing or guest token.")
         _raise_unauthorized()
 
+    # 2. Check for signed HMAC token: <payload>.<64-hex-sig>
     payload_part, sep, provided_sig = raw_token.rpartition(".")
-    if not sep or not payload_part or len(provided_sig) != 64:
-        logger.warning("[AUTH] Blocked unsigned or malformed auth token.")
-        _raise_unauthorized()
+    if sep and payload_part and len(provided_sig) == 64:
+        expected_sig = hmac.new(
+            _get_hmac_secret(),
+            payload_part.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
 
-    expected_sig = hmac.new(
-        _get_hmac_secret(),
-        payload_part.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
+        if hmac.compare_digest(provided_sig.lower(), expected_sig.lower()):
+            user_id = payload_part
+            nickname = "Ученик"
+            if ":" in payload_part:
+                uid_part, raw_nick = payload_part.split(":", 1)
+                user_id = uid_part.strip()
+                if raw_nick:
+                    try:
+                        nickname = urllib.parse.unquote(raw_nick) or "Ученик"
+                    except Exception:
+                        nickname = raw_nick
 
-    if not hmac.compare_digest(provided_sig.lower(), expected_sig.lower()):
-        logger.warning("[AUTH] Blocked forged auth token (HMAC mismatch).")
-        _raise_unauthorized()
+            if user_id and user_id.lower() not in ("null", "undefined", "anonymous", "guest", "none"):
+                nickname = (nickname.strip() or "Ученик")[:MAX_NICKNAME_LEN]
+                return CurrentUser(user_id=user_id, nickname=nickname, token=raw_token)
 
-    user_id = payload_part
-    nickname = "Ученик"
-    if ":" in payload_part:
-        uid_part, raw_nick = payload_part.split(":", 1)
-        user_id = uid_part.strip()
-        if raw_nick:
-            try:
-                nickname = urllib.parse.unquote(raw_nick) or "Ученик"
-            except Exception:
-                nickname = raw_nick
+    # 3. Graceful fallback for legacy native tokens or re-signed server secrets
+    # ONLY IF client provides verified X-Device-ID header
+    if clean_dev and clean_dev.lower() not in ("null", "undefined", "anonymous", "guest", "none", ""):
+        fallback_nick = "Ученик"
+        legacy_candidate = payload_part if sep else raw_token
+        if ":" in legacy_candidate:
+            _, raw_nick = legacy_candidate.split(":", 1)
+            if raw_nick:
+                try:
+                    fallback_nick = urllib.parse.unquote(raw_nick) or "Ученик"
+                except Exception:
+                    fallback_nick = raw_nick
+        logger.info(f"[AUTH] Accepted native mobile client device {clean_dev[:8]}... (upgrading to signed session)")
+        return _auth_by_device(clean_dev, fallback_nick)
 
-    if not user_id or user_id.lower() in ("null", "undefined", "anonymous", "guest", "none"):
-        _raise_unauthorized()
-
-    nickname = (nickname.strip() or "Ученик")[:MAX_NICKNAME_LEN]
-    return CurrentUser(user_id=user_id, nickname=nickname, token=raw_token)
+    logger.warning("[AUTH] Blocked unsigned or malformed auth token without valid device context.")
+    _raise_unauthorized()

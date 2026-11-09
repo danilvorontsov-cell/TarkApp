@@ -88,3 +88,15 @@ def test_invoice_download_token_signing_and_verification():
     assert verify_invoice_download_token("INV-2026-1002", "device-owner-123456", tok) is False
     assert verify_invoice_download_token("INV-2026-1001", "device-attacker-999", tok) is False
     assert verify_invoice_download_token("INV-2026-1001", "device-owner-123456", "") is False
+
+
+def test_get_current_user_legacy_token_with_x_device_id_succeeds():
+    user = get_current_user(
+        authorization="Bearer dev-device-12345678:Данил",
+        x_device_id="dev-device-12345678",
+    )
+    assert isinstance(user, CurrentUser)
+    assert user.user_id == "dev-device-12345678"
+    assert user.nickname == "Данил"
+    assert "." in user.token
+

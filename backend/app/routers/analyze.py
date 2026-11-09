@@ -268,7 +268,12 @@ async def analyze_page(
         if result.is_acceptable is not False:
             store_cached_analysis(cache_key, result)
             if dev_id and isinstance(db, Session):
-                await anyio.to_thread.run_sync(license_service.deduct_review_attempt, dev_id, db)
+                try:
+                    await anyio.to_thread.run_sync(license_service.deduct_review_attempt, dev_id, db)
+                except HTTPException:
+                    raise
+                except Exception as deduct_err:
+                    logger.error(f"Error deducting review attempt for device {dev_id}: {deduct_err}", exc_info=True)
         session = lesson_session_service.create_session(
             device_id=dev_id,
             profile=profile,
@@ -440,7 +445,12 @@ async def analyze_page_json(
         if result.is_acceptable is not False:
             store_cached_analysis(cache_key, result)
             if dev_id and isinstance(db, Session):
-                await anyio.to_thread.run_sync(license_service.deduct_review_attempt, dev_id, db)
+                try:
+                    await anyio.to_thread.run_sync(license_service.deduct_review_attempt, dev_id, db)
+                except HTTPException:
+                    raise
+                except Exception as deduct_err:
+                    logger.error(f"Error deducting review attempt for device {dev_id}: {deduct_err}", exc_info=True)
         session = lesson_session_service.create_session(
             device_id=dev_id,
             profile=profile,
