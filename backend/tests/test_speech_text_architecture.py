@@ -406,7 +406,7 @@ def test_ssml_isolation_keywords_and_accents():
 def test_speak_endpoint_supports_is_speech_text(client, monkeypatch):
     """Verify GET /api/v1/voice/speak accepts is_speech_text and passes to tts_service."""
     captured = {}
-    async def mock_synth(text, voice="et-EE-AnuNeural", bilingual=False, grade=None, tier=None, is_speech_text=False):
+    async def mock_synth(text, voice="et-EE-AnuNeural", bilingual=False, grade=None, tier=None, is_speech_text=False, **kwargs):
         captured["text"] = text
         captured["voice"] = voice
         captured["is_speech_text"] = is_speech_text
@@ -437,16 +437,10 @@ def test_socratic_scaffolding_and_verb_accents():
     assert "Вспомни, как мы распределяли предметы поровну в примере выше" in ESTONIAN_TUTOR_SYSTEM_PROMPT
     assert "Текст how_to_answer_speech обязан транскрибировать наводящий совет полностью" in ESTONIAN_TUTOR_SYSTEM_PROMPT
 
-    # 2. Acute accents required on all solution step action verbs
-    required_verbs = [
-        "разлива́ем", "перелива́ем", "выбира́ем", "составля́ем", "вычита́ем",
-        "склады́ваем", "дели́м", "умножа́ем", "раскла́дываем", "счита́ем",
-        "получа́ем", "определя́ем"
-    ]
-    for verb in required_verbs:
-        # Check either precomposed/composed or combining unicode form
-        verb_combining = verb.replace("́", "\u0301")
-        assert (verb in ESTONIAN_TUTOR_SYSTEM_PROMPT) or (verb_combining in ESTONIAN_TUTOR_SYSTEM_PROMPT), f"Missing accented verb: {verb}"
+    # 2. Acute accents restricted strictly to homographs, forbidden on ordinary verbs
+    assert "ЗАПРЕЩЕНО ставить знаки ударения на обычные слова и глаголы" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "ТОЛЬКО для снятия двусмысленности в омографах" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "де́лимое/дели́мое, стре́лки/стрелки́" in ESTONIAN_TUTOR_SYSTEM_PROMPT
 
     # 3. User prompt includes student context and directive without duplicate rules
     u_prompt = build_tutor_user_prompt(UserProfile(grade=3, nickname="Маша"))

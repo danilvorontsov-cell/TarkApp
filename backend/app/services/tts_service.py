@@ -567,7 +567,8 @@ def build_ssml(
                 voice_blocks.append(f'  <voice name="{ESTONIAN_VOICE}"><lang xml:lang="et-EE">{voiced}</lang></voice>')
         else:
             esc = _escape_ssml(s_clean)
-            esc = apply_russian_ssml_sub_aliases(esc)
+            if not is_speech_text:
+                esc = apply_russian_ssml_sub_aliases(esc)
             esc = add_ssml_sentence_breaks(esc)
             voiced = f'<prosody rate="-5%">{esc}</prosody>' if is_junior_speed else esc
             voice_blocks.append(f'  <voice name="{DEFAULT_VOICE}">{voiced}</voice>')
