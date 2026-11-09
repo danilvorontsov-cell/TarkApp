@@ -468,12 +468,13 @@ def test_estonian_measurement_units_normalization():
 def test_math_actions_speech_sanitization():
     from app.services.tts_service import build_ssml, sanitize_math_actions_speech
 
-    # 1. Phoneme tags pass through sanitize_math_actions_speech untouched
-    phrase = 'Шаг третий: <phoneme alphabet="ipa" ph="vɨt͡ɕɪˈtajɪm">вычитаем</phoneme> из суммы первое число.'
-    assert '<phoneme alphabet="ipa" ph="vɨt͡ɕɪˈtajɪm">вычитаем</phoneme>' in sanitize_math_actions_speech(phrase)
+    # 1. Natural phonetic disambiguation passes through sanitize_math_actions_speech untouched
+    phrase = 'Шаг третий: вычтем из суммы первое число.'
+    assert 'вычтем' in sanitize_math_actions_speech(phrase)
 
-    # 2. Integration check with build_ssml and is_speech_text=True: phoneme tag is whitelisted and not escaped
-    ssml = build_ssml(phrase, is_speech_text=True)
-    assert '<phoneme alphabet="ipa" ph="vɨt͡ɕɪˈtajɪm">вычитаем</phoneme>' in ssml
-    assert "&lt;phoneme" not in ssml
+    # 2. Fallback sub alias is whitelisted and not escaped in SSML
+    phrase_sub = 'Шаг третий: <sub alias="вычтем">вычитаем</sub> из суммы первое число.'
+    ssml = build_ssml(phrase_sub, is_speech_text=True)
+    assert '<sub alias="вычтем">вычитаем</sub>' in ssml
+    assert "&lt;sub" not in ssml
     assert "<voice name=\"ru-RU-SvetlanaNeural\">" in ssml

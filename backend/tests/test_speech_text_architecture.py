@@ -437,10 +437,12 @@ def test_socratic_scaffolding_and_verb_accents():
     assert "Вспомни, как мы распределяли предметы поровну в примере выше" in ESTONIAN_TUTOR_SYSTEM_PROMPT
     assert "Текст how_to_answer_speech обязан транскрибировать наводящий совет полностью" in ESTONIAN_TUTOR_SYSTEM_PROMPT
 
-    # 2. Phoneme IPA tags for homographs in speech text
-    assert "ГЛОБАЛЬНОЕ ПРАВИЛО УДАРЕНИЙ ДЛЯ ОМОГРАФОВ" in ESTONIAN_TUTOR_SYSTEM_PROMPT
-    assert '<phoneme alphabet="ipa" ph="vɨt͡ɕɪˈtajɪm">вычитаем</phoneme>' in ESTONIAN_TUTOR_SYSTEM_PROMPT
-    assert '<phoneme alphabet="ipa" ph="dʲɪˈlʲiməjə">делимое</phoneme>' in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    # 2. Phonetic disambiguation for homographs in speech text
+    assert "ПРАВИЛО ФОНЕТИЧЕСКОЙ ОДНОЗНАЧНОСТИ В РЕЧЕВОМ СЛОЕ" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "вычтем" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "отнимаем" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert "стрелочки" in ESTONIAN_TUTOR_SYSTEM_PROMPT
+    assert '<phoneme' not in ESTONIAN_TUTOR_SYSTEM_PROMPT
 
     # 3. User prompt includes student context and directive without duplicate rules
     u_prompt = build_tutor_user_prompt(UserProfile(grade=3, nickname="Маша"))

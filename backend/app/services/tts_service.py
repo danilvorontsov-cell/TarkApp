@@ -294,7 +294,7 @@ def parse_bilingual_segments(
         return [(clean_est or text.strip(), ESTONIAN_VOICE)]
 
     # 2. Ищем эстонские фрагменты в русском тексте
-    # Защищаем любые теги кроме <est> и </est> (например, <phoneme alphabet="ipa" ph="...">...</phoneme>),
+    # Защищаем любые теги кроме <est> и </est> (например, <sub alias="...">...</sub>),
     # чтобы кавычки в атрибутах тегов не распознавались ошибочно как эстонские фразы.
     masked_tags: List[str] = []
     def mask_tag(m: re.Match) -> str:
@@ -372,15 +372,15 @@ def parse_bilingual_segments(
 
 
 def _escape_ssml(text: str) -> str:
-    """Экранирует специальные символы XML для корректного SSML, защищая теги <phoneme ...>...</phoneme> и <sub ...>...</sub>."""
+    """Экранирует специальные символы XML для корректного SSML, защищая тег <sub ...>...</sub>."""
     protected_tags = []
     def mask_tag(m):
         idx = len(protected_tags)
         protected_tags.append(m.group(0))
         return f"__SSML_PROTECTED_TAG_{idx}__"
 
-    # Белый список тегов (whitelist): защищаем <phoneme ...>...</phoneme> и <sub ...>...</sub> от экранирования
-    t = re.sub(r'<(phoneme|sub)\b[^>]*>.*?<\/\1>', mask_tag, text, flags=re.IGNORECASE | re.DOTALL)
+    # Белый список тегов (whitelist): защищаем <sub ...>...</sub> от экранирования
+    t = re.sub(r'<sub\b[^>]*>.*?<\/sub>', mask_tag, text, flags=re.IGNORECASE | re.DOTALL)
 
     t = (
         t.replace("&", "&amp;")
@@ -479,7 +479,7 @@ def _format_estonian_ssml_segment(seg_text: str, is_speech_text: bool = False) -
 def sanitize_math_actions_speech(text: str) -> str:
     """
     Санитизация речевого слоя.
-    Ударения для омографов размечаются через нативный SSML-тег <phoneme alphabet="ipa" ph="...">.
+    Омографы разрешаются на уровне системного промпта LLM естественными однозначными формами ('вычтем' / 'отнимаем').
     """
     if not text:
         return text
