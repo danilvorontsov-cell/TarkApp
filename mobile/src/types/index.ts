@@ -232,17 +232,6 @@ export function isDefaultInterestsList(interests: string[] | undefined): boolean
   return false;
 }
 
-export function getInterestsPlaceholder(tier: SchoolTier): string {
-  switch (tier) {
-    case 'primary':
-      return 'Minecraft, LEGO, футбол, котики...';
-    case 'middle':
-      return 'Футбол, видеоигры, музыка, скейт...';
-    case 'high':
-      return 'Игры, музыка, гаджеты, аниме, спорт...';
-    case 'gymnasium':
-      return 'IT, нейросети, музыка, кино, стартапы...';
-    default:
-      return 'Футбол, музыка, игры...';
-  }
+export function getInterestsPlaceholder(tier?: SchoolTier): string {
+  return 'Впиши свои увлечения вручную через запятую...';
 }

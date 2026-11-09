@@ -708,7 +708,21 @@ function MainApp() {
       );
       return;
     }
-    const updated: UserProfile = { ...profile, nickname: trimmed };
+    const parsedInterests = interestsText
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const gradeMap: Record<number, string[]> = {
+      ...(profile.interestsByGrade || {}),
+      [profile.grade]: parsedInterests,
+    };
+    const updated: UserProfile = {
+      ...profile,
+      nickname: trimmed,
+      interests: parsedInterests,
+      hasCustomInterests: true,
+      interestsByGrade: gradeMap,
+    };
     setProfile(updated);
     await StorageService.saveProfile(updated);
     const devId = await getDeviceId();
@@ -792,27 +806,23 @@ function MainApp() {
   };
 
   const handleAddSuggestion = (item: string) => {
-    const validSuggestions = (AGE_SUGGESTIONS[profile.tier] || []).map((s) => s.trim().toLowerCase());
-    
-    // Purge any stale interests from other tiers before modifying
-    const currentList = (profile.interests || []).filter((i) =>
-      validSuggestions.includes(i.trim().toLowerCase())
+    const rawInput = interestsText ?? (profile.interests || []).join(', ');
+    const currentList = rawInput
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const existsIndex = currentList.findIndex(
+      (i) => i.toLowerCase() === item.trim().toLowerCase()
     );
 
-    const exists = currentList.some(
-      (i) => i.toLowerCase() === item.toLowerCase()
-    );
     let newList: string[];
-    if (exists) {
-      newList = currentList.filter(
-        (i) => i.toLowerCase() !== item.toLowerCase()
-      );
-      if (newList.length === 0) {
-        newList = getDefaultInterestsForTier(profile.tier);
-      }
+    if (existsIndex >= 0) {
+      newList = currentList.filter((_, idx) => idx !== existsIndex);
     } else {
-      newList = [...currentList, item];
+      newList = [...currentList, item.trim()];
     }
+
     const newText = newList.join(', ');
     setInterestsText(newText);
     const gradeMap: Record<number, string[]> = {
@@ -2873,20 +2883,22 @@ function MainApp() {
             style={[styles.textInput, styles.interestsInput, isJunior && styles.textInputJunior]}
             value={interestsText}
             onChangeText={handleInterestsChange}
-            placeholder={getInterestsPlaceholder(profile.tier)}
+            placeholder="Впиши свои увлечения вручную через запятую..."
             placeholderTextColor={Theme.colors.textMuted}
             multiline
           />
           <Text style={[styles.interestsHint, isJunior && styles.interestsHintJunior]}>
-            💡 Введи свои увлечения, разделяя запятыми. ИИ объяснит абстрактные эстонские правила через аналогии с любимыми играми и хобби.
+            💡 Впиши свои увлечения вручную (через запятую) или выбери готовые плашки. Тьютор объяснит правила и примеры через аналогии с твоими любимыми играми и хобби!
           </Text>
 
           <Text style={styles.suggestionsTitle}>Быстрые подсказки по возрасту:</Text>
           <View style={styles.suggestionsGrid}>
             {currentSuggestions.map((item, idx) => {
-              const isSelected = (profile.interests || []).some(
-                (i) => i.toLowerCase() === item.toLowerCase()
-              );
+              const currentList = (interestsText ?? (profile.interests || []).join(', '))
+                .split(',')
+                .map((s) => s.trim().toLowerCase())
+                .filter(Boolean);
+              const isSelected = currentList.includes(item.trim().toLowerCase());
               return (
                 <TouchableOpacity
                   key={idx}
