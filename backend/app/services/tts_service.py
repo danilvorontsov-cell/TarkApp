@@ -460,6 +460,44 @@ def _format_estonian_ssml_segment(seg_text: str, is_speech_text: bool = False) -
     return add_ssml_sentence_breaks(esc)
 
 
+def sanitize_math_actions_speech(text: str) -> str:
+    """
+    Гарантия нормативного ударения в математических операциях и глаголах для Azure Speech (ru-RU-SvetlanaNeural).
+    Движок часто ошибочно путает математическое действие 'вычита́ть / вычита́ем'
+    с совершенным видом 'вы́читать' (вы́читать текст / вы́читаем огрехи) и ставит ударение на приставку.
+    Заменяет ошибочное ударение на приставку (вы́читаем / вы\\u0301читаем) на нормативное (вычита́ем),
+    а также проставляет Combining Acute (\\u0301) на суффикс -а́-, если слово пришло без знака ударения.
+    """
+    if not text:
+        return text
+
+    def _repl_vychit(match: re.Match) -> str:
+        orig = match.group(0)
+        clean_word = orig.replace('\u0301', '').replace('\u02ca', '').replace('́', '')
+        m_end = re.match(r'^(вычит)а?(.*)$', clean_word, re.IGNORECASE)
+        if m_end:
+            prefix = clean_word[:5]
+            ending = m_end.group(2)
+            return f"{prefix}а\u0301{ending}"
+        return "Вычита\u0301ем" if orig[0].isupper() else "вычита\u0301ем"
+
+    # 1. Заменяем ошибочное ударение на приставку: вы́читаем|вы\u0301читаем и др.
+    text = re.sub(
+        r'\b[Вв]ы[\u0301\u00b4\u02cá]чит[а\u0301\u00b4\u02cá]?(ем[а-яё]*|ет[а-яё]*|ешь|ют|ете|ли|л|ла|ть|я)\b',
+        _repl_vychit,
+        text,
+    )
+
+    # 2. Проставляем нормативное ударение на суффикс для чистых форм без ударения:
+    text = re.sub(
+        r'\b([Вв]ычит)а(ем[а-яё]*|ет[а-яё]*|ешь|ют|ете|ли|л|ла|ть|я)\b',
+        _repl_vychit,
+        text,
+    )
+
+    return text
+
+
 def build_ssml(
     text: str,
     voice: str = DEFAULT_VOICE,
@@ -480,7 +518,7 @@ def build_ssml(
     if not text or not text.strip():
         return ""
 
-    raw_stripped = text.strip()
+    raw_stripped = sanitize_math_actions_speech(text.strip())
 
     is_junior_speed = (
         (grade is not None and 1 <= grade <= 2)

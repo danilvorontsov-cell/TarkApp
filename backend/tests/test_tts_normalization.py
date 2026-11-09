@@ -464,3 +464,24 @@ def test_estonian_measurement_units_normalization():
     # Bilingual SSML integration
     ssml = build_ssml("Расстояние составляет <est>15 km</est>.")
     assert "kilomeetrit" in ssml
+
+
+def test_math_actions_speech_sanitization():
+    from app.services.tts_service import build_ssml, sanitize_math_actions_speech
+
+    # 1. Direct unit checks for sanitize_math_actions_speech
+    assert "Вычита\u0301ем" in sanitize_math_actions_speech("Шаг третий. Вычитаем из суммы первое число.")
+    assert "вычита\u0301ем" in sanitize_math_actions_speech("Затем мы вычитаем второе число.")
+    assert "вычита\u0301ем" in sanitize_math_actions_speech("Если мы вы́читаем число.")
+    assert "вычита\u0301ем" in sanitize_math_actions_speech("Если мы вы\u0301читаем число.")
+    assert "вычита\u0301ли" in sanitize_math_actions_speech("Вспомни, как мы вычитали детальки.")
+    assert "вычита\u0301емое" in sanitize_math_actions_speech("Уменьшаемое, вычитаемое и разность.")
+    assert "вычита\u0301ть" in sanitize_math_actions_speech("Нужно вычитать по порядку.")
+
+    # 2. Integration check with build_ssml and is_speech_text=True (production Gemini voice payload)
+    ssml = build_ssml(
+        "Шаг третий. Вычитаем из суммы первое число: семь минус пять равно два.",
+        is_speech_text=True,
+    )
+    assert "Вычита\u0301ем" in ssml
+    assert "<voice name=\"ru-RU-SvetlanaNeural\">" in ssml

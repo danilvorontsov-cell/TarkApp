@@ -514,21 +514,16 @@ class PageAnalysisResponse(GeminiPageAnalysisSchema):
                 if getattr(self.worked_example, "title", None):
                     self.worked_example.title = strip_combining_accents(self.worked_example.title)
 
-            v_speech = (self.voice_prompt_script_speech or "").strip() or self.voice_prompt_script or ""
-            th_speech = (self.theme_explanation_speech or "").strip() or self.theme_explanation or ""
-            alt_speech = (self.alternative_explanation_speech or "").strip() or self.alternative_explanation
-            how_speech = (self.how_to_answer_speech or "").strip() or self.how_to_answer or ""
+            from app.services.tts_normalizer import prepare_speech_text, prepare_worked_example_speech
+
+            v_speech = (self.voice_prompt_script_speech or "").strip() or prepare_speech_text(self.voice_prompt_script or "")
+            th_speech = (self.theme_explanation_speech or "").strip() or prepare_speech_text(self.theme_explanation or "")
+            alt_speech = (self.alternative_explanation_speech or "").strip() or (prepare_speech_text(self.alternative_explanation) if self.alternative_explanation else None)
+            how_speech = (self.how_to_answer_speech or "").strip() or prepare_speech_text(self.how_to_answer or "")
 
             ex_speech = (self.worked_example_speech or "").strip()
             if not ex_speech and self.worked_example:
-                parts = []
-                if self.worked_example.given:
-                    parts.append(self.worked_example.given)
-                if self.worked_example.steps:
-                    parts.extend(self.worked_example.steps)
-                if self.worked_example.note:
-                    parts.append(self.worked_example.note)
-                ex_speech = " ".join(parts) if parts else None
+                ex_speech = prepare_worked_example_speech(self.worked_example)
 
             self.voice_prompt_script_speech = v_speech
             self.theme_explanation_speech = th_speech
