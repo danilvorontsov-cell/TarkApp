@@ -2204,6 +2204,10 @@ def apply_russian_ssml_sub_aliases(text: str) -> str:
     # 2. Вычитаем, вычитает, вычитайте, вычитаемое и др. глагольные формы
     def repl_vychit(m: re.Match) -> str:
         orig = m.group(0)
+        clean = orig.replace('\u0301', '').replace('\u00b4', '').replace('\u02ca', '').replace('́', '')
+        if clean.lower() == 'вычитаем':
+            alias = "Отнимаем" if clean[0].isupper() else "отнимаем"
+            return f'<sub alias="{alias}">{clean}</sub>'
         prefix = m.group(1)
         ending = m.group(2).replace('\u0301', '')
         alias = f"{prefix}а\u0301{ending}"

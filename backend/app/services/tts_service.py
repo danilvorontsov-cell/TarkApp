@@ -462,18 +462,45 @@ def _format_estonian_ssml_segment(seg_text: str, is_speech_text: bool = False) -
 
 def sanitize_math_actions_speech(text: str) -> str:
     """
-    Гарантия нормативного ударения в математических операциях и глаголах для Azure Speech (ru-RU-SvetlanaNeural).
+    Гарантия нормативного произношения и ударения в математических операциях для Azure Speech (ru-RU-SvetlanaNeural).
     Движок часто ошибочно путает математическое действие 'вычита́ть / вычита́ем'
-    с совершенным видом 'вы́читать' (вы́читать текст / вы́читаем огрехи) и ставит ударение на приставку.
-    Заменяет ошибочное ударение на приставку (вы́читаем / вы\\u0301читаем) на нормативное (вычита́ем),
-    а также проставляет Combining Acute (\\u0301) на суффикс -а́-, если слово пришло без знака ударения.
+    с совершенным видом 'вы́читать' (вы́читать текст / вы́читаем огрехи) и ставит ударение на приставку ('вы́читаем').
+    Поскольку Azure Neural G2P отсекает Combining Acute (\\u0301) на кириллице, для формы 'вычитаем'
+    подменяем произношение через гарантированный SSML sub alias: <sub alias="отнимаем">вычитаем</sub>.
+    Для остальных форм (вычита́емое, вычита́ть, вычита́л) проставляет Combining Acute (\\u0301) на суффикс.
     """
     if not text:
         return text
 
+    # Защищаем уже существующие теги <sub ...>...</sub>
+    sub_tags = []
+    def mask_sub(m: re.Match) -> str:
+        idx = len(sub_tags)
+        sub_tags.append(m.group(0))
+        return f"__SSML_SUB_MASK_{idx}__"
+
+    text = re.sub(r'<sub\b[^>]*>.*?<\/sub>', mask_sub, text, flags=re.IGNORECASE | re.DOTALL)
+
+    # 1. Для слова 'вычитаем' (включая любые варианты с ударениями: вычитаем, вы́читаем, вычита́ем):
+    # Подменяем произношение через SSML sub alias: <sub alias="отнимаем">вычитаем</sub> (или <sub alias="Отнимаем">Вычитаем</sub>)
+    def _sub_alias_vychitaem(match: re.Match) -> str:
+        orig = match.group(0)
+        clean = orig.replace('\u0301', '').replace('\u00b4', '').replace('\u02ca', '').replace('́', '')
+        if clean.islower():
+            return f'<sub alias="отнимаем">{clean}</sub>'
+        else:
+            return f'<sub alias="Отнимаем">{clean}</sub>'
+
+    text = re.sub(
+        r'\b[Вв]ы[\u0301\u00b4\u02cá]?чит[аa][\u0301\u00b4\u02cá]?ем\b',
+        _sub_alias_vychitaem,
+        text,
+    )
+
+    # 2. Для остальных форм (вычитает, вычитайте, вычитаемое, вычитал, вычитать) проставляем Combining Acute на -а́-:
     def _repl_vychit(match: re.Match) -> str:
         orig = match.group(0)
-        clean_word = orig.replace('\u0301', '').replace('\u02ca', '').replace('́', '')
+        clean_word = orig.replace('\u0301', '').replace('\u00b4', '').replace('\u02ca', '').replace('́', '')
         m_end = re.match(r'^(вычит)а?(.*)$', clean_word, re.IGNORECASE)
         if m_end:
             prefix = clean_word[:5]
@@ -481,19 +508,20 @@ def sanitize_math_actions_speech(text: str) -> str:
             return f"{prefix}а\u0301{ending}"
         return "Вычита\u0301ем" if orig[0].isupper() else "вычита\u0301ем"
 
-    # 1. Заменяем ошибочное ударение на приставку: вы́читаем|вы\u0301читаем и др.
     text = re.sub(
-        r'\b[Вв]ы[\u0301\u00b4\u02cá]чит[а\u0301\u00b4\u02cá]?(ем[а-яё]*|ет[а-яё]*|ешь|ют|ете|ли|л|ла|ть|я)\b',
+        r'\b[Вв]ы[\u0301\u00b4\u02cá]чит[аa][\u0301\u00b4\u02cá]?(ет[а-яё]*|ешь|ют|ете|ли|л|ла|ть|я|ем[а-яё]+)\b',
+        _repl_vychit,
+        text,
+    )
+    text = re.sub(
+        r'\b([Вв]ычит)[аa](ет[а-яё]*|ешь|ют|ете|ли|л|ла|ть|я|ем[а-яё]+)\b',
         _repl_vychit,
         text,
     )
 
-    # 2. Проставляем нормативное ударение на суффикс для чистых форм без ударения:
-    text = re.sub(
-        r'\b([Вв]ычит)а(ем[а-яё]*|ет[а-яё]*|ешь|ют|ете|ли|л|ла|ть|я)\b',
-        _repl_vychit,
-        text,
-    )
+    # Восстанавливаем защищенные теги
+    for idx, orig_sub in enumerate(sub_tags):
+        text = text.replace(f"__SSML_SUB_MASK_{idx}__", orig_sub)
 
     return text
 
