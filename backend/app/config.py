@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-3.8-flash"
     GEMINI_MODEL_NAME: Optional[str] = None
     
+    # TTS Pipeline settings (Silero v5 for Russian + Microsoft Neural for Estonian)
+    TTS_PROVIDER: str = "silero"  # "silero" (default), "microsoft", "openai" (deprecated)
+    SILERO_MODEL_PATH: str = "data/models/v5_ru.pt"
+    SILERO_VOICE: str = "xenia"  # "xenia" or "kseniya"
+    SILERO_SAMPLE_RATE: int = 24000
+
     # Azure Speech Service settings
     AZURE_SPEECH_KEY: Optional[str] = None
     AZURE_SPEECH_REGION: str = "northeurope"

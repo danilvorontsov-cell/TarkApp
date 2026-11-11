@@ -5,11 +5,11 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def strip_combining_accents(v: Any) -> Any:
-    """Removes Combining Acute Accent (\u0301) and related stress markers from display text."""
+    """Removes Combining Acute Accent (\u0301) and technical stress plus (+) from display text."""
     if v is None:
         return None
     if isinstance(v, str):
-        return re.sub(r'[\u0301\u0341]', '', v)
+        return re.sub(r'[\u0301\u0341]|\+(?=[а-яА-ЯёЁa-zA-Z])', '', v)
     if isinstance(v, list):
         return [strip_combining_accents(item) for item in v]
     if isinstance(v, dict):

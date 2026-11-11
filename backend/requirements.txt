@@ -10,4 +10,9 @@ pytest>=8.0.0
 azure-cognitiveservices-speech>=1.38.0
 sqlalchemy>=2.0.0
 slowapi>=0.1.9
+torch>=2.0.0
+soundfile>=0.12.1
+scipy>=1.11.0
+numpy>=1.26.0
+edge-tts>=7.0.0
 

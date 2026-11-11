@@ -478,3 +478,60 @@ def test_math_actions_speech_sanitization():
     assert '<sub alias="вычтем">вычитаем</sub>' in ssml
     assert "&lt;sub" not in ssml
     assert "<voice name=\"ru-RU-SvetlanaNeural\">" in ssml
+
+
+def test_silero_stress_normalizer_and_display_cleaner():
+    """
+    Проверка двухуровневого нормализатора:
+    1. Жесткий словарь для неологизмов и терминов с фиксированным ударением (apply_stress_overrides).
+    2. Запрет жесткой словарной замены омографов с вариативным ударением (вычитаем, стопы, замки).
+    3. Очистка клиентского UI текста от знаков '+' (clean_display_text).
+    """
+    from app.services.tts_normalizer import apply_stress_overrides, clean_display_text
+
+    # 1. Фиксированные термины без плюса получают ударение
+    sample = "исследователь Дан управляет марсоходом на шасси и совершает суперпрыжки"
+    stressed = apply_stress_overrides(sample)
+    assert "иссл+едователь" in stressed
+    assert "марсох+ода" in stressed
+    assert "шасс+и" in stressed
+    assert "супер-прыжк+и" in stressed
+
+    # 2. Сохранение регистра первой буквы
+    cap_sample = "Исследователь строит Марсоход"
+    cap_stressed = apply_stress_overrides(cap_sample)
+    assert "Иссл+едователь" in cap_stressed
+
+    # 3. Слова с уже проставленным плюсом не перезаписываются повторно
+    already_stressed = "мы делаем супер-прыжк+ами"
+    assert apply_stress_overrides(already_stressed) == already_stressed
+
+    # 4. Вариативные омографы (вычитаем, стопы, замки) НЕ подменяются принудительно
+    variable_stress = "Мы вычитаем числа и тренируем стопы"
+    var_res = apply_stress_overrides(variable_stress)
+    assert "вычит+аем" not in var_res  # не хардкодится на бэкенде
+    assert "стоп+ы" not in var_res     # не хардкодится на бэкенде
+    assert "Мы вычитаем числа и тренируем стопы" in var_res
+
+    # 5. Очистка текста для UI
+    ui_text = "Прив+ет, иссл+едователь Дан! Мы вычит+аем ч+исла и д+елаем супер-прыжк+и!"
+    clean_ui = clean_display_text(ui_text)
+    assert "+" not in clean_ui
+    assert "Привет, исследователь Дан! Мы вычитаем числа и делаем супер-прыжки!" in clean_ui
+
+
+def test_bilingual_latin_words_segmentation():
+    """
+    Проверка билингвального сплиттера:
+    Эстонские термины на латинице (например, 'jalg') без кириллицы
+    автоматически направляются эстонскому диктору (et-EE-AnuNeural).
+    """
+    from app.services.tts_service import parse_bilingual_segments, ESTONIAN_VOICE
+
+    phrase = "Привет, исследователь Дан! Посмотри, как называется стопа по-эстонски: jalg. Мы вычитаем числа и делаем суперпрыжки!"
+    segments = parse_bilingual_segments(phrase, is_speech_text=True)
+
+    # Должен быть эстонский сегмент для слова jalg
+    et_segs = [txt for txt, v in segments if "et-EE" in v or v == "et" or v == ESTONIAN_VOICE]
+    assert any("jalg" in s for s in et_segs)
+

@@ -7,6 +7,7 @@ import {
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL, getDeviceId, resolveBaseUrl } from './api';
+import { sanitizeTextForTts } from '../utils/textSanitizer';
 
 export const AUDIO_CACHE_VERSION = 2;
 const CACHE_VERSION_KEY = '@tarkapp_audio_cache_version';
@@ -342,7 +343,9 @@ export async function playTts(
       return null;
     }
 
-    if (synthText.length > 200) {
+    const sanitizedSynthText = sanitizeTextForTts(synthText);
+
+    if (sanitizedSynthText.length > 200) {
       // POST запрос для фраз длиннее 200 символов
       const postUrl = `${activeBaseUrl}/api/v1/voice/tts`;
       const response = await fetch(postUrl, {
@@ -352,7 +355,7 @@ export async function playTts(
           ...(deviceId ? { 'X-Device-ID': deviceId } : {}),
         },
         body: JSON.stringify({
-          text: synthText,
+          text: sanitizedSynthText,
           lang,
           bilingual,
           grade: effectiveGrade,
@@ -384,7 +387,7 @@ export async function playTts(
       const cacheDir = `${FileSystem.cacheDirectory || ''}tarkapp_audio/`;
       await ensureAudioCacheDir(cacheDir);
 
-      const hashStr = getFileHash(synthText);
+      const hashStr = getFileHash(sanitizedSynthText);
       const localFilePath = `${cacheDir}${lang}_${bilingual ? 'bi' : 'mono'}_g${effectiveGrade || 1}_${effectiveTier || 'pri'}_${hashStr}.mp3`;
       await FileSystem.writeAsStringAsync(localFilePath, base64Data, {
         encoding: FileSystem.EncodingType.Base64,
@@ -396,7 +399,7 @@ export async function playTts(
       const gradeParam = effectiveGrade ? `&grade=${effectiveGrade}` : '';
       const tierParam = effectiveTier ? `&tier=${encodeURIComponent(effectiveTier)}` : '';
       const speechParam = effectiveIsSpeech ? '&is_speech_text=true' : '';
-      effectiveUri = `${activeBaseUrl}/api/v1/voice/tts?text=${encodeURIComponent(synthText)}&lang=${lang}${bilingualParam}${deviceParam}${gradeParam}${tierParam}${speechParam}`;
+      effectiveUri = `${activeBaseUrl}/api/v1/voice/tts?text=${encodeURIComponent(sanitizedSynthText)}&lang=${lang}${bilingualParam}${deviceParam}${gradeParam}${tierParam}${speechParam}`;
     }
   }
 

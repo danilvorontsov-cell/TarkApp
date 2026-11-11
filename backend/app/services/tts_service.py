@@ -2,6 +2,7 @@ import asyncio
 from collections import OrderedDict
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 import logging
 import os
@@ -14,6 +15,17 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 import uuid
 
 import anyio.to_thread
+import numpy as np
+
+try:
+    import soundfile as sf
+except ImportError:
+    sf = None
+
+try:
+    import edge_tts
+except ImportError:
+    edge_tts = None
 
 try:
     import azure.cognitiveservices.speech as speechsdk
@@ -24,16 +36,22 @@ from app.config import settings
 from app.database import SessionLocal
 from app.logger import tts_audit_logger
 from app.models.tts_audit import TTSAuditLog
+from app.services.silero_service import silero_tts
+from app.services.tts_normalizer import apply_stress_overrides, clean_display_text
 
 logger = logging.getLogger(__name__)
 
-# Supported voice mappings for Azure Speech Services
+# Supported voice mappings for Azure Speech Services and Silero v5
 DEFAULT_VOICE = "ru-RU-SvetlanaNeural"
 ESTONIAN_VOICE = "et-EE-AnuNeural"
 
 VOICE_MAP: Dict[str, str] = {
     "ru": DEFAULT_VOICE,
     "et": ESTONIAN_VOICE,
+    "bilingual": "bilingual",
+    "silero": "silero",
+    "xenia": "silero",
+    "kseniya": "silero",
     "ru-RU-SvetlanaMultilingualNeural": DEFAULT_VOICE,
     "ru-RU-SvetlanaNeural": DEFAULT_VOICE,
     "et-EE-AnuNeural": ESTONIAN_VOICE,
@@ -294,20 +312,20 @@ def parse_bilingual_segments(
         return [(clean_est or text.strip(), ESTONIAN_VOICE)]
 
     # 2. Ищем эстонские фрагменты в русском тексте
-    # Защищаем любые теги кроме <est> и </est> (например, <sub alias="...">...</sub>),
-    # чтобы кавычки в атрибутах тегов не распознавались ошибочно как эстонские фразы.
+    # Защищаем любые теги кроме <est>, <et> и их закрывающих
     masked_tags: List[str] = []
     def mask_tag(m: re.Match) -> str:
         idx = len(masked_tags)
         masked_tags.append(m.group(0))
         return f"__BILINGUAL_TAG_{idx}__"
 
-    text_to_scan = re.sub(r'<(?!/?est\b)[^>]+>', mask_tag, text)
+    text_to_scan = re.sub(r'<(?!/?(?:est|et)\b)[^>]+>', mask_tag, text)
 
     pattern = re.compile(
-        r'<\s*est(?:\s+[^>]*)?>(.*?)<\s*/\s*est\s*>'
+        r'<\s*(?:est|et)(?:\s+[^>]*)?>(.*?)<\s*/\s*(?:est|et)\s*>'
         r'|[\'\"«“]([a-zA-ZäöüõÄÖÜÕšžŠŽ0-9\s\.,\?!-]{2,})[\'\"»”]'
-        r'|\(([a-zA-ZäöüõÄÖÜÕšžŠŽ0-9\s\.,\?!-]{2,})\)',
+        r'|\(([a-zA-ZäöüõÄÖÜÕšžŠŽ0-9\s\.,\?!-]{2,})\)'
+        r'|\b([a-zA-ZäöüõÄÖÜÕšžŠŽ]{2,})\b',
         re.DOTALL
     )
 
@@ -316,6 +334,7 @@ def parse_bilingual_segments(
         tag_val = m.group(1)
         quote_val = m.group(2)
         paren_val = m.group(3)
+        latin_val = m.group(4)
 
         if tag_val is not None:
             clean = tag_val.strip()
@@ -327,6 +346,10 @@ def parse_bilingual_segments(
                 matches.append((m.start(), m.end(), val, False))
         elif paren_val is not None:
             val = paren_val.strip()
+            if val and not _is_pure_english_brand_or_key(val) and not is_chemical_formula_or_acronym(val):
+                matches.append((m.start(), m.end(), val, False))
+        elif latin_val is not None:
+            val = latin_val.strip()
             if val and not _is_pure_english_brand_or_key(val) and not is_chemical_formula_or_acronym(val):
                 matches.append((m.start(), m.end(), val, False))
 
@@ -804,6 +827,161 @@ def _synthesize_azure_ssml(ssml: str) -> bytes:
         raise RuntimeError(f"Azure Speech synthesis failed with reason: {result.reason}")
 
 
+async def synthesize_estonian_audio_segment(
+    text: str, voice: str = ESTONIAN_VOICE, sample_rate: int = 24000
+) -> Optional[np.ndarray]:
+    """
+    Синтезирует эстонский фрагмент текста нативным голосом Microsoft TTS (et-EE-AnuNeural / et-EE-KertNeural).
+    Приоритет 1: Azure Speech SDK (если сконфигурирован AZURE_SPEECH_KEY).
+    Приоритет 2: Microsoft Edge TTS (edge-tts).
+    Возвращает 1D numpy array float32 с частотой sample_rate.
+    """
+    clean_text = text.strip()
+    if not clean_text:
+        return None
+
+    # Приоритет 1: Azure Speech SDK
+    if speechsdk is not None and getattr(settings, "AZURE_SPEECH_KEY", None):
+        try:
+            esc_text = clean_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            v_name = voice if "et-EE" in voice else ESTONIAN_VOICE
+            ssml = (
+                f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="et-EE">'
+                f'<voice name="{v_name}"><lang xml:lang="et-EE">{esc_text}</lang></voice></speak>'
+            )
+            raw_audio = await asyncio.wait_for(
+                asyncio.to_thread(_synthesize_azure_ssml, ssml),
+                timeout=AZURE_SYNTHESIS_TIMEOUT_SEC,
+            )
+            if raw_audio and sf is not None:
+                data, sr = sf.read(io.BytesIO(raw_audio))
+                if sr != sample_rate:
+                    import scipy.signal
+                    num_samples = int(len(data) * sample_rate / sr)
+                    data = scipy.signal.resample(data, num_samples)
+                return data.astype(np.float32)
+        except Exception as az_err:
+            logger.warning(f"[TTS] Azure synthesis for Estonian failed ({az_err}), falling back to edge-tts.")
+
+    # Приоритет 2: Microsoft Edge TTS (edge-tts)
+    if edge_tts is not None and sf is not None:
+        try:
+            v_name = voice if "et-EE" in voice else ESTONIAN_VOICE
+            comm = edge_tts.Communicate(clean_text, v_name)
+            raw_data = b""
+            async for chunk in comm.stream():
+                if chunk["type"] == "audio":
+                    raw_data += chunk["data"]
+            if raw_data:
+                data, sr = sf.read(io.BytesIO(raw_data))
+                if sr != sample_rate:
+                    import scipy.signal
+                    num_samples = int(len(data) * sample_rate / sr)
+                    data = scipy.signal.resample(data, num_samples)
+                return data.astype(np.float32)
+        except Exception as edge_err:
+            logger.error(f"[TTS] edge-tts error for Estonian segment {repr(clean_text)}: {edge_err}", exc_info=True)
+
+    return None
+
+
+def synthesize_russian_audio_segment(
+    text: str, speaker: Optional[str] = None, sample_rate: int = 24000
+) -> Optional[np.ndarray]:
+    """
+    Синтезирует русский сегмент текста локальной моделью Silero TTS v5 (голос xenia/kseniya).
+    Автоматически применяет нормализатор ударений (apply_stress_overrides).
+    При сбое или отсутствии PyTorch выполняет фолбэк на Microsoft Azure/Edge TTS.
+    """
+    clean_text = text.strip()
+    if not clean_text:
+        return None
+
+    stressed_text = apply_stress_overrides(clean_text)
+
+    # 1. Локальный инференс Silero v5
+    if silero_tts.ensure_model_loaded():
+        arr = silero_tts.synthesize(stressed_text, speaker=speaker, sample_rate=sample_rate)
+        if arr is not None and len(arr) > 0:
+            return arr
+
+    # 2. Фолбэк на Azure Speech (если PyTorch недоступен в среде)
+    logger.warning(f"[TTS] Silero v5 unavailable, falling back to Microsoft TTS for RU: {repr(clean_text[:40])}")
+    if speechsdk is not None and getattr(settings, "AZURE_SPEECH_KEY", None) and sf is not None:
+        try:
+            esc = clean_display_text(stressed_text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            ssml = (
+                f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ru-RU">'
+                f'<voice name="ru-RU-SvetlanaNeural">{esc}</voice></speak>'
+            )
+            raw_audio = _synthesize_azure_ssml(ssml)
+            if raw_audio:
+                data, sr = sf.read(io.BytesIO(raw_audio))
+                if sr != sample_rate:
+                    import scipy.signal
+                    num_samples = int(len(data) * sample_rate / sr)
+                    data = scipy.signal.resample(data, num_samples)
+                return data.astype(np.float32)
+        except Exception as az_err:
+            logger.error(f"[TTS] Microsoft fallback error for RU: {az_err}")
+
+    return None
+
+
+async def synthesize_bilingual_stitched_audio(
+    text: str,
+    voice: str = DEFAULT_VOICE,
+    is_speech_text: bool = False,
+    sample_rate: int = 24000,
+) -> bytes:
+    """
+    Билингвальная склейка (Bilingual Stitcher):
+    1. Текст разбивается на сегменты: русские фразы vs эстонские слова/термины.
+    2. Русские сегменты -> Silero v5 (голос xenia/kseniya).
+    3. Эстонские сегменты -> Microsoft TTS (et-EE-AnuNeural).
+    4. Аудиосегменты объединяются в единый бесшовный поток с естественной микропаузой.
+    5. Результат кодируется в валидный MP3-буфер.
+    """
+    clean_text = text.strip()
+    if not clean_text:
+        return b""
+
+    segments = parse_bilingual_segments(clean_text, is_speech_text=is_speech_text)
+    if not segments:
+        return b""
+
+    audio_parts: List[np.ndarray] = []
+    pause = np.zeros(int(0.18 * sample_rate), dtype=np.float32)
+
+    for seg_text, seg_voice in segments:
+        seg_clean = seg_text.strip()
+        if not seg_clean:
+            continue
+
+        is_est = ("et-EE" in seg_voice or seg_voice == "et" or seg_voice == ESTONIAN_VOICE)
+        if is_est:
+            part = await synthesize_estonian_audio_segment(seg_clean, voice=seg_voice, sample_rate=sample_rate)
+        else:
+            part = await asyncio.to_thread(synthesize_russian_audio_segment, seg_clean, sample_rate=sample_rate)
+
+        if part is not None and len(part) > 0:
+            if audio_parts:
+                audio_parts.append(pause)
+            audio_parts.append(part)
+
+    if not audio_parts:
+        return b""
+
+    combined = np.concatenate(audio_parts)
+
+    if sf is not None:
+        bio = io.BytesIO()
+        sf.write(bio, combined, sample_rate, format="MP3")
+        return bio.getvalue()
+
+    return b""
+
+
 async def get_or_synthesize_audio(
     text: str,
     voice: str = DEFAULT_VOICE,
@@ -818,9 +996,13 @@ async def get_or_synthesize_audio(
     Получает готовый байтовый буфер аудио (MP3) с единым дисковым кэшем
     (static/audio/cache/{md5}.mp3 + LRU-ротация), RAM-кэшем, жестким таймаутом 10с,
     гарантированной очисткой _IN_FLIGHT_TASKS и персистентным аудитом в logs/tts_audit.log и БД.
+    Поддерживает:
+    - Silero v5 (русский) + Microsoft TTS (эстонский) с билингвальной склейкой (при TTS_PROVIDER='silero')
+    - Прямой Azure SSML пайплайн (при TTS_PROVIDER='microsoft')
     """
     start_time = time.perf_counter()
-    cache_status = "AZURE_SYNTHESIS"
+    use_silero = (getattr(settings, "TTS_PROVIDER", "silero") == "silero")
+    cache_status = "SILERO_SYNTHESIS" if use_silero else "AZURE_SYNTHESIS"
     audit_status = "SUCCESS"
     error_msg = None
     ssml = None
@@ -830,6 +1012,81 @@ async def get_or_synthesize_audio(
         return b""
 
     try:
+        # ВЕТКА 1: Локальный Silero v5 (RU) + Microsoft TTS (ET)
+        if use_silero:
+            cache_hash = hashlib.md5(
+                f"silero_v5:{voice}:{is_speech_text}:{clean_text}".encode("utf-8")
+            ).hexdigest()
+            ssml = f"<silero_pipeline text={repr(clean_text[:60])} voice={voice} is_speech_text={is_speech_text} />"
+
+            # 1.1 Быстрый возврат из оперативной памяти
+            if cache_hash in _TTS_STREAM_CACHE:
+                if isinstance(_TTS_STREAM_CACHE, OrderedDict):
+                    _TTS_STREAM_CACHE.move_to_end(cache_hash)
+                cache_status = "RAM_HIT"
+                logger.info(f"[TTS_INTERCEPT] CACHE STATUS: RAM_HIT (hash={cache_hash})")
+                return _TTS_STREAM_CACHE[cache_hash]
+
+            # 1.2 Проверка единого локального файлового кэша на диске
+            cache_file = AUDIO_CACHE_DIR / f"{cache_hash}.mp3"
+            if cache_file.is_file():
+                try:
+                    if cache_file.stat().st_size >= MIN_VALID_AUDIO_BYTES:
+                        cached_bytes = cache_file.read_bytes()
+                        if is_valid_mp3_buffer(cached_bytes):
+                            try:
+                                os.utime(cache_file, None)
+                            except OSError:
+                                pass
+                            cache_status = "DISK_HIT"
+                            logger.info(f"[TTS_INTERCEPT] CACHE STATUS: DISK_HIT (hash={cache_hash}, path={cache_file})")
+                            _store_in_memory_cache(_TTS_STREAM_CACHE, cache_hash, cached_bytes)
+                            return cached_bytes
+                except Exception as read_err:
+                    logger.warning(f"Failed reading cache file {cache_file}: {read_err}")
+
+            # 1.3 Дедупликация in-flight задач
+            existing_task = _IN_FLIGHT_TASKS.get(cache_hash)
+            if existing_task is not None and not existing_task.done():
+                cache_status = "AWAITING_IN_FLIGHT"
+                try:
+                    return await asyncio.wait_for(asyncio.shield(existing_task), timeout=AZURE_SYNTHESIS_TIMEOUT_SEC)
+                except Exception:
+                    _IN_FLIGHT_TASKS.pop(cache_hash, None)
+
+            # 1.4 Синтез через Silero Bilingual Stitcher
+            cache_status = "SILERO_SYNTHESIS"
+            async def _silero_worker() -> bytes:
+                try:
+                    sr = getattr(settings, "SILERO_SAMPLE_RATE", 24000)
+                    audio_bytes = await synthesize_bilingual_stitched_audio(
+                        clean_text, voice=voice, is_speech_text=is_speech_text, sample_rate=sr
+                    )
+                    if is_valid_mp3_buffer(audio_bytes):
+                        try:
+                            AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                            cache_file.write_bytes(audio_bytes)
+                            _enforce_disk_cache_limits(AUDIO_CACHE_DIR)
+                            logger.info(f"[TTS_INTERCEPT] Cached Silero audio to disk: {cache_file} ({len(audio_bytes)} bytes)")
+                        except Exception as write_err:
+                            logger.warning(f"Failed to write audio cache file {cache_file}: {write_err}")
+
+                        _store_in_memory_cache(_TTS_STREAM_CACHE, cache_hash, audio_bytes)
+                        return audio_bytes
+
+                    logger.warning("[TTS] Silero synthesis returned empty audio, attempting Azure SSML fallback...")
+                finally:
+                    _IN_FLIGHT_TASKS.pop(cache_hash, None)
+                return b""
+
+            task = asyncio.create_task(_silero_worker())
+            _IN_FLIGHT_TASKS[cache_hash] = task
+            task.add_done_callback(lambda _: _IN_FLIGHT_TASKS.pop(cache_hash, None))
+            audio_res = await asyncio.wait_for(asyncio.shield(task), timeout=15.0)
+            if audio_res and is_valid_mp3_buffer(audio_res):
+                return audio_res
+
+        # ВЕТКА 2 (или резервный фолбэк): Azure Speech SSML
         ssml = build_ssml(
             clean_text,
             voice=voice,
@@ -844,37 +1101,16 @@ async def get_or_synthesize_audio(
             return b""
         ssml_hash = hashlib.md5(ssml.encode("utf-8")).hexdigest()
 
-        ssml_text = ssml
-        has_accent = "\u0301" in ssml_text
-        logger.info("=" * 60)
-        logger.info(f"[TTS_INTERCEPT] INCOMING TEXT: {repr(text)}")
-        logger.info(f"[TTS_INTERCEPT] FLAGS: is_speech_text={is_speech_text}, voice={voice}, bilingual={bilingual}, grade={grade}, tier={tier}")
-        logger.info(f"[TTS_INTERCEPT] FINAL SSML PAYLOAD:\n{ssml_text}")
-        logger.info(f"[TTS_INTERCEPT] CONTAINS COMBINING ACUTE (\\u0301): {has_accent}")
-        if has_accent:
-            accent_words = [w for w in ssml_text.split() if "\u0301" in w]
-            logger.info(f"[TTS_INTERCEPT] ACCENTED WORDS: {accent_words}")
-        logger.info("=" * 60)
-
-        # 1. Быстрый возврат из оперативной памяти
         if ssml_hash in _TTS_STREAM_CACHE:
             if isinstance(_TTS_STREAM_CACHE, OrderedDict):
                 _TTS_STREAM_CACHE.move_to_end(ssml_hash)
             cache_status = "RAM_HIT"
-            logger.info(f"[TTS_INTERCEPT] CACHE STATUS: RAM_HIT (hash={ssml_hash})")
             return _TTS_STREAM_CACHE[ssml_hash]
 
-        # 2. Проверка единого локального файлового кэша на диске
         cache_file = AUDIO_CACHE_DIR / f"{ssml_hash}.mp3"
         if cache_file.is_file():
             try:
-                cached_size = cache_file.stat().st_size
-                if cached_size < MIN_VALID_AUDIO_BYTES:
-                    logger.warning(
-                        f"Purging corrupted/truncated audio cache file {cache_file} (size={cached_size} bytes)"
-                    )
-                    cache_file.unlink(missing_ok=True)
-                else:
+                if cache_file.stat().st_size >= MIN_VALID_AUDIO_BYTES:
                     cached_bytes = cache_file.read_bytes()
                     if is_valid_mp3_buffer(cached_bytes):
                         try:
@@ -882,30 +1118,22 @@ async def get_or_synthesize_audio(
                         except OSError:
                             pass
                         cache_status = "DISK_HIT"
-                        logger.info(f"[TTS_INTERCEPT] CACHE STATUS: DISK_HIT (hash={ssml_hash}, path={cache_file})")
                         _store_in_memory_cache(_TTS_STREAM_CACHE, ssml_hash, cached_bytes)
                         return cached_bytes
-                    else:
-                        logger.warning(f"Purging invalid MP3 header cache file {cache_file}")
-                        cache_file.unlink(missing_ok=True)
             except Exception as read_err:
                 logger.warning(f"Failed reading cache file {cache_file}: {read_err}")
 
-        # 3. Дедупликация: если для этого SSML уже запущен запрос, ожидаем текущую задачу с таймаутом
         existing_task = _IN_FLIGHT_TASKS.get(ssml_hash)
         if existing_task is not None and not existing_task.done():
             cache_status = "AWAITING_IN_FLIGHT"
-            logger.info(f"[TTS_INTERCEPT] CACHE STATUS: AWAITING_IN_FLIGHT (hash={ssml_hash})")
             try:
                 return await asyncio.wait_for(asyncio.shield(existing_task), timeout=AZURE_SYNTHESIS_TIMEOUT_SEC)
             except Exception:
                 _IN_FLIGHT_TASKS.pop(ssml_hash, None)
 
-        # 4. Синтез через Azure Speech SDK с жестким таймаутом 10.0 с и гарантированной очисткой _IN_FLIGHT_TASKS
         cache_status = "AZURE_SYNTHESIS"
         async def _worker() -> bytes:
             try:
-                logger.info(f"[TTS_INTERCEPT] CACHE STATUS: AZURE_SYNTHESIS (hash={ssml_hash})")
                 audio_bytes = await asyncio.wait_for(
                     asyncio.to_thread(_synthesize_azure_ssml, ssml),
                     timeout=AZURE_SYNTHESIS_TIMEOUT_SEC,
@@ -915,7 +1143,6 @@ async def get_or_synthesize_audio(
                         AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
                         cache_file.write_bytes(audio_bytes)
                         _enforce_disk_cache_limits(AUDIO_CACHE_DIR)
-                        logger.info(f"[TTS_INTERCEPT] Cached audio to disk: {cache_file} ({len(audio_bytes)} bytes)")
                     except Exception as write_err:
                         logger.warning(f"Failed to write audio cache file {cache_file}: {write_err}")
 

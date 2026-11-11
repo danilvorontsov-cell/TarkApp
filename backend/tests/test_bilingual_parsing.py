@@ -31,10 +31,11 @@ def test_parse_slash_in_est_tag():
     assert any('loodusõpetus' in s[0] and s[1] == ESTONIAN_VOICE for s in segments)
 
 def test_parse_standalone_latin_word():
-    # Without <est> tags, bare Latin words stay with Russian multilingual voice without chopping
+    # Standalone Latin words (such as Estonian term 'summa' or 'jalg') are routed to Estonian voice
     segments_no_tag = parse_bilingual_segments('Запиши результат — это и будет summa.')
-    assert len(segments_no_tag) == 1
+    assert len(segments_no_tag) == 2
     assert segments_no_tag[0][1] == DEFAULT_VOICE
+    assert segments_no_tag[1] == ('summa', ESTONIAN_VOICE)
 
     # With <est> tag, Estonian term is cleanly extracted for Estonian voice
     segments_tagged = parse_bilingual_segments('Запиши результат — это и будет <est>summa</est>.')

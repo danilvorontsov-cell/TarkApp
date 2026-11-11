@@ -16,6 +16,7 @@ import {
 } from './audioPlayer';
 import { PageAnalysisResponse } from '../types';
 import { getTierPolicy, getTierFromGrade, SchoolTier } from './gradePolicy';
+import { sanitizeTextForTts } from '../utils/textSanitizer';
 
 export { PlaybackState } from './audioPlayer';
 
@@ -201,11 +202,12 @@ class AudioQueueManagerClass {
     tier?: string
   ): string {
     const raw = typeof textOrItem === 'string' ? textOrItem : (textOrItem.speech_text || textOrItem.text);
+    const sanitized = sanitizeTextForTts(raw);
     const effGrade = grade !== undefined ? grade : (typeof textOrItem !== 'string' ? textOrItem.grade : undefined);
     const effTier = tier !== undefined ? tier : (typeof textOrItem !== 'string' ? textOrItem.tier : undefined);
     const gKey = effGrade || 1;
     const tKey = effTier || 'pri';
-    const key = `${lang}_${bilingual ? 'bi' : 'mono'}_g${gKey}_${tKey}_${this.getFileHash(raw)}`;
+    const key = `${lang}_${bilingual ? 'bi' : 'mono'}_g${gKey}_${tKey}_${this.getFileHash(sanitized)}`;
     return `${this.cacheDir}${key}.mp3`;
   }
 
@@ -579,6 +581,8 @@ class AudioQueueManagerClass {
         await FileSystem.deleteAsync(targetFile, { idempotent: true });
       }
 
+      let httpStatus = 200;
+
       let deviceId = '';
       try {
         deviceId = await getDeviceId();
@@ -587,9 +591,9 @@ class AudioQueueManagerClass {
       }
 
       const activeBaseUrl = resolveBaseUrl(baseUrl);
+      const sanitizedText = sanitizeTextForTts(textToSynthesize);
 
-      let httpStatus = 200;
-      if (textToSynthesize.length > 200) {
+      if (sanitizedText.length > 200) {
         // Отправка POST запроса для фраз длиннее 200 символов
         const postUrl = `${activeBaseUrl}/api/v1/voice/tts`;
         const postHeaders: Record<string, string> = {
@@ -600,7 +604,7 @@ class AudioQueueManagerClass {
           method: 'POST',
           headers: postHeaders,
           body: JSON.stringify({
-            text: textToSynthesize,
+            text: sanitizedText,
             lang: item.lang,
             bilingual: item.bilingual,
             grade,
@@ -637,7 +641,7 @@ class AudioQueueManagerClass {
           encoding: FileSystem.EncodingType.Base64,
         });
       } else {
-        const encodedText = encodeURIComponent(textToSynthesize);
+        const encodedText = encodeURIComponent(sanitizedText);
         const bilingualParam = item.bilingual ? '&bilingual=true' : '';
         const deviceParam = deviceId ? `&device_id=${encodeURIComponent(deviceId)}` : '';
         const gradeParam = grade ? `&grade=${grade}` : '';

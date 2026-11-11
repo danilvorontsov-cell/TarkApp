@@ -2219,3 +2219,56 @@ def apply_russian_ssml_sub_aliases(text: str) -> str:
         t = t.replace(f"__SSML_SUB_MASK_{idx}__", orig_sub)
 
     return t
+
+
+# ==============================================================================
+# 9. ДВУХУРОВНЕВЫЙ НОРМАЛИЗАТОР УДАРЕНИЙ (SILERO STRESS OVERRIDES & UI SANITIZER)
+# ==============================================================================
+
+FIXED_STRESS_OVERRIDES: Dict[str, str] = {
+    r'\bсуперпрыжк[иеа-я]*\b': 'супер-прыжк+и',
+    r'\bмарсоход[а-я]*\b': 'марсох+ода',
+    r'\bшасси\b': 'шасс+и',
+    r'\bисследовател[а-я]*\b': 'иссл+едователь',
+}
+
+
+def apply_stress_overrides(text: str) -> str:
+    """
+    Применяет словарную подстановку ТОЛЬКО для неологизмов и терминов с фиксированным ударением,
+    если в них отсутствует знак '+'.
+    Слова с вариативным ударением (стопы, замки, вычитаем) НЕ заменяются по словарю,
+    а размечаются исключительно языковой моделью на этапе генерации.
+    """
+    if not text:
+        return text
+
+    res = text
+    # Конвертация Combining Acute (\u0301) в '+' перед ударной гласной, если пришло из старых источников
+    res = re.sub(r'([аеёиоуыэюяАЕЁИОУЫЭЮЯ])[\u0301\u00b4\u02ca]', r'+\1', res)
+
+    for pattern_str, replacement in FIXED_STRESS_OVERRIDES.items():
+        def _repl(m: re.Match) -> str:
+            word = m.group(0)
+            if '+' in word:
+                return word
+            target = replacement
+            if word[0].isupper():
+                target = target[0].upper() + target[1:]
+            return target
+
+        res = re.sub(pattern_str, _repl, res, flags=re.IGNORECASE)
+    return res
+
+
+def clean_display_text(text: str) -> str:
+    """
+    Очищает текст для клиентского экрана (UI) от технических плюсов (+),
+    сохраняя оригинальную стандартную орфографию.
+    """
+    if not text:
+        return text
+    # Удаляем '+' если он стоит перед буквой или внутри слова
+    clean = re.sub(r'\+(?=[а-яА-ЯёЁa-zA-Z])', '', text)
+    return clean
+
