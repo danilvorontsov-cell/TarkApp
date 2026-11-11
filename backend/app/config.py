@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # Model defaults to gemini-3.8-flash with environment override support
     GEMINI_MODEL: str = "gemini-3.8-flash"
     GEMINI_MODEL_NAME: Optional[str] = None
+    GEMINI_BASE_URL: Optional[str] = None
     
     # TTS Pipeline settings (Silero v5 for Russian + Microsoft Neural for Estonian)
     TTS_PROVIDER: str = "silero"  # "silero" (default), "microsoft", "openai" (deprecated)

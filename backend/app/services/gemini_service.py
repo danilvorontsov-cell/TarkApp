@@ -47,8 +47,15 @@ class GeminiTutorService:
     def client(self) -> Optional[genai.Client]:
         if self._client is None and self._is_valid_key(self.api_key):
             try:
-                self._client = genai.Client(api_key=self.api_key)
-                logger.info(f"Initialized Google GenAI client with model: {self.model}")
+                http_options = {}
+                base_url = (getattr(settings, "GEMINI_BASE_URL", None) or "").strip().rstrip("/")
+                if base_url:
+                    http_options["base_url"] = base_url
+                self._client = genai.Client(
+                    api_key=self.api_key,
+                    http_options=http_options if http_options else None,
+                )
+                logger.info(f"Initialized Google GenAI client with model: {self.model} (base_url={base_url or 'default'})")
             except Exception as e:
                 logger.warning(f"Failed to initialize GenAI client: {e}. Will use mock mode.")
         return self._client
