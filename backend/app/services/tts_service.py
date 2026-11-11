@@ -928,20 +928,13 @@ def synthesize_russian_audio_segment(
     return None
 
 
-async def synthesize_bilingual_stitched_audio(
+async def _synthesize_single_line_stitched(
     text: str,
     voice: str = DEFAULT_VOICE,
     is_speech_text: bool = False,
     sample_rate: int = 24000,
 ) -> bytes:
-    """
-    Билингвальная склейка (Bilingual Stitcher):
-    1. Текст разбивается на сегменты: русские фразы vs эстонские слова/термины.
-    2. Русские сегменты -> Silero v5 (голос xenia/kseniya).
-    3. Эстонские сегменты -> Microsoft TTS (et-EE-AnuNeural).
-    4. Аудиосегменты объединяются в единый бесшовный поток с естественной микропаузой.
-    5. Результат кодируется в валидный MP3-буфер.
-    """
+    """Синтезирует одну строку текста с микропаузами 180 мс между билингвальными сегментами."""
     clean_text = text.strip()
     if not clean_text:
         return b""
@@ -979,6 +972,97 @@ async def synthesize_bilingual_stitched_audio(
         sf.write(bio, combined, sample_rate, format="MP3")
         return bio.getvalue()
 
+    return b""
+
+
+async def synthesize_bilingual_stitched_audio(
+    text: str,
+    voice: str = DEFAULT_VOICE,
+    is_speech_text: bool = False,
+    sample_rate: int = 24000,
+) -> bytes:
+    """
+    Билингвальная склейка (Bilingual Stitcher):
+    1. Если текст состоит из нескольких шагов (разделитель \\n) — синтезирует каждый шаг
+       с паузой ровно 500 мс (тишиной) между шагами.
+    2. Внутри каждого шага: русские сегменты -> Silero v5, эстонские -> Microsoft TTS (AnuNeural).
+    3. Результат кодируется в валидный MP3-буфер.
+    """
+    clean_text = text.strip()
+    if not clean_text:
+        return b""
+
+    lines = [l.strip() for l in clean_text.split('\n') if l.strip()]
+    if len(lines) > 1:
+        step_audio_parts: List[np.ndarray] = []
+        step_pause = np.zeros(int(0.5 * sample_rate), dtype=np.float32)  # ровно 500 мс
+
+        for line in lines:
+            line_bytes = await _synthesize_single_line_stitched(
+                line, voice=voice, is_speech_text=is_speech_text, sample_rate=sample_rate
+            )
+            if line_bytes and sf is not None:
+                data, sr = sf.read(io.BytesIO(line_bytes))
+                if sr != sample_rate:
+                    import scipy.signal
+                    num_samples = int(len(data) * sample_rate / sr)
+                    data = scipy.signal.resample(data, num_samples)
+                if step_audio_parts:
+                    step_audio_parts.append(step_pause)
+                step_audio_parts.append(data.astype(np.float32))
+
+        if not step_audio_parts:
+            return b""
+
+        combined = np.concatenate(step_audio_parts)
+        if sf is not None:
+            bio = io.BytesIO()
+            sf.write(bio, combined, sample_rate, format="MP3")
+            return bio.getvalue()
+        return b""
+
+    return await _synthesize_single_line_stitched(
+        clean_text, voice=voice, is_speech_text=is_speech_text, sample_rate=sample_rate
+    )
+
+
+async def synthesize_steps_audio(
+    steps: List[str],
+    voice: str = DEFAULT_VOICE,
+    sample_rate: int = 24000,
+) -> bytes:
+    """
+    Склейка составного аудио для шагов решения (аудиогид) с паузой ровно 500 мс (тишиной) между шагами.
+    """
+    valid_steps = [s.strip() for s in steps if s and s.strip()]
+    if not valid_steps:
+        return b""
+
+    step_audio_parts: List[np.ndarray] = []
+    step_pause = np.zeros(int(0.5 * sample_rate), dtype=np.float32)  # ровно 500 мс
+
+    for step in valid_steps:
+        step_bytes = await _synthesize_single_line_stitched(
+            step, voice=voice, is_speech_text=True, sample_rate=sample_rate
+        )
+        if step_bytes and sf is not None:
+            data, sr = sf.read(io.BytesIO(step_bytes))
+            if sr != sample_rate:
+                import scipy.signal
+                num_samples = int(len(data) * sample_rate / sr)
+                data = scipy.signal.resample(data, num_samples)
+            if step_audio_parts:
+                step_audio_parts.append(step_pause)
+            step_audio_parts.append(data.astype(np.float32))
+
+    if not step_audio_parts:
+        return b""
+
+    combined = np.concatenate(step_audio_parts)
+    if sf is not None:
+        bio = io.BytesIO()
+        sf.write(bio, combined, sample_rate, format="MP3")
+        return bio.getvalue()
     return b""
 
 

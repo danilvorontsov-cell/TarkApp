@@ -268,7 +268,8 @@ TERMINOLOGY_MAP: Dict[str, str] = {
     "roblox": "Ро\u0301блокс",
     "роблокс": "Ро\u0301блокс",
     "minecraft": "Майнкрафт",
-    "lego": "Лего",
+    "lego": "Ле\u0301го",
+    "лего": "Ле\u0301го",
     "youtube": "Ютуб",
     "brawl stars": "Бравл Старс",
     "brawlstars": "Бравл Старс",
@@ -282,6 +283,14 @@ TERMINOLOGY_MAP: Dict[str, str] = {
     "scratch": "Скретч",
     "google": "Гугл",
     "apple": "Эппл",
+    "game": "Гейм",
+    "level": "Левел",
+    "online": "Онлайн",
+    "offline": "Офлайн",
+    "quest": "Квест",
+    "skin": "Скин",
+    "boss": "Босс",
+    "player": "Плейер",
 
     # Аббревиатуры и технологии
     "it": "АйТи",
@@ -903,10 +912,20 @@ def normalize_math_expressions(text: str) -> str:
     t = re.sub(r'(?<=[0-9a-zA-Zа-яА-ЯёЁ\u0301\)])\s*>\s*(?=[+\-−]?[0-9a-zA-Zа-яА-ЯёЁ\(])|\s+>\s+', ' больше ', t)
 
     # 5. Текстовое двоеточие в списках и перечислениях заменяем на запятую
+    # Защищаем двоеточие после меток шагов (Шаг второй:, Шаг 1:) для естественной паузы
+    step_colons: List[str] = []
+    def _mask_step_colon(m):
+        idx = len(step_colons)
+        step_colons.append(m.group(0))
+        return f"__STEP_COLON_{idx}__"
+
+    t = re.sub(r'(?i)\bшаг\s+(?:[а-яёА-ЯЁ0-9\u0301\+]+)\s*:', _mask_step_colon, t)
     t = re.sub(r',?[ \t]*:[ \t]*(?!\n)', ', ', t)
     t = re.sub(r',?[ \t]*:[ \t]*(?=\n)', ',', t)
     t = re.sub(r'[ \t]+,', ',', t)
     t = re.sub(r',[ \t]*,', ',', t)
+    for idx, orig_colon in enumerate(step_colons):
+        t = t.replace(f"__STEP_COLON_{idx}__", orig_colon)
 
     t = re.sub(r'(?<=[0-9a-zA-Zа-яА-ЯёЁ\u0301])\s*\+\s*(?=[0-9a-zA-Zа-яА-ЯёЁ])|\s+\+\s+', ' плюс ', t)
     t = re.sub(r'\s*=\s*', ' равно ', t)
@@ -2226,6 +2245,81 @@ def apply_russian_ssml_sub_aliases(text: str) -> str:
 # ==============================================================================
 
 FIXED_STRESS_OVERRIDES: Dict[str, str] = {
+    # Орфоэпия Silero: порядковые числительные и шаги решения
+    r'\bвторой\b': 'вто+рой',
+    r'\bвторая\b': 'втор+ая',
+    r'\bвторое\b': 'втор+ое',
+    r'\bвторые\b': 'втор+ые',
+    r'\bвторого\b': 'втор+ого',
+    r'\bвторому\b': 'втор+ому',
+    r'\bвтором\b': 'втор+ом',
+    r'\bвторую\b': 'втор+ую',
+    r'\bвторым\b': 'втор+ым',
+    r'\bвторых\b': 'втор+ых',
+    r'\bвторыми\b': 'втор+ыми',
+    r'\bпервый\b': 'п+ервый',
+    r'\bпервая\b': 'п+ервая',
+    r'\bпервое\b': 'п+ервое',
+    r'\bпервые\b': 'п+ервые',
+    r'\bпервого\b': 'п+ервого',
+    r'\bпервому\b': 'п+ервому',
+    r'\bпервом\b': 'п+ервом',
+    r'\bпервую\b': 'п+ервую',
+    r'\bпервым\b': 'п+ервым',
+    r'\bпервых\b': 'п+ервых',
+    r'\bтретий\b': 'тр+етий',
+    r'\bтретья\b': 'тр+етья',
+    r'\bтретье\b': 'тр+етье',
+    r'\bтретьи\b': 'тр+етьи',
+    r'\bтретьего\b': 'тр+етьего',
+    r'\bтретьему\b': 'тр+етьему',
+    r'\bтретьем\b': 'тр+етьем',
+    r'\bтретью\b': 'тр+етью',
+    r'\bтретьим\b': 'тр+етьим',
+    r'\bтретьих\b': 'тр+етьих',
+    r'\bчетв[её]ртый\b': 'четв+ёртый',
+    r'\bчетв[её]ртая\b': 'четв+ёртая',
+    r'\bчетв[её]ртое\b': 'четв+ёртое',
+    r'\bчетв[её]ртые\b': 'четв+ёртые',
+    r'\bчетв[её]ртого\b': 'четв+ёртого',
+    r'\bчетв[её]ртому\b': 'четв+ёртому',
+    r'\bчетв[её]ртом\b': 'четв+ёртом',
+    r'\bчетв[её]ртую\b': 'четв+ёртую',
+    r'\bчетв[её]ртым\b': 'четв+ёртым',
+    r'\bчетв[её]ртых\b': 'четв+ёртых',
+    r'\bпятый\b': 'п+ятый',
+    r'\bпятая\b': 'п+ятая',
+    r'\bпятое\b': 'п+ятое',
+    r'\bпятые\b': 'п+ятые',
+    r'\bшестой\b': 'шест+ой',
+    r'\bшестая\b': 'шест+ая',
+    r'\bшестое\b': 'шест+ое',
+    r'\bшестые\b': 'шест+ые',
+    r'\bседьмой\b': 'седьм+ой',
+    r'\bседьмая\b': 'седьм+ая',
+    r'\bседьмое\b': 'седьм+ое',
+    r'\bседьмые\b': 'седьм+ые',
+    r'\bвосьмой\b': 'восьм+ой',
+    r'\bвосьмая\b': 'восьм+ая',
+    r'\bвосьмое\b': 'восьм+ое',
+    r'\bвосьмые\b': 'восьм+ые',
+    r'\bдевятый\b': 'дев+ятый',
+    r'\bдевятая\b': 'дев+ятая',
+    r'\bдевятое\b': 'дев+ятое',
+    r'\bдевятые\b': 'дев+ятые',
+    r'\bдесятый\b': 'дес+ятый',
+    r'\bдесятая\b': 'дес+ятая',
+    r'\bдесятое\b': 'дес+ятое',
+    r'\bдесятые\b': 'дес+ятые',
+
+    # Популярные детские бренды и игры
+    r'\b(lego|лего)\b': 'л+его',
+    r'\b(roblox|роблокс)\b': 'р+облокс',
+    r'\b(minecraft|майнкрафт)\b': 'майнкр+афт',
+    r'\b(youtube|ютуб)\b': 'ют+уб',
+    r'\b(tiktok|тикток)\b': 'тикт+ок',
+
+    # Специальные термины
     r'\bсуперпрыжк[иеа-я]*\b': 'супер-прыжк+и',
     r'\bмарсоход[а-я]*\b': 'марсох+ода',
     r'\bшасси\b': 'шасс+и',
@@ -2233,12 +2327,89 @@ FIXED_STRESS_OVERRIDES: Dict[str, str] = {
 }
 
 
+LATIN_TO_CYRILLIC_DIPHTHONGS: List[Tuple[str, str]] = [
+    ("sch", "щ"), ("shch", "щ"), ("sh", "ш"), ("ch", "ч"),
+    ("th", "т"), ("ph", "ф"), ("kh", "х"), ("ts", "ц"),
+    ("zh", "ж"), ("ya", "я"), ("yu", "ю"), ("yo", "ё"),
+    ("ye", "е"), ("je", "е"), ("ja", "я"), ("ju", "ю"),
+    ("ck", "к"), ("oo", "у"), ("ee", "и"), ("qu", "кв"),
+]
+
+LATIN_TO_CYRILLIC_CHARS: Dict[str, str] = {
+    'a': 'а', 'b': 'б', 'c': 'к', 'd': 'д', 'e': 'е', 'f': 'ф',
+    'g': 'г', 'h': 'х', 'i': 'и', 'j': 'дж', 'k': 'к', 'l': 'л',
+    'm': 'м', 'n': 'н', 'o': 'о', 'p': 'п', 'q': 'к', 'r': 'р',
+    's': 'с', 't': 'т', 'u': 'у', 'v': 'в', 'w': 'в', 'x': 'кс',
+    'y': 'й', 'z': 'з',
+}
+
+
+def transliterate_latin_word(word: str) -> str:
+    """
+    Транслитерирует изолированное латинское слово в русскую кириллицу.
+    Защищает токенизатор Silero v5 от вырезания неизвестных латинских слов.
+    """
+    if not word or not re.search(r'[a-zA-Z]', word):
+        return word
+
+    clean = word.lower().strip(".,;:!?\"'«»")
+    if clean in TERMINOLOGY_MAP:
+        rep = TERMINOLOGY_MAP[clean]
+        return rep.capitalize() if word[0].isupper() else rep
+
+    is_upper = word.isupper()
+    is_title = word[0].isupper()
+
+    w = word.lower()
+    for lat, cyr in LATIN_TO_CYRILLIC_DIPHTHONGS:
+        w = w.replace(lat, cyr)
+
+    res_chars = [LATIN_TO_CYRILLIC_CHARS.get(ch, ch) for ch in w]
+    res = "".join(res_chars)
+
+    if is_upper and len(res) <= 4:
+        return res.upper()
+    elif is_title or is_upper:
+        return res.capitalize()
+    return res
+
+
+def transliterate_isolated_latin_words(text: str) -> str:
+    """
+    Транслитерирует одиночные латинские слова внутри русского текста,
+    исключая XML/HTML теги (<est>...</est>, <sub...>), эстонские диакритики и научные формулы.
+    """
+    if not text:
+        return ""
+
+    protected_tokens: List[str] = []
+    def _mask_tag(m: re.Match) -> str:
+        idx = len(protected_tokens)
+        protected_tokens.append(m.group(0))
+        return f"__PROT_TAG_{idx}__"
+
+    t = re.sub(r'<[^>]+>', _mask_tag, text)
+
+    def _repl_word(m: re.Match) -> str:
+        token = m.group(0)
+        if is_chemical_formula_or_acronym(token):
+            return token
+        if re.search(r'[õäöüšžÕÄÖÜŠŽ]', token):
+            return token
+        return transliterate_latin_word(token)
+
+    t = re.sub(r'\b[a-zA-Z]{2,}\b', _repl_word, t)
+
+    for idx, orig_tok in enumerate(protected_tokens):
+        t = t.replace(f"__PROT_TAG_{idx}__", orig_tok)
+
+    return t
+
+
 def apply_stress_overrides(text: str) -> str:
     """
-    Применяет словарную подстановку ТОЛЬКО для неологизмов и терминов с фиксированным ударением,
-    если в них отсутствует знак '+'.
-    Слова с вариативным ударением (стопы, замки, вычитаем) НЕ заменяются по словарю,
-    а размечаются исключительно языковой моделью на этапе генерации.
+    Применяет словарную подстановку для порядковых числительных (второ́й -> вто+рой),
+    неологизмов и брендов (LEGO -> л+его), устраняя фонетические искажения Silero v5.
     """
     if not text:
         return text
@@ -2258,6 +2429,9 @@ def apply_stress_overrides(text: str) -> str:
             return target
 
         res = re.sub(pattern_str, _repl, res, flags=re.IGNORECASE)
+
+    # Транслитерируем любые оставшиеся латинские слова для Silero
+    res = transliterate_isolated_latin_words(res)
     return res
 
 

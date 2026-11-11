@@ -79,6 +79,7 @@ export interface PageAnalysisResponse {
   vocabulary: VocabularyItem[];
   worked_example?: WorkedExample;
   visual?: VisualData | null;
+  how_to_solve?: string[];
   how_to_answer: string;
   answer_template: string;
   voice_prompt_script: string;

@@ -2373,22 +2373,31 @@ function MainApp() {
 
             {/* Визуальное разделение шагов решения с круглыми зелеными бейджами (1), (2), (3) */}
             {(() => {
-              const rawText = cleanEstTags(analysis.how_to_answer || '').trim();
-              const rawParts = rawText
-                .split(/(?:^|\n+|\s+)(?=(?:\(?\d+[\.\)]|\bШаг\s+\d+[:.]?)\s+)/i)
-                .map((p) => p.trim())
+              const solveSteps: string[] = Array.isArray(analysis.how_to_solve) && analysis.how_to_solve.length > 0
+                ? analysis.how_to_solve
+                : [];
+
+              let validSteps = solveSteps
+                .map((s) => cleanEstTags(s).replace(/^(?:\(?\d+[\.\)]|\bШаг\s+\d+[:.]?)\s*/i, '').trim())
                 .filter(Boolean);
 
-              const candidateSteps = rawParts.length > 1
-                ? rawParts
-                : rawText.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+              if (validSteps.length === 0) {
+                const rawText = cleanEstTags(analysis.how_to_answer || '').trim();
+                const rawParts = rawText
+                  .split(/(?:^|\n+|\s+)(?=(?:\(?\d+[\.\)]|\bШаг\s+\d+[:.]?)\s+)/i)
+                  .map((p) => p.trim())
+                  .filter(Boolean);
 
-              const validSteps = candidateSteps
-                .map((s) => s.replace(/^(?:\(?\d+[\.\)]|\bШаг\s+\d+[:.]?)\s*/i, '').trim())
-                .filter(Boolean);
+                const candidateSteps = rawParts.length > 1
+                  ? rawParts
+                  : rawText.split(/\n+/).map((l) => l.trim()).filter(Boolean);
 
-              if (validSteps.length > 1 || (validSteps.length === 1 && /^(?:\(?\d+[\.\)]|\bШаг\s+\d+[:.]?)\s+/i.test(candidateSteps[0] || ''))) {
-                if (validSteps.length === 0) return null;
+                validSteps = candidateSteps
+                  .map((s) => s.replace(/^(?:\(?\d+[\.\)]|\bШаг\s+\d+[:.]?)\s*/i, '').trim())
+                  .filter(Boolean);
+              }
+
+              if (validSteps.length > 0) {
                 return (
                   <View style={styles.naidisStepsContainer}>
                     <LessonStepList
@@ -2400,6 +2409,7 @@ function MainApp() {
                 );
               }
 
+              const rawText = cleanEstTags(analysis.how_to_answer || '').trim();
               return rawText ? <Text style={styles.instructionText}>{rawText}</Text> : null;
             })()}
           </View>

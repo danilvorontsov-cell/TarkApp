@@ -398,8 +398,12 @@ class GeminiPageAnalysisSchema(BaseModel):
         default=None,
         description="Наглядный пример решения (Näidis)"
     )
+    how_to_solve: List[str] = Field(
+        default_factory=list,
+        description="Пошаговый массив строк с алгоритмом рассуждения (каждый шаг без префиксов 'Шаг 1' или '1.')"
+    )
     how_to_answer: str = Field(
-        ...,
+        default="",
         description="Пошаговая инструкция и сократический алгоритм рассуждения, как ребенку решить задание или ответить на вопрос самому без прямых подсказок вариантов"
     )
     answer_template: str = Field(
@@ -486,9 +490,34 @@ class PageAnalysisResponse(GeminiPageAnalysisSchema):
             for key in ("steps", "guided_steps", "actions"):
                 if key in data and isinstance(data[key], list):
                     data[key] = [strip_combining_accents(str(s).strip()) for s in data[key] if s and str(s).strip()]
-            for display_key in ("task_title", "theme_explanation", "alternative_explanation", "how_to_answer", "voice_prompt_script"):
+            for display_key in ("task_title", "theme_explanation", "alternative_explanation", "voice_prompt_script"):
                 if display_key in data and data[display_key]:
                     data[display_key] = strip_combining_accents(data[display_key])
+
+            # Синхронизация и очистка how_to_solve и how_to_answer
+            how_solve = data.get("how_to_solve")
+            how_ans = data.get("how_to_answer")
+            if isinstance(how_solve, list) and how_solve:
+                clean_solve = [strip_combining_accents(str(s).strip()) for s in how_solve if s and str(s).strip()]
+                clean_solve = [re.sub(r'^(?:\(?\d+[\.\)]|\bШаг\s+\d+[:.]?)\s*', '', s).strip() for s in clean_solve if s]
+                data["how_to_solve"] = clean_solve
+                if not how_ans or not str(how_ans).strip():
+                    data["how_to_answer"] = "\n".join(f"{i+1}. {s}" for i, s in enumerate(clean_solve))
+                else:
+                    data["how_to_answer"] = strip_combining_accents(how_ans)
+            elif how_ans and isinstance(how_ans, str) and str(how_ans).strip():
+                clean_ans = strip_combining_accents(how_ans)
+                data["how_to_answer"] = clean_ans
+                raw_parts = re.split(r'(?:^|\n+|\s+)(?=(?:\(?\d+[\.\)]|\bШаг\s+\d+[:.]?)\s+)', clean_ans.strip())
+                cand = [p.strip() for p in raw_parts if p.strip()]
+                if len(cand) <= 1:
+                    cand = [p.strip() for p in clean_ans.strip().split('\n') if p.strip()]
+                parsed = [re.sub(r'^(?:\(?\d+[\.\)]|\bШаг\s+\d+[:.]?)\s*', '', s).strip() for s in cand if s.strip()]
+                data["how_to_solve"] = parsed if len(parsed) > 1 else [clean_ans.strip()]
+            else:
+                data["how_to_solve"] = []
+                data["how_to_answer"] = str(how_ans or "")
+
             if "worked_example" in data and isinstance(data["worked_example"], dict):
                 we = data["worked_example"]
                 if "steps" in we and isinstance(we["steps"], list):
@@ -519,7 +548,14 @@ class PageAnalysisResponse(GeminiPageAnalysisSchema):
             v_speech = (self.voice_prompt_script_speech or "").strip() or prepare_speech_text(self.voice_prompt_script or "")
             th_speech = (self.theme_explanation_speech or "").strip() or prepare_speech_text(self.theme_explanation or "")
             alt_speech = (self.alternative_explanation_speech or "").strip() or (prepare_speech_text(self.alternative_explanation) if self.alternative_explanation else None)
-            how_speech = (self.how_to_answer_speech or "").strip() or prepare_speech_text(self.how_to_answer or "")
+
+            how_speech = (self.how_to_answer_speech or "").strip()
+            if not how_speech:
+                if self.how_to_solve and len(self.how_to_solve) > 1:
+                    speech_steps = [prepare_speech_text(s) for s in self.how_to_solve if s and s.strip()]
+                    how_speech = "\n".join(f"Шаг {i+1}: {step}" for i, step in enumerate(speech_steps))
+                else:
+                    how_speech = prepare_speech_text(self.how_to_answer or "")
 
             ex_speech = (self.worked_example_speech or "").strip()
             if not ex_speech and self.worked_example:

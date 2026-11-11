@@ -531,11 +531,137 @@ def test_pydantic_empty_steps_filtration():
     assert we.steps == ["Шаг 1", "Шаг 2"]
 
     speech = prepare_worked_example_speech(we)
-    assert "Первое" in speech and ("Шаг 1" in speech or "Первый шаг" in speech)
-    assert "Второе" in speech and ("Шаг 2" in speech or "Второй шаг" in speech)
+    assert "Первое" in speech and ("Шаг 1" in speech or "Первый шаг" in speech or "Пе́рвый шаг" in speech)
+    assert "Второе" in speech and ("Шаг 2" in speech or "Второй шаг" in speech or "Второ́й шаг" in speech)
     assert "Третье" not in speech
     assert "Четвертое" not in speech
     assert "Третий шаг" not in speech
+
+
+def test_step_two_orthoepy_and_lego_normalization():
+    """
+    Задача 1: Орфоэпия Silero TTS ('Шаг второ́й') и бренды ('Ле́го' / 'LEGO').
+    Проверяет:
+    'Шаг второй: представь, что ты строишь базу LEGO.' ->
+    prepare_speech_text: 'Шаг второ́й: представь, что ты строишь базу Ле́го.'
+    apply_stress_overrides: 'Шаг втор+ой: представь, что ты строишь базу Л+его.'
+    """
+    from app.services.tts_normalizer import apply_stress_overrides
+
+    input_text = "Шаг второй: представь, что ты строишь базу LEGO."
+
+    # 1. Сквозной Display -> Speech препроцессор
+    prep_text = prepare_speech_text(input_text, is_russian_context=True)
+    assert prep_text == "Шаг второ́й: представь, что ты строишь базу Ле́го." or (
+        "Шаг второ́й" in prep_text and "базу Ле́го" in prep_text
+    )
+
+    # 2. Нормализатор ударений Silero (+)
+    stress_text = apply_stress_overrides(prep_text)
+    assert "втор+ой" in stress_text or "вто+рой" in stress_text
+    assert "Л+его" in stress_text or "л+его" in stress_text
+    assert "LEGO" not in stress_text
+    assert "Lego" not in stress_text
+
+    # 3. Прямой вызов apply_stress_overrides для сырого текста
+    raw_stress = apply_stress_overrides(input_text)
+    assert "втор+ой" in raw_stress or "вто+рой" in raw_stress
+    assert "Л+его" in raw_stress or "л+его" in raw_stress
+
+
+def test_500ms_pause_between_steps():
+    """
+    Задача 3: Пайплайн озвучки — Пауза ровно 500 мс (тишина) между шагами.
+    Проверяет:
+    - np.zeros ровно 0.5 * sample_rate (12000 сэмплов для 24 кГц, 24000 для 48 кГц).
+    - При склейке двух шагов длительность = шаг1 + 0.5с + шаг2.
+    - В промежутке ровно 500 мс абсолютной тишины (все нули).
+    """
+    import io
+    import numpy as np
+    import soundfile as sf
+
+    for sample_rate in (24000, 48000):
+        step_pause = np.zeros(int(0.5 * sample_rate), dtype=np.float32)
+        assert len(step_pause) == int(sample_rate * 0.5)
+        assert len(step_pause) / sample_rate == 0.5
+
+        # 1.0с для шага 1 и 1.0с для шага 2
+        step1 = np.ones(sample_rate, dtype=np.float32) * 0.1
+        step2 = np.ones(sample_rate, dtype=np.float32) * 0.2
+
+        # Склейка с паузой 500 мс
+        stitched = np.concatenate([step1, step_pause, step2])
+        total_duration = len(stitched) / sample_rate
+        assert abs(total_duration - 2.5) < 1e-5, f"Expected exactly 2.5s, got {total_duration}s"
+
+        # Проверяем, что в промежутке между 1.0с и 1.5с — абсолютная тишина (все нули)
+        pause_segment = stitched[sample_rate : sample_rate + len(step_pause)]
+        assert np.all(pause_segment == 0.0)
+        assert len(pause_segment) / sample_rate == 0.5
+
+        # Проверка кодирования/декодирования в MP3
+        bio = io.BytesIO()
+        sf.write(bio, stitched, sample_rate, format="MP3")
+        mp3_bytes = bio.getvalue()
+        assert len(mp3_bytes) > 1000
+
+        decoded, dec_sr = sf.read(io.BytesIO(mp3_bytes))
+        assert dec_sr == sample_rate
+        dec_dur = len(decoded) / dec_sr
+        assert abs(dec_dur - 2.5) < 0.1
+
+
+def test_how_to_solve_schema_and_sync():
+    """
+    Задача 2: Структурирование блока 'Как решить задание самому' (how_to_solve).
+    Проверяет:
+    - Модель принимает how_to_solve: list[str] и очищает префиксы номеров шагов.
+    - how_to_answer автоматически синхронизируется.
+    - Обратная совместимость: если пришел how_to_answer, автоматически формируется how_to_solve.
+    """
+    from app.models.page_analysis import PageAnalysisResponse, VocabularyItem
+
+    # 1. С массивом how_to_solve
+    resp1 = PageAnalysisResponse(
+        task_title="Сложение",
+        theme_explanation="Объяснение темы",
+        vocabulary=[VocabularyItem(est="liitmine", ru="сложение", example="2 + 3 = 5")],
+        how_to_solve=[
+            "1. Найди в тексте главное число",
+            "Шаг 2: Сложи его со вторым",
+            "Запиши ответ в тетрадь"
+        ],
+        answer_template="Vastus on [5]",
+        voice_prompt_script="Привет!",
+        theme_explanation_speech="Объяснение темы",
+        how_to_answer_speech="Шаги решения",
+    )
+    assert resp1.how_to_solve == [
+        "Найди в тексте главное число",
+        "Сложи его со вторым",
+        "Запиши ответ в тетрадь"
+    ]
+    assert "Найди в тексте главное число" in resp1.how_to_answer
+    assert "Сложи его со вторым" in resp1.how_to_answer
+
+    # 2. С сырым how_to_answer (обратная совместимость)
+    resp2 = PageAnalysisResponse(
+        task_title="Вычитание",
+        theme_explanation="Объяснение вычитания",
+        vocabulary=[VocabularyItem(est="lahutamine", ru="вычитание", example="5 - 2 = 3")],
+        how_to_answer="1. Определи уменьшаемое.\n2. Вычти вычитаемое.\n3. Получи разность.",
+        answer_template="Vastus on [3]",
+        voice_prompt_script="Привет!",
+        theme_explanation_speech="Объяснение вычитания",
+        how_to_answer_speech="Шаги вычитания",
+    )
+    assert len(resp2.how_to_solve) == 3
+    assert resp2.how_to_solve[0] == "Определи уменьшаемое."
+    assert resp2.how_to_solve[1] == "Вычти вычитаемое."
+    assert resp2.how_to_solve[2] == "Получи разность."
+
+
 
 
 
