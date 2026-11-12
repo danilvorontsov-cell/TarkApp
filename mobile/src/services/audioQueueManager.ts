@@ -20,7 +20,7 @@ import { sanitizeTextForTts } from '../utils/textSanitizer';
 
 export { PlaybackState } from './audioPlayer';
 
-export const AUDIO_CACHE_VERSION = 3;
+export const AUDIO_CACHE_VERSION = 4;
 const CACHE_VERSION_KEY = '@tarkapp_audio_cache_version';
 
 export type AudioItemStatus = 'IDLE' | 'QUEUED' | 'LOADING' | 'READY' | 'ERROR';

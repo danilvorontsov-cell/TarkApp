@@ -535,3 +535,65 @@ def test_bilingual_latin_words_segmentation():
     et_segs = [txt for txt, v in segments if "et-EE" in v or v == "et" or v == ESTONIAN_VOICE]
     assert any("jalg" in s for s in et_segs)
 
+
+def test_estonian_cardinal_numbers_and_prevent_neljas():
+    """
+    Проверка вербализации количественных числительных в эстонском слое:
+    1. 4. на конце предложения не должно становиться 'neljas' (порядковое), а строго 'neli.' (количественное).
+    2. '8 ja 4.' -> 'kaheksa ja neli.'
+    3. 'Summa on 12.' -> 'Summa on kaksteist.'
+    4. Дефисные падежные окончания ('5-ga', '10-ni') сохраняются без искажений.
+    5. Сквозной вызов parse_bilingual_segments с is_speech_text=True вербализует цифры внутри <est>...</est>.
+    """
+    from app.services.tts_normalizer import (
+        int_to_estonian_cardinal,
+        verbalize_estonian_cardinal_numbers,
+        normalize_text_for_estonian_tts,
+    )
+    from app.services.tts_service import parse_bilingual_segments, ESTONIAN_VOICE
+
+    # 1. Проверка функции int_to_estonian_cardinal
+    assert int_to_estonian_cardinal(0) == "null"
+    assert int_to_estonian_cardinal(1) == "üks"
+    assert int_to_estonian_cardinal(4) == "neli"
+    assert int_to_estonian_cardinal(8) == "kaheksa"
+    assert int_to_estonian_cardinal(10) == "kümme"
+    assert int_to_estonian_cardinal(12) == "kaksteist"
+    assert int_to_estonian_cardinal(17) == "seitseteist"
+    assert int_to_estonian_cardinal(20) == "kakskümmend"
+    assert int_to_estonian_cardinal(24) == "kakskümmend neli"
+    assert int_to_estonian_cardinal(70) == "seitsekümmend"
+    assert int_to_estonian_cardinal(100) == "sada"
+    assert int_to_estonian_cardinal(245) == "kakssada nelikümmend viis"
+
+    # 2. Проверка вербализации в предложениях
+    res1 = verbalize_estonian_cardinal_numbers("Liidetavad on 8 ja 4. Leia summa.")
+    assert res1 == "Liidetavad on kaheksa ja neli. Leia summa."
+
+    res2 = verbalize_estonian_cardinal_numbers("Summa on 12.")
+    assert res2 == "Summa on kaksteist."
+
+    # Дефисные окончания не портятся
+    res3 = verbalize_estonian_cardinal_numbers("Korruta 5-ga ja loenda 10-ni")
+    assert res3 == "Korruta 5-ga ja loenda 10-ni"
+
+    # 3. Проверка normalize_text_for_estonian_tts с verbalize_numbers=True
+    norm_res = normalize_text_for_estonian_tts("Liidetavad on 8 ja 4. Leia summa.", verbalize_numbers=True)
+    assert norm_res == "Liidetavad on kaheksa ja neli. Leia summa."
+
+    # 4. Сквозной тест билингвального парсера с реальным входом из audit-лога пользователя
+    user_speech_input = (
+        "Дано вымышленное задание: <est>Liidetavad on 8 ja 4. Leia summa.</est> "
+        "Шаг первый: Определяем компоненты: оба числа являются слагаемыми. "
+        "Шаг второй: Находим сумму: объединяем восемь и четыре, получается двенадцать. "
+        "Шаг третий: Записываем ответ на эстонском языке: <est>Summa on kaksteist.</est>"
+    )
+    segments = parse_bilingual_segments(user_speech_input, is_speech_text=True)
+
+    et_segments = [txt for txt, v in segments if "et-EE" in v or v == "et" or v == ESTONIAN_VOICE]
+    assert len(et_segments) >= 2
+    # Первый эстонский сегмент должен содержать 'kaheksa ja neli', а не '8 ja 4.' или 'neljas'
+    assert et_segments[0] == "Liidetavad on kaheksa ja neli. Leia summa."
+    assert "neljas" not in et_segments[0]
+    assert et_segments[1] == "Summa on kaksteist."
+

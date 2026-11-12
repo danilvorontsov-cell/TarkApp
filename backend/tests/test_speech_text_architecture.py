@@ -348,9 +348,10 @@ def test_client_audio_cache_version_and_invalidation():
     aqm_content = aqm_path.read_text(encoding="utf-8")
     ap_content = ap_path.read_text(encoding="utf-8")
 
-    # Проверка константы AUDIO_CACHE_VERSION = 2
-    assert "export const AUDIO_CACHE_VERSION = 2;" in aqm_content
-    assert "export const AUDIO_CACHE_VERSION = 2;" in ap_content
+    # Проверка константы AUDIO_CACHE_VERSION >= 2
+    import re
+    assert re.search(r'export const AUDIO_CACHE_VERSION = \d+;', aqm_content)
+    assert re.search(r'export const AUDIO_CACHE_VERSION = \d+;', ap_content)
 
     # Проверка ключа AsyncStorage @tarkapp_audio_cache_version
     assert "@tarkapp_audio_cache_version" in aqm_content

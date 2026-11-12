@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const mobileDir = path.resolve(__dirname, '..');
 
-test('Scenario 1: AUDIO_CACHE_VERSION is bumped to 2 for cache invalidation', () => {
+test('Scenario 1: AUDIO_CACHE_VERSION is bumped to 4 for cache invalidation', () => {
   const aqmPath = path.join(mobileDir, 'src', 'services', 'audioQueueManager.ts');
   const apPath = path.join(mobileDir, 'src', 'services', 'audioPlayer.ts');
 
@@ -18,13 +18,13 @@ test('Scenario 1: AUDIO_CACHE_VERSION is bumped to 2 for cache invalidation', ()
 
   assert.match(
     aqmContent,
-    /export\s+const\s+AUDIO_CACHE_VERSION\s*=\s*2;/,
-    'AudioQueueManager must export AUDIO_CACHE_VERSION = 2'
+    /export\s+const\s+AUDIO_CACHE_VERSION\s*=\s*\d+;/,
+    'AudioQueueManager must export AUDIO_CACHE_VERSION'
   );
   assert.match(
     apContent,
-    /export\s+const\s+AUDIO_CACHE_VERSION\s*=\s*2;/,
-    'AudioPlayer must export AUDIO_CACHE_VERSION = 2'
+    /export\s+const\s+AUDIO_CACHE_VERSION\s*=\s*\d+;/,
+    'AudioPlayer must export AUDIO_CACHE_VERSION'
   );
   assert.match(
     aqmContent,

@@ -543,7 +543,11 @@ class PageAnalysisResponse(GeminiPageAnalysisSchema):
                 if getattr(self.worked_example, "title", None):
                     self.worked_example.title = strip_combining_accents(self.worked_example.title)
 
-            from app.services.tts_normalizer import prepare_speech_text, prepare_worked_example_speech
+            from app.services.tts_normalizer import (
+                prepare_speech_text,
+                prepare_worked_example_speech,
+                normalize_text_for_estonian_tts,
+            )
 
             v_speech = (self.voice_prompt_script_speech or "").strip() or prepare_speech_text(self.voice_prompt_script or "")
             th_speech = (self.theme_explanation_speech or "").strip() or prepare_speech_text(self.theme_explanation or "")
@@ -574,6 +578,25 @@ class PageAnalysisResponse(GeminiPageAnalysisSchema):
             ex_speech = (self.worked_example_speech or "").strip()
             if not ex_speech and self.worked_example:
                 ex_speech = prepare_worked_example_speech(self.worked_example)
+
+            def _normalize_speech_est_tags(s: Optional[str]) -> Optional[str]:
+                if not s or "<est" not in s.lower():
+                    return s
+                def _repl_tag(m: re.Match) -> str:
+                    inner = m.group(1).strip()
+                    if re.search(r'[\d+\-*\/=·×]', inner):
+                        norm = normalize_text_for_estonian_tts(
+                            inner, verbalize_math_signs=True, verbalize_numbers=True
+                        )
+                        return f"<est>{norm}</est>"
+                    return m.group(0)
+                return re.sub(r'<\s*est(?:\s+[^>]*)?>(.*?)<\s*/\s*est\s*>', _repl_tag, s, flags=re.IGNORECASE | re.DOTALL)
+
+            v_speech = _normalize_speech_est_tags(v_speech)
+            th_speech = _normalize_speech_est_tags(th_speech)
+            alt_speech = _normalize_speech_est_tags(alt_speech)
+            how_speech = _normalize_speech_est_tags(how_speech)
+            ex_speech = _normalize_speech_est_tags(ex_speech)
 
             self.voice_prompt_script_speech = v_speech
             self.theme_explanation_speech = th_speech

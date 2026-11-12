@@ -171,6 +171,8 @@ from app.services.tts_normalizer import (
     normalize_number_ranges,
     normalize_russian_ordinals_with_dot,
     normalize_russian_accents_and_yo,
+    int_to_estonian_cardinal,
+    verbalize_estonian_cardinal_numbers,
     normalize_text_for_estonian_tts,
     normalize_estonian_measurement_units,
     normalize_estonian_fractions,
@@ -309,7 +311,11 @@ def parse_bilingual_segments(
 
     # 1. Если во всём тексте нет кириллицы вообще — озвучиваем целиком эстонским диктором
     if not re.search(r'[а-яА-ЯёЁ]', text):
-        clean_est = text.strip() if (is_speech_text or already_normalized) else normalize_text_for_estonian_tts(text.strip())
+        clean_est = (
+            text.strip()
+            if (is_speech_text and not re.search(r'[\d+\-*\/=·×]', text))
+            else normalize_text_for_estonian_tts(text.strip(), verbalize_math_signs=True, verbalize_numbers=True)
+        )
         return [(clean_est or text.strip(), ESTONIAN_VOICE)]
 
     # 2. Ищем эстонские фрагменты в русском тексте
@@ -372,11 +378,17 @@ def parse_bilingual_segments(
             if clean_prefix:
                 raw_segments.append((_unmask_bilingual(clean_prefix), DEFAULT_VOICE))
 
-        clean_est = (
-            est_content.strip()
-            if (is_speech_text or (already_normalized and is_from_tag))
-            else normalize_text_for_estonian_tts(est_content)
-        )
+        # Для эстонских фрагментов: если есть цифры или мат. знаки, обязательно вербализуем
+        if re.search(r'[\d+\-*\/=·×]', est_content):
+            clean_est = normalize_text_for_estonian_tts(
+                est_content, verbalize_math_signs=True, verbalize_numbers=True
+            )
+        else:
+            clean_est = (
+                est_content.strip()
+                if (is_speech_text or (already_normalized and is_from_tag))
+                else normalize_text_for_estonian_tts(est_content)
+            )
         if clean_est:
             raw_segments.append((_unmask_bilingual(clean_est), ESTONIAN_VOICE))
 
@@ -840,6 +852,13 @@ async def synthesize_estonian_audio_segment(
     clean_text = text.strip()
     if not clean_text:
         return None
+
+    # Защитный барьер: если в эстонский сегмент попали невербализованные цифры или знаки,
+    # преобразуем их в слова (8 ja 4. -> kaheksa ja neli.), предотвращая произношение 'neljas'
+    if re.search(r'[\d+\-*\/=·×]', clean_text):
+        clean_text = normalize_text_for_estonian_tts(
+            clean_text, verbalize_math_signs=True, verbalize_numbers=True
+        )
 
     # Приоритет 1: Azure Speech SDK
     if speechsdk is not None and getattr(settings, "AZURE_SPEECH_KEY", None):

@@ -9,7 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL, getDeviceId, resolveBaseUrl } from './api';
 import { sanitizeTextForTts } from '../utils/textSanitizer';
 
-export const AUDIO_CACHE_VERSION = 2;
+export const AUDIO_CACHE_VERSION = 4;
 const CACHE_VERSION_KEY = '@tarkapp_audio_cache_version';
 
 export async function ensureAudioCacheDir(cacheDir: string): Promise<void> {

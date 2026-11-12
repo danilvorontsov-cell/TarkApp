@@ -1414,13 +1414,117 @@ ESTONIAN_UNIT_FORMS: Dict[str, Dict[str, str]] = {
     "lk": {"nom": "lehekülg", "part": "lehekülge", "stem": "lehekülje"},
 }
 
+ESTONIAN_ONES: Dict[int, str] = {
+    0: "null", 1: "üks", 2: "kaks", 3: "kolm", 4: "neli", 5: "viis",
+    6: "kuus", 7: "seitse", 8: "kaheksa", 9: "üheksa"
+}
+
+ESTONIAN_TEENS: Dict[int, str] = {
+    10: "kümme", 11: "üksteist", 12: "kaksteist", 13: "kolmteist", 14: "neliteist",
+    15: "viisteist", 16: "kuusteist", 17: "seitseteist", 18: "kaheksateist",
+    19: "üheksateist"
+}
+
+ESTONIAN_TENS: Dict[int, str] = {
+    20: "kakskümmend", 30: "kolmkümmend", 40: "nelikümmend", 50: "viiskümmend",
+    60: "kuuskümmend", 70: "seitsekümmend", 80: "kaheksakümmend", 90: "üheksakümmend"
+}
+
 ESTONIAN_CARDINAL_WORDS: Dict[int, str] = {
-    1: "üks", 2: "kaks", 3: "kolm", 4: "neli", 5: "viis",
+    0: "null", 1: "üks", 2: "kaks", 3: "kolm", 4: "neli", 5: "viis",
     6: "kuus", 7: "seitse", 8: "kaheksa", 9: "üheksa", 10: "kümme",
     11: "üksteist", 12: "kaksteist", 13: "kolmteist", 14: "neliteist",
     15: "viisteist", 16: "kuusteist", 17: "seitseteist", 18: "kaheksateist",
     19: "üheksateist", 20: "kakskümmend",
 }
+
+def int_to_estonian_cardinal(n: int) -> str:
+    """
+    Преобразует целое неотрицательное число (0..999999) в эстонское количественное числительное:
+    4 -> 'neli', 8 -> 'kaheksa', 12 -> 'kaksteist', 25 -> 'kakskümmend viis', 100 -> 'sada'.
+    """
+    if n < 0:
+        return f"miinus {int_to_estonian_cardinal(-n)}"
+    if n in ESTONIAN_ONES:
+        return ESTONIAN_ONES[n]
+    if n in ESTONIAN_TEENS:
+        return ESTONIAN_TEENS[n]
+    if n in ESTONIAN_TENS:
+        return ESTONIAN_TENS[n]
+    if 20 < n < 100:
+        tens = (n // 10) * 10
+        rem = n % 10
+        return f"{ESTONIAN_TENS[tens]} {ESTONIAN_ONES[rem]}"
+    if n == 100:
+        return "sada"
+    if 100 < n < 1000:
+        hundreds = n // 100
+        rem = n % 100
+        h_prefix = "sada" if hundreds == 1 else f"{ESTONIAN_ONES[hundreds]}sada"
+        if rem == 0:
+            return h_prefix
+        return f"{h_prefix} {int_to_estonian_cardinal(rem)}"
+    if n == 1000:
+        return "tuhat"
+    if 1000 < n < 1000000:
+        thousands = n // 1000
+        rem = n % 1000
+        t_prefix = "tuhat" if thousands == 1 else f"{int_to_estonian_cardinal(thousands)} tuhat"
+        if rem == 0:
+            return t_prefix
+        return f"{t_prefix} {int_to_estonian_cardinal(rem)}"
+    return str(n)
+
+
+def verbalize_estonian_cardinal_numbers(text: str) -> str:
+    """
+    Преобразует арабские цифры в эстонском тексте в количественные числительные словами:
+    '8 ja 4.' -> 'kaheksa ja neli.'
+    'Summa on 12.' -> 'Summa on kaksteist.'
+    Защищает дефисные падежные формы (5-ga, 10-ni, 3-st) и время (14:30).
+    """
+    if not text:
+        return ""
+
+    hyphen_masked: List[str] = []
+    def _mask_hyphen(m: re.Match) -> str:
+        idx = len(hyphen_masked)
+        hyphen_masked.append(m.group(0))
+        return f"__ESTHYPHEN_{idx}__"
+
+    # 1. Защищаем падежные окончания чисел через дефис (5-ga, 10-ni, 3-st, 2-le...)
+    t = re.sub(
+        r'\b\d+[-–—]+(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b',
+        _mask_hyphen,
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # 2. Числа с точкой на конце предложения или перед пробелом (4. -> neli.)
+    # Предотвращает ошибочное произношение порядкового ('neljas') вместо количественного ('neli')
+    def _repl_num_dot(m: re.Match) -> str:
+        try:
+            num = int(m.group(1))
+            return f"{int_to_estonian_cardinal(num)}."
+        except ValueError:
+            return m.group(0)
+
+    t = re.sub(r'\b(\d+)\.(?!\d)', _repl_num_dot, t)
+
+    # 3. Одиночные числительные без точки
+    def _repl_num(m: re.Match) -> str:
+        try:
+            num = int(m.group(1))
+            return int_to_estonian_cardinal(num)
+        except ValueError:
+            return m.group(0)
+
+    t = re.sub(r'\b(\d+)\b', _repl_num, t)
+
+    for idx, orig in enumerate(hyphen_masked):
+        t = t.replace(f"__ESTHYPHEN_{idx}__", orig)
+
+    return t
 
 ESTONIAN_FRACTION_DENOMINATORS: Dict[int, Tuple[str, str]] = {
     2: ("kahendik", "kahendikku"),
@@ -1626,7 +1730,11 @@ def normalize_estonian_measurement_units(text: str) -> str:
     return t
 
 
-def normalize_text_for_estonian_tts(text: str, verbalize_math_signs: bool = False) -> str:
+def normalize_text_for_estonian_tts(
+    text: str,
+    verbalize_math_signs: bool = False,
+    verbalize_numbers: bool = False,
+) -> str:
     """
     Нормализует эстонский текст:
     - Десятичные дроби (3,5 -> 3 koma 5) и обыкновенные дроби (1/2 -> üks kahendik).
@@ -1636,6 +1744,8 @@ def normalize_text_for_estonian_tts(text: str, verbalize_math_signs: bool = Fals
     - Для номеров в конце предложения без существительного (Vastus on 12.) срезает точку -> Vastus on 12.
     - Заменяет математические знаки умножения (·, •, *, ×) на korda.
     - В режиме verbalize_math_signs=True озвучивает + -> pluss, - -> miinus, = -> võrdub.
+    - В режиме verbalize_numbers=True вербализует арабские цифры в эстонские количественные числительные
+      (8 ja 4. -> kaheksa ja neli.), предотвращая произношение порядкового 'neljas' вместо 'neli'.
     - Сохраняет дефисы для падежных окончаний чисел (5-ga, 10-ni).
     """
     if not text:
@@ -1705,13 +1815,16 @@ def normalize_text_for_estonian_tts(text: str, verbalize_math_signs: bool = Fals
     t = re.sub(r'(?<=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])\s*/\s*(?=[a-zA-ZõäöüÕÄÖÜšžŠŽ0-9])', ' või ', t)
     t = re.sub(r'\s+/\s+', ' või ', t)
     t = re.sub(r'[/\\|]', ' ', t)
-    # Сохраняем точку у порядковых числительных перед строчным эстонским существительным (15. harjutus)
-    t = re.sub(r'(\b\d+)\s*\.(?!\d|\s+[a-zõäöüšž]{2,})', r'\1 ', t)
-    t = re.sub(r'(\d+)([,!?;:])', r'\1 \2', t)
-    t = re.sub(r'([,!?;:])(\d+)', r'\1 \2', t)
-    t = re.sub(r'(\d+)[-–—]+(?=(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)', r'\1-', t, flags=re.IGNORECASE)
-    t = re.sub(r'(\d+)[-–—]+(?!(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)', r'\1 ', t, flags=re.IGNORECASE)
-    t = re.sub(r'[-–—]+(\d+)', r' \1', t)
+    if verbalize_numbers:
+        t = verbalize_estonian_cardinal_numbers(t)
+    else:
+        # Сохраняем точку у порядковых числительных перед строчным эстонским существительным (15. harjutus)
+        t = re.sub(r'(\b\d+)\s*\.(?!\d|\s+[a-zõäöüšž]{2,})', r'\1 ', t)
+        t = re.sub(r'(\d+)([,!?;:])', r'\1 \2', t)
+        t = re.sub(r'([,!?;:])(\d+)', r'\1 \2', t)
+        t = re.sub(r'(\d+)[-–—]+(?=(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)', r'\1-', t, flags=re.IGNORECASE)
+        t = re.sub(r'(\d+)[-–—]+(?!(?:ga|ni|st|le|lt|sse|s|l|ks|na|ta)\b)', r'\1 ', t, flags=re.IGNORECASE)
+        t = re.sub(r'[-–—]+(\d+)', r' \1', t)
 
     # Восстанавливаем маски времени в самом конце, чтобы 14:30 не разбивалось на 14 : 30
     for idx, orig_tm in enumerate(time_est):
@@ -2110,7 +2223,9 @@ def prepare_speech_text(display_text: str, is_russian_context: bool = True) -> s
         m_tag = re.match(r'<\s*est(?:\s+[^>]*)?>(.*?)<\s*/\s*est\s*>', orig_t, flags=re.IGNORECASE | re.DOTALL)
         if m_tag:
             inner_est = m_tag.group(1).strip()
-            norm_est = normalize_text_for_estonian_tts(inner_est)
+            norm_est = normalize_text_for_estonian_tts(
+                inner_est, verbalize_math_signs=True, verbalize_numbers=True
+            )
             t = t.replace(f"ESTTAGPLACEHOLDER{idx}ESTTAG", f"<est>{norm_est}</est>")
         else:
             t = t.replace(f"ESTTAGPLACEHOLDER{idx}ESTTAG", orig_t)
