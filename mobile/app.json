@@ -2,7 +2,7 @@
   "expo": {
     "name": "TarkApp",
     "slug": "tarkapp",
-    "version": "1.3.2",
+    "version": "1.4.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -32,7 +32,7 @@
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ],
       "package": "ee.tarkapp.mobile",
-      "versionCode": 4
+      "versionCode": 5
     },
     "web": {
       "favicon": "./assets/favicon.png"

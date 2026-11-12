@@ -376,7 +376,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
           )}
 
           <View style={styles.versionContainer}>
-            <Text style={styles.versionText}>TarkApp • v1.3.2 • Tark Systems</Text>
+            <Text style={styles.versionText}>TarkApp • v1.4.2 • Tark Systems</Text>
           </View>
         </View>
       </Animated.View>
