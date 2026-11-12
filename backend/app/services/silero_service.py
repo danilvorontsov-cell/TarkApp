@@ -129,11 +129,14 @@ class SileroTTSManager:
 
         sr = sample_rate or getattr(settings, "SILERO_SAMPLE_RATE", 24000)
 
+        from app.services.tts_qa_validator import validate_and_fix_russian_tts
+        validated_text = validate_and_fix_russian_tts(text.strip())
+
         with self._infer_lock:
             try:
                 t0 = time.perf_counter()
                 tensor_audio = self.model.apply_tts(
-                    text=text.strip(),
+                    text=validated_text,
                     speaker=spk,
                     sample_rate=sr,
                 )

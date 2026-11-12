@@ -38,6 +38,7 @@ from app.logger import tts_audit_logger
 from app.models.tts_audit import TTSAuditLog
 from app.services.silero_service import silero_tts
 from app.services.tts_normalizer import apply_stress_overrides, clean_display_text
+from app.services.tts_qa_validator import validate_and_fix_russian_tts
 
 logger = logging.getLogger(__name__)
 
@@ -897,7 +898,8 @@ def synthesize_russian_audio_segment(
     if not clean_text:
         return None
 
-    stressed_text = apply_stress_overrides(clean_text)
+    # Применяем фонетический валидатор (TTS QA-линтер) перед синтезом Silero v5
+    stressed_text = validate_and_fix_russian_tts(clean_text)
 
     # 1. Локальный инференс Silero v5
     if silero_tts.ensure_model_loaded():

@@ -19,6 +19,7 @@ backend/*.db-shm
 backend/*.db-wal
 backend/data/
 data/
+!backend/app/data/
 
 # Logs & Runtime Artifacts
 logs/
