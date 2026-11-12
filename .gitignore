@@ -45,6 +45,7 @@ mobile/.expo/
 dist/
 web-build/
 *.tsbuildinfo
+*.apk
 
 # OS & IDE
 .DS_Store
