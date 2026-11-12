@@ -552,10 +552,24 @@ class PageAnalysisResponse(GeminiPageAnalysisSchema):
             how_speech = (self.how_to_answer_speech or "").strip()
             if not how_speech:
                 if self.how_to_solve and len(self.how_to_solve) > 1:
+                    ordinals_map = {
+                        1: "первый", 2: "втор+ой", 3: "тр+етий", 4: "четв+ёртый", 5: "п+ятый",
+                        6: "шест+ой", 7: "седьм+ой", 8: "восьм+ой", 9: "дев+ятый", 10: "дес+ятый"
+                    }
                     speech_steps = [prepare_speech_text(s) for s in self.how_to_solve if s and s.strip()]
-                    how_speech = "\n".join(f"Шаг {i+1}: {step}" for i, step in enumerate(speech_steps))
+                    how_speech = "\n".join(
+                        f"Шаг {ordinals_map.get(i+1, str(i+1))}: {step}"
+                        for i, step in enumerate(speech_steps)
+                    )
                 else:
                     how_speech = prepare_speech_text(self.how_to_answer or "")
+            else:
+                # Гарантируем перенос строк между шагами для паузы 500 мс при склейке
+                step_boundary = re.compile(
+                    r'(?<=[.!?…])\s+(?=(?:Шаг\s+[\w\+]+[:.]?|(?:\(?\d+[\.\)]))\s*)',
+                    re.IGNORECASE
+                )
+                how_speech = step_boundary.sub("\n", how_speech)
 
             ex_speech = (self.worked_example_speech or "").strip()
             if not ex_speech and self.worked_example:

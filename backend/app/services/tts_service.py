@@ -994,7 +994,14 @@ async def synthesize_bilingual_stitched_audio(
     if not clean_text:
         return b""
 
-    lines = [l.strip() for l in clean_text.split('\n') if l.strip()]
+    # Разбиваем текст на шаги либо по переносу строк (\n), либо по маркерам шагов
+    # («Шаг первый/второй...», «Шаг 1/2...», «1. ... 2. ...», «(1) ... (2) ...»)
+    # Это гарантирует вставку паузы ровно 500 мс между шагами в поле «Как решить задание самому»
+    step_split_pat = re.compile(
+        r'(?:\r?\n)+|(?<=[.!?…])\s+(?=(?:Шаг\s+[\w\+]+[:.]?|(?:\(?\d+[\.\)]))\s*)',
+        re.IGNORECASE
+    )
+    lines = [l.strip() for l in step_split_pat.split(clean_text) if l and l.strip()]
     if len(lines) > 1:
         step_audio_parts: List[np.ndarray] = []
         step_pause = np.zeros(int(0.5 * sample_rate), dtype=np.float32)  # ровно 500 мс
