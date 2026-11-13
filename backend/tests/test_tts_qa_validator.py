@@ -157,3 +157,77 @@ def test_performance_benchmark_under_2ms():
 
     avg_time_ms = sum(times) / len(times)
     assert avg_time_ms < 2.0, f"Average execution time {avg_time_ms:.3f} ms exceeds the 2.0 ms guardrail!"
+
+
+def test_steve_and_shersti_stress():
+    """Проверка правильного ударения для Стива (Ст+ива) и шерсти (ш+ерсти)."""
+    text1 = "Точно так же, как рука Стива в Minecraft помогает добывать блоки."
+    res1 = validate_and_fix_russian_tts(text1)
+    assert "Ст+ива" in res1
+    assert "Майнкр+афт" in res1
+
+    text2 = "чувствовать тепло, холод и мягкость кошачьей шерсти."
+    res2 = validate_and_fix_russian_tts(text2)
+    assert "ш+ерсти" in res2
+
+    text3 = "Стив строит дом со Стивом, помогает Стиву и думает о Стиве."
+    res3 = validate_and_fix_russian_tts(text3)
+    assert "Ст+ив" in res3
+    assert "Ст+ивом" in res3
+    assert "Ст+иву" in res3
+    assert "Ст+иве" in res3
+
+
+def test_worked_example_reconcile_and_newlines():
+    """Проверка сохранения перевода в скобках и переносов строк (\n) для паузы 700 мс."""
+    from app.models.page_analysis import PageAnalysisResponse, WorkedExample, VocabularyItem
+
+    raw_steps = [
+        "Называем предмет: See on minu käsi. (Это моя рука.)",
+        "Рассказываем о пальцах: Mul on viis sõrme. (У меня пять пальцев.)",
+        "Говорим о действии: Ma oskan kätega LEGO klotse ehitada. (Я умею руками строить из кубиков Лего.)"
+    ]
+    gemini_speech = (
+        "Учитель на уроке спрашивает: <est>Milleks me käsi kasutame?</est> "
+        "Шаг первый: Называем предмет: <est>See on minu käsi.</est> "
+        "Шаг второй: Рассказываем о пальцах: <est>Mul on viis sõrme.</est> "
+        "Шаг третий: Говорим о действии: <est>Ma oskan kätega LEGO klotse ehitada.</est>"
+    )
+
+    resp = PageAnalysisResponse(
+        task_title="Разговор про руку",
+        theme_explanation="Посмотри на свою ладонь",
+        vocabulary=[VocabularyItem(est="käsi", ru="рука", example="See on käsi")],
+        worked_example=WorkedExample(
+            title="Пример ответа на уроке",
+            given="Учитель на уроке спрашивает: Milleks me käsi kasutame?",
+            steps=raw_steps,
+            note="Улыбнись учителю"
+        ),
+        how_to_answer="Расскажи учителю",
+        answer_template="See on minu [käsi].",
+        voice_prompt_script="Привет, Dan!",
+        worked_example_speech=gemini_speech
+    )
+
+    we_speech = resp.worked_example_speech
+    # Должны сохраниться все переводы в скобках
+    assert "(Это моя рука.)" in we_speech
+    assert "(У меня пять пальцев.)" in we_speech
+    assert "(Я умею руками строить из кубиков Лего.)" in we_speech
+    # Шаги должны быть разделены \n для паузы 700 мс
+    assert "\nШаг второй:" in we_speech
+    assert "\nШаг третий:" in we_speech
+
+
+def test_step_pause_duration_700ms():
+    """Проверка, что пауза между шагами увеличена до 700 мс."""
+    from app.services.tts_service import synthesize_bilingual_stitched_audio, synthesize_steps_audio
+    import inspect
+
+    src1 = inspect.getsource(synthesize_bilingual_stitched_audio)
+    src2 = inspect.getsource(synthesize_steps_audio)
+    assert "0.7 * sample_rate" in src1
+    assert "0.7 * sample_rate" in src2
+    assert "ровно 700 мс" in src1
+    assert "ровно 700 мс" in src2

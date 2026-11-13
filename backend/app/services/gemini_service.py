@@ -138,6 +138,29 @@ class GeminiTutorService:
                     raw_text = response.text or ""
                     result = self._parse_json_response(raw_text)
 
+                if profile and profile.nickname:
+                    nick = profile.nickname.strip()
+                    if re.search(r'[a-zA-Z]', nick):
+                        from app.services.tts_normalizer import transliterate_latin_word
+                        nick_cyr = transliterate_latin_word(nick)
+                        cyr_variants = [nick_cyr]
+                        if nick.lower() == "dan":
+                            cyr_variants.extend(["Дэн", "Дан"])
+                        for v in cyr_variants:
+                            if result.voice_prompt_script:
+                                result.voice_prompt_script = re.sub(
+                                    rf'\b{re.escape(v)}\b', nick, result.voice_prompt_script, flags=re.IGNORECASE
+                                )
+                        audio_nick = "Дэн" if nick.lower() == "dan" else nick_cyr
+                        if result.voice_prompt_script_speech:
+                            result.voice_prompt_script_speech = re.sub(
+                                rf'\b{re.escape(nick)}\b', audio_nick, result.voice_prompt_script_speech, flags=re.IGNORECASE
+                            )
+                        if result.speech_layer and getattr(result.speech_layer, "voice_prompt_script", None):
+                            result.speech_layer.voice_prompt_script = re.sub(
+                                rf'\b{re.escape(nick)}\b', audio_nick, result.speech_layer.voice_prompt_script, flags=re.IGNORECASE
+                            )
+
                 return result
 
             except (asyncio.TimeoutError, TimeoutError) as e:

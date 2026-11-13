@@ -1015,15 +1015,15 @@ async def synthesize_bilingual_stitched_audio(
 
     # Разбиваем текст на шаги либо по переносу строк (\n), либо по маркерам шагов
     # («Шаг первый/второй...», «Шаг 1/2...», «1. ... 2. ...», «(1) ... (2) ...»)
-    # Это гарантирует вставку паузы ровно 500 мс между шагами в поле «Как решить задание самому»
+    # Это гарантирует вставку паузы ровно 700 мс между шагами в полях «Как решить задание самому» и «Пример ответа на уроке»
     step_split_pat = re.compile(
-        r'(?:\r?\n)+|(?<=[.!?…])\s+(?=(?:Шаг\s+[\w\+]+[:.]?|(?:\(?\d+[\.\)]))\s*)',
+        r'(?:\r?\n)+|(?<=[.!?…>])\s+(?=(?:Шаг\s+[\w\+]+[:.]?|(?:\(?\d+[\.\)]))\s*)',
         re.IGNORECASE
     )
     lines = [l.strip() for l in step_split_pat.split(clean_text) if l and l.strip()]
     if len(lines) > 1:
         step_audio_parts: List[np.ndarray] = []
-        step_pause = np.zeros(int(0.5 * sample_rate), dtype=np.float32)  # ровно 500 мс
+        step_pause = np.zeros(int(0.7 * sample_rate), dtype=np.float32)  # ровно 700 мс
 
         for line in lines:
             line_bytes = await _synthesize_single_line_stitched(
@@ -1060,14 +1060,14 @@ async def synthesize_steps_audio(
     sample_rate: int = 24000,
 ) -> bytes:
     """
-    Склейка составного аудио для шагов решения (аудиогид) с паузой ровно 500 мс (тишиной) между шагами.
+    Склейка составного аудио для шагов решения (аудиогид) с паузой ровно 700 мс (тишиной) между шагами.
     """
     valid_steps = [s.strip() for s in steps if s and s.strip()]
     if not valid_steps:
         return b""
 
     step_audio_parts: List[np.ndarray] = []
-    step_pause = np.zeros(int(0.5 * sample_rate), dtype=np.float32)  # ровно 500 мс
+    step_pause = np.zeros(int(0.7 * sample_rate), dtype=np.float32)  # ровно 700 мс
 
     for step in valid_steps:
         step_bytes = await _synthesize_single_line_stitched(

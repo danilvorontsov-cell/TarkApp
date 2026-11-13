@@ -1983,12 +1983,10 @@ function MainApp() {
             </Text>
           </View>
 
-          {/* Card 2: Audio Hint (Аудиоподсказка к уроку - только для 1–6 классов) */}
+          {/* Card 2: Audio Hint (Подсказка к уроку) */}
           {isFullAudioEnabled && (
             <View style={styles.modularCard}>
-              <View style={styles.voiceHeroHeader}>
-                <Text style={styles.voiceHeroBadge}>🎧 ПОДСКАЗКА К УРОКУ</Text>
-              </View>
+              <Text style={styles.sectionHeader}>🎧 Подсказка к уроку</Text>
 
               <TouchableOpacity
                 style={[
@@ -2015,6 +2013,7 @@ function MainApp() {
                   );
                 }}
                 activeOpacity={0.85}
+                accessibilityLabel="Озвучить подсказку к уроку"
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                   {loadingAudioId === 'voice_prompt' ? (
@@ -2028,13 +2027,13 @@ function MainApp() {
                         ? playbackState === 'playing'
                           ? '⏸ ПАУЗА'
                           : '▶ ПРОДОЛЖИТЬ'
-                        : '▶ СЛУШАТЬ ПОДСКАЗКУ'}
+                        : '▶ ОЗВУЧИТЬ'}
                     </Text>
                   )}
                 </View>
               </TouchableOpacity>
 
-              <Text style={styles.voiceScriptText}>{cleanEstTags(analysis.voice_prompt_script)}</Text>
+              <Text style={styles.explanationText}>{cleanEstTags(analysis.voice_prompt_script)}</Text>
 
               {/* Автоматическая наглядная визуализация прямо между текстом подсказки и кнопками действий (когда есть визуальное объяснение) */}
               {SHOW_CUBES_DEMO && profile.grade <= 6 && Boolean(analysis.visual) && (

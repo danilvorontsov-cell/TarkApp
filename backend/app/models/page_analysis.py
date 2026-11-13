@@ -450,6 +450,55 @@ class GeminiPageAnalysisSchema(BaseModel):
         return strip_combining_accents(v)
 
 
+def reconcile_worked_example_speech(ex_speech: str, raw_steps: List[str]) -> str:
+    """
+    Проверяет и восстанавливает пропущенные русские переводы в скобках в worked_example_speech.
+    Если в шагах worked_example.steps есть перевод в скобках (например, '(Это моя рука.)'),
+    а Gemini выбросил его из worked_example_speech — дописывает перевод к соответствующему шагу.
+    """
+    if not ex_speech or not raw_steps:
+        return ex_speech
+
+    step_boundary = re.compile(
+        r'(?<=[.!?…>])\s+(?=(?:Шаг\s+[\w\+]+[:.]?|(?:\(?\d+[\.\)]))\s*)',
+        re.IGNORECASE
+    )
+    # Разбиваем speech на строки/фрагменты
+    lines = [l.strip() for l in step_boundary.split(ex_speech) if l and l.strip()]
+    if len(lines) <= 1:
+        lines = [l.strip() for l in ex_speech.split("\n") if l and l.strip()]
+
+    # Ищем линии шагов (начинающиеся с "Шаг " или цифры)
+    speech_step_indices = []
+    for idx, line in enumerate(lines):
+        if re.match(r'^(?:Шаг\s+[\w\+]+[:.]?|(?:\(?\d+[\.\)]))\s*', line, re.IGNORECASE):
+            speech_step_indices.append(idx)
+
+    # Сопоставляем каждый шаг из raw_steps с шагом в речи
+    for s_idx, r_step in enumerate(raw_steps):
+        paren_match = re.search(r'(\([^)]*[а-яА-ЯёЁ][^)]*\))', str(r_step))
+        if not paren_match:
+            continue
+        paren_str = paren_match.group(1).strip()
+        inner_words = [w.lower() for w in re.findall(r'[а-яА-ЯёЁ]{3,}', paren_str)]
+        if not inner_words:
+            continue
+
+        target_line_idx = None
+        if s_idx < len(speech_step_indices):
+            target_line_idx = speech_step_indices[s_idx]
+        elif s_idx < len(lines):
+            target_line_idx = s_idx
+
+        if target_line_idx is not None and target_line_idx < len(lines):
+            line_text = lines[target_line_idx]
+            has_translation = any(w in line_text.lower() for w in inner_words)
+            if not has_translation:
+                lines[target_line_idx] = f"{line_text} {paren_str}".strip()
+
+    return "\n".join(lines)
+
+
 class PageAnalysisResponse(GeminiPageAnalysisSchema):
     lesson_id: Optional[str] = Field(
         default=None,
@@ -568,9 +617,9 @@ class PageAnalysisResponse(GeminiPageAnalysisSchema):
                 else:
                     how_speech = prepare_speech_text(self.how_to_answer or "")
             else:
-                # Гарантируем перенос строк между шагами для паузы 500 мс при склейке
+                # Гарантируем перенос строк между шагами для паузы 700 мс при склейке
                 step_boundary = re.compile(
-                    r'(?<=[.!?…])\s+(?=(?:Шаг\s+[\w\+]+[:.]?|(?:\(?\d+[\.\)]))\s*)',
+                    r'(?<=[.!?…>])\s+(?=(?:Шаг\s+[\w\+]+[:.]?|(?:\(?\d+[\.\)]))\s*)',
                     re.IGNORECASE
                 )
                 how_speech = step_boundary.sub("\n", how_speech)
@@ -578,6 +627,15 @@ class PageAnalysisResponse(GeminiPageAnalysisSchema):
             ex_speech = (self.worked_example_speech or "").strip()
             if not ex_speech and self.worked_example:
                 ex_speech = prepare_worked_example_speech(self.worked_example)
+            elif ex_speech and self.worked_example and getattr(self.worked_example, "steps", None):
+                raw_steps = [str(s).strip() for s in self.worked_example.steps if s and str(s).strip()]
+                ex_speech = reconcile_worked_example_speech(ex_speech, raw_steps)
+            if ex_speech:
+                step_boundary = re.compile(
+                    r'(?<=[.!?…>])\s+(?=(?:Шаг\s+[\w\+]+[:.]?|(?:\(?\d+[\.\)]))\s*)',
+                    re.IGNORECASE
+                )
+                ex_speech = step_boundary.sub("\n", ex_speech)
 
             def _normalize_speech_est_tags(s: Optional[str]) -> Optional[str]:
                 if not s or "<est" not in s.lower():

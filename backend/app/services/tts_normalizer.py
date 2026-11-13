@@ -2249,7 +2249,7 @@ def prepare_worked_example_speech(worked_example) -> str:
     formatted_steps = []
     ordinals = {1: "Первое", 2: "Второе", 3: "Третье", 4: "Четвертое", 5: "Пятое"}
     for idx, s in enumerate(valid_steps, 1):
-        clean_step = re.sub(r'^\d+[\.\)]\s*', '', str(s)).strip()
+        clean_step = re.sub(r'^(?:\(?\d+[\.\)]|\bШаг\s+\d+[:.]?)\s*', '', str(s)).strip()
         if clean_step:
             prefix = ordinals.get(idx, f"{idx}-е")
             formatted_steps.append(f"{prefix}: {clean_step}")
@@ -2258,11 +2258,12 @@ def prepare_worked_example_speech(worked_example) -> str:
     if clean_given:
         parts.append(clean_given)
     if formatted_steps:
-        parts.append(f"Шаги решения: {'. '.join(formatted_steps)}")
+        formatted_steps_str = "\n".join(formatted_steps)
+        parts.append(f"Шаги решения: {formatted_steps_str}")
     if note:
         parts.append(note)
 
-    full_text = ". ".join(parts).strip()
+    full_text = "\n".join(parts).strip()
     return prepare_speech_text(full_text)
 
 
@@ -2433,6 +2434,15 @@ FIXED_STRESS_OVERRIDES: Dict[str, str] = {
     r'\b(minecraft|майнкрафт)\b': 'майнкр+афт',
     r'\b(youtube|ютуб)\b': 'ют+уб',
     r'\b(tiktok|тикток)\b': 'тикт+ок',
+    r'\bsteve\b': 'ст+ив',
+    r'\bстив\b': 'ст+ив',
+    r'\bстива\b': 'ст+ива',
+    r'\bстиву\b': 'ст+иву',
+    r'\bстивом\b': 'ст+ивом',
+    r'\bстиве\b': 'ст+иве',
+    r'\bшерсти\b': 'ш+ерсти',
+    r'\bшерсть\b': 'ш+ерсть',
+    r'\bшерстью\b': 'ш+ерстью',
 
     # Специальные термины
     r'\bсуперпрыжк[иеа-я]*\b': 'супер-прыжк+и',

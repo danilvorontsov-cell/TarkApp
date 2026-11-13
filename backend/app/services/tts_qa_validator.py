@@ -77,6 +77,7 @@ def _load_stress_dict() -> Dict[str, Any]:
         "Minecraft": "Майнкр+афт",
         "Roblox": "Р+облокс",
         "YouTube": "Ют+уб",
+        "Steve": "Ст+ив",
     }
     all_brands = {**default_brands, **brands_map}
     for b_key, b_repl in all_brands.items():
@@ -104,6 +105,14 @@ def _load_stress_dict() -> Dict[str, Any]:
         "стоит": "ст+оит",
         "большая": "больш+ая",
         "еще": "ещё",
+        "стив": "ст+ив",
+        "стива": "ст+ива",
+        "стиву": "ст+иву",
+        "стивом": "ст+ивом",
+        "стиве": "ст+иве",
+        "шерсти": "ш+ерсти",
+        "шерсть": "ш+ерсть",
+        "шерстью": "ш+ерстью",
     }
 
     ordinals_map = {**default_ordinals, **_STRESS_DICT_DATA.get("ordinals", {})}
@@ -329,9 +338,13 @@ def validate_and_fix_russian_tts(text: str, is_estonian: bool = False) -> str:
             def _repl_stress(m: re.Match, tgt=target) -> str:
                 orig = m.group(1)
                 # Сохраняем регистр первой буквы
-                target_first = orig[0]
-                target_body = tgt[1:]
-                res = target_first + target_body
+                is_upper = orig[0].isupper()
+                if tgt.startswith("+"):
+                    lead = orig[0].upper() if is_upper else orig[0].lower()
+                    res = "+" + lead + tgt[2:]
+                else:
+                    lead = orig[0].upper() if is_upper else orig[0].lower()
+                    res = lead + tgt[1:]
                 if res != orig:
                     logger.warning(
                         f"[TTS-QA] Fixed token: '{orig}' -> '{res}' | context: '{_format_context(processed, m.start(), m.end())}'"
