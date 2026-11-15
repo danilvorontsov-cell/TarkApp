@@ -1,0 +1,15 @@
+# Environment & secrets
+.env
+.env.*
+generated_keys.txt
+data/private_invoices/
+*.db
+*.db-shm
+*.db-wal
+logs/
+*.log
+static/audio/*.mp3
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/

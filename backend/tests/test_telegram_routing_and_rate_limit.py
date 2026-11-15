@@ -299,5 +299,5 @@ async def test_send_telegram_invoice_notification_formatting():
             assert "• <b>Номер инвойса:</b> <code>INV-2026-1001</code>" in msg
             assert "• <b>Тариф:</b> Учебный год (71.90 €)" in msg
             assert "• <b>Viitenumber для сверки:</b> <code>202610010</code>" in msg
-            assert "• <b>Email плательщика:</b> danil.zuravov@gmail.com" in msg
-            assert "• <b>ID устройства:</b> <code>test-dev-device-99</code>" in msg
+            assert "• <b>Email плательщика:</b> da***@gmail.com" in msg
+            assert "• <b>ID устройства:</b> <code>test...e-99</code>" in msg

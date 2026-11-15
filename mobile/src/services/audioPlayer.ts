@@ -368,6 +368,24 @@ export async function playTts(
         throw new Error(`TTS POST returned HTTP ${response.status}`);
       }
 
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.toLowerCase().includes('application/json')) {
+        const data = await response.json().catch(() => null);
+        if (data && data.audio_disabled === true) {
+          if (callbacks?.onFinish) {
+            try {
+              callbacks.onFinish();
+            } catch (e) {
+              console.warn('Error in onFinish callback:', e);
+            }
+          }
+          playbackState = 'idle';
+          currentPlayingId = null;
+          notifyStateListeners();
+          return null;
+        }
+      }
+
       const blob = await response.blob();
       const base64Data = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -400,6 +418,33 @@ export async function playTts(
       const tierParam = effectiveTier ? `&tier=${encodeURIComponent(effectiveTier)}` : '';
       const speechParam = effectiveIsSpeech ? '&is_speech_text=true' : '';
       effectiveUri = `${activeBaseUrl}/api/v1/voice/tts?text=${encodeURIComponent(sanitizedSynthText)}&lang=${lang}${bilingualParam}${deviceParam}${gradeParam}${tierParam}${speechParam}`;
+
+      // Check if audio is disabled by tier policy before giving URL to player
+      if (effectiveGrade !== undefined && effectiveGrade >= 7 && (lang === 'ru' || bilingual || sanitizedSynthText.length > 600)) {
+        try {
+          const checkRes = await fetch(effectiveUri, {
+            method: 'GET',
+            headers: deviceId ? { 'X-Device-ID': deviceId } : undefined,
+          });
+          const ct = (checkRes.headers.get('content-type') || '').toLowerCase();
+          if (ct.includes('application/json')) {
+            const data = await checkRes.json().catch(() => null);
+            if (data && data.audio_disabled === true) {
+              if (callbacks?.onFinish) {
+                try {
+                  callbacks.onFinish();
+                } catch (e) {
+                  console.warn('Error in onFinish callback:', e);
+                }
+              }
+              playbackState = 'idle';
+              currentPlayingId = null;
+              notifyStateListeners();
+              return null;
+            }
+          }
+        } catch {}
+      }
     }
   }
 

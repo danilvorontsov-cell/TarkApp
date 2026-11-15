@@ -2,6 +2,9 @@ import math
 import logging
 import re
 import secrets
+import threading
+import time
+from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
@@ -127,11 +130,66 @@ def _get_trial_policy() -> Tuple[int, int]:
     return TrialPolicy(duration_days, daily_reviews)
 
 
-def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
+# Soft in-memory TTL limit on new Device registrations per IP (anti-fraud for scripts, NAT-safe for schools)
+_IP_REGISTRATION_WINDOW_SECONDS: int = 86400  # 24 hours
+_IP_REGISTRATION_MAX_DEVICES: int = 35        # Max 35 new devices from single IP per 24 hours
+
+_ip_registrations_lock = threading.Lock()
+_ip_registrations: Dict[str, List[float]] = defaultdict(list)
+
+
+def _is_ip_registration_rate_limited(ip: str) -> bool:
+    """
+    Checks if an IP address has exceeded the soft registration rate limit (35 devices / 24h).
+    Cleans up expired timestamps older than 24 hours.
+    """
+    if not ip or not isinstance(ip, str):
+        return False
+    clean_ip = ip.strip()
+    if not clean_ip:
+        return False
+
+    now_ts = time.time()
+    cutoff = now_ts - _IP_REGISTRATION_WINDOW_SECONDS
+
+    with _ip_registrations_lock:
+        timestamps = [ts for ts in _ip_registrations[clean_ip] if ts > cutoff]
+        _ip_registrations[clean_ip] = timestamps
+        return len(timestamps) >= _IP_REGISTRATION_MAX_DEVICES
+
+
+def _record_ip_registration(ip: str) -> None:
+    """
+    Records a new device registration timestamp for the given IP.
+    """
+    if not ip or not isinstance(ip, str):
+        return
+    clean_ip = ip.strip()
+    if not clean_ip:
+        return
+
+    now_ts = time.time()
+    cutoff = now_ts - _IP_REGISTRATION_WINDOW_SECONDS
+
+    with _ip_registrations_lock:
+        timestamps = [ts for ts in _ip_registrations[clean_ip] if ts > cutoff]
+        timestamps.append(now_ts)
+        _ip_registrations[clean_ip] = timestamps
+
+
+def clear_ip_registration_history() -> None:
+    """Helper to reset IP registration rate limiter history in tests."""
+    with _ip_registrations_lock:
+        _ip_registrations.clear()
+
+
+def check_device_access(device_id: str, db: Session, client_ip: Optional[str] = None) -> Dict[str, Any]:
     """
     Checks or registers a device by validated device_id.
     - Enforces ^[a-zA-Z0-9._-]{16,64}$ before reading/creating Device rows.
     - Supports both "closed_beta" (14d, 20/day) and "production" (5d, 10/day) via settings.TRIAL_MODE.
+    - Soft in-memory rate limit: max 35 new Device registrations per IP per 24 hours.
+      If exceeded, the Device record is created with free_reviews_left = 0 to stop bot farms while permitting school Wi-Fi.
     """
     clean_id = validate_device_id(device_id)
     duration_days, daily_limit = _get_trial_policy()
@@ -142,13 +200,25 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
 
     if not device:
         expires_at = now + timedelta(days=duration_days)
+        is_ip_throttled = bool(client_ip and _is_ip_registration_rate_limited(client_ip))
+        initial_reviews = 0 if is_ip_throttled else daily_limit
+
+        if is_ip_throttled:
+            logger.warning(
+                f"[LICENSE] Soft rate limit exceeded for IP {client_ip} "
+                f"(max {_IP_REGISTRATION_MAX_DEVICES} devices/24h). "
+                f"Registering device {clean_id} with free_reviews_left=0."
+            )
+        elif client_ip:
+            _record_ip_registration(client_ip)
+
         device = Device(
             device_id=clean_id,
             first_seen_at=now,
             trial_expires_at=expires_at,
             has_active_access=True,
             activated_key=None,
-            free_reviews_left=daily_limit,
+            free_reviews_left=initial_reviews,
             max_free_reviews=daily_limit,
             last_review_date=today_str,
         )
@@ -158,7 +228,7 @@ def check_device_access(device_id: str, db: Session) -> Dict[str, Any]:
         mode = getattr(settings, "TRIAL_MODE", "closed_beta")
         logger.info(
             f"[LICENSE] Registered new device {clean_id} in mode={mode} until {expires_at.isoformat()}Z "
-            f"with {daily_limit} free reviews (trial_days={duration_days})."
+            f"with {initial_reviews} free reviews (trial_days={duration_days}, ip={client_ip})."
         )
 
     is_allowed = bool(device.trial_expires_at and device.trial_expires_at > now)
@@ -676,7 +746,7 @@ def confirm_invoice_payment(
     now = datetime.utcnow()
     update_result = db.execute(
         text(
-            "UPDATE invoices SET is_paid = 1, paid_at = :now "
+            "UPDATE invoices SET is_paid = 1, status = 'paid', paid_at = :now "
             "WHERE invoice_number = :num AND (is_paid = 0 OR is_paid IS NULL)"
         ),
         {"now": now, "num": inv.invoice_number},
@@ -723,39 +793,90 @@ def confirm_invoice_payment(
         reference_info=f"INVOICE:{inv.invoice_number}",
     )
 
+    # Automatically generate backup access key TARK-XXXX-XXXX in access_keys table
+    backup_key = generate_key_code("TARK")
+    key_duration = grant_res.get("duration_days", 30)
+    access_key_obj = AccessKey(
+        key_code=backup_key,
+        duration_days=key_duration,
+        is_used=False,
+        created_at=now,
+    )
+    db.add(access_key_obj)
+    db.commit()
+    logger.info(
+        f"[LICENSE] Generated backup restoration key {backup_key} for invoice {inv.invoice_number} ({key_duration} days)."
+    )
+
+    # Send backup key via email notification to customer_email
+    email_target = (inv.customer_email or "").strip()
+    if email_target and email_target != "GDPR_ANONYMIZED":
+        try:
+            from app.services.email_service import send_payment_confirmation_email_sync
+            send_payment_confirmation_email_sync(
+                customer_email=email_target,
+                invoice_number=inv.invoice_number,
+                backup_key=backup_key,
+                package_name=grant_res.get("package_name", "TarkApp PRO"),
+                duration_days=key_duration,
+            )
+        except Exception as email_err:
+            logger.error(f"[LICENSE] Failed sending payment confirmation email: {email_err}")
+
     return {
         "success": True,
         "already_paid": False,
-        "message": f"Оплата инвойса {inv.invoice_number} (Viitenumber: {inv.viitenumber}) подтверждена. Доступ активирован на {grant_res['duration_days']} дн.",
+        "message": f"Оплата инвойса {inv.invoice_number} (Viitenumber: {inv.viitenumber}) подтверждена. Доступ активирован на {grant_res['duration_days']} дн. Резервный ключ {backup_key} отправлен на {email_target}.",
         "invoice_number": inv.invoice_number,
         "viitenumber": inv.viitenumber,
         "is_active": grant_res["is_active"],
         "days_left": grant_res["days_left"],
         "expires_at": grant_res["expires_at"],
         "package_name": grant_res["package_name"],
+        "backup_key": backup_key,
     }
 
 
 def delete_device_and_data(device_id: str, db: Session) -> Dict[str, Any]:
     """
     GDPR Right-to-be-Forgotten erasure for a specific device_id:
-    - Deletes any private invoice PDF files associated with this device_id
-    - Anonymizes/removes Invoice PII records for this device_id
-    - Detaches AccessKey bindings (preserving is_used=True so consumed keys cannot be reused)
+    - Retains paid invoices (status == 'paid' or is_paid == True) and their PDF files for 7 years
+      according to Estonian Accounting Act (Raamatupidamise seadus § 12), setting inv.device_id = 'GDPR_ANONYMIZED'.
+    - For unpaid drafts: sets status = 'cancelled', wipes customer_email and payer_name,
+      sets inv.device_id = 'GDPR_ANONYMIZED', and deletes the PDF file from disk while preserving the invoice record.
+    - Detaches AccessKey bindings (used_by_device = 'DELETED_GDPR').
+    - Clears activated_key on Device row while preserving anti-abuse trial state.
     """
     clean_id = validate_device_id(device_id)
     invoices = db.query(Invoice).filter(Invoice.device_id == clean_id).all()
     deleted_pdfs = 0
+    paid_anonymized = 0
+    unpaid_cancelled = 0
+
     for inv in invoices:
-        if inv.pdf_path:
-            try:
-                p = Path(inv.pdf_path)
-                if p.exists() and p.is_file():
-                    p.unlink()
-                    deleted_pdfs += 1
-            except Exception as err:
-                logger.warning(f"[GDPR] Failed removing PDF {inv.pdf_path}: {err}")
-        db.delete(inv)
+        is_paid = (getattr(inv, "status", None) == "paid") or (getattr(inv, "is_paid", False) is True)
+        if is_paid:
+            # Raamatupidamise seadus § 12: preserve accounting documents and PDFs for 7 years
+            inv.device_id = "GDPR_ANONYMIZED"
+            paid_anonymized += 1
+        else:
+            # Unpaid draft: cancel invoice, clear PII, delete PDF from disk, preserve invoice sequence record
+            inv.device_id = "GDPR_ANONYMIZED"
+            inv.customer_email = ""
+            if hasattr(inv, "payer_name"):
+                inv.payer_name = ""
+            if hasattr(inv, "status"):
+                inv.status = "cancelled"
+            if inv.pdf_path:
+                try:
+                    p = Path(inv.pdf_path)
+                    if p.exists() and p.is_file():
+                        p.unlink()
+                        deleted_pdfs += 1
+                except Exception as err:
+                    logger.warning(f"[GDPR] Failed removing draft PDF {inv.pdf_path}: {err}")
+                inv.pdf_path = None
+            unpaid_cancelled += 1
 
     db.query(AccessKey).filter(AccessKey.used_by_device == clean_id).update(
         {"used_by_device": "DELETED_GDPR"},
@@ -768,8 +889,17 @@ def delete_device_and_data(device_id: str, db: Session) -> Dict[str, Any]:
         dev.activated_key = None
 
     db.commit()
-    logger.info(f"[GDPR] Deleted PII & {len(invoices)} invoices ({deleted_pdfs} PDFs) for device {clean_id}.")
-    return {"success": True, "deleted_invoices": len(invoices), "deleted_pdfs": deleted_pdfs}
+    logger.info(
+        f"[GDPR] Anonymized {paid_anonymized} paid invoices, cancelled {unpaid_cancelled} drafts "
+        f"({deleted_pdfs} PDFs deleted) for device {clean_id}."
+    )
+    return {
+        "success": True,
+        "deleted_invoices": 0,
+        "paid_anonymized": paid_anonymized,
+        "unpaid_cancelled": unpaid_cancelled,
+        "deleted_pdfs": deleted_pdfs,
+    }
 
 
 # ==========================================

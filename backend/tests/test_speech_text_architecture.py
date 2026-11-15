@@ -654,15 +654,39 @@ def test_tts_audit_logging_and_admin_endpoint(client):
         assert record.status == "SUCCESS"
         assert record.duration_ms == 45.2
 
-    # 3. Check admin endpoint GET /api/v1/admin/tts-logs
-    resp = client.get("/api/v1/admin/tts-logs?limit=5")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "items" in data
-    assert "total" in data
-    assert data["total"] >= 1
-    found = any(item["device_id"] == "test-audit-device-01" for item in data["items"])
-    assert found is True
+    # 3. Check admin endpoint GET /api/v1/admin/tts-logs (requires X-Admin-Secret)
+    from app.config import settings
+    orig_secret = settings.ADMIN_SECRET
+    try:
+        settings.ADMIN_SECRET = "test-audit-admin-secret"
+
+        # Missing secret -> 403
+        unauth_resp = client.get("/api/v1/admin/tts-logs?limit=5")
+        assert unauth_resp.status_code == 403
+
+        # Invalid secret -> 403
+        bad_resp = client.get("/api/v1/admin/tts-logs?limit=5", headers={"X-Admin-Secret": "wrong-secret"})
+        assert bad_resp.status_code == 403
+
+        # Valid secret -> 200
+        resp = client.get(
+            "/api/v1/admin/tts-logs?limit=5",
+            headers={"X-Admin-Secret": "test-audit-admin-secret"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "items" in data
+        assert "total" in data
+        assert data["total"] >= 1
+        found = any(
+            item["device_id"] == "test-audit-device-01" or (
+                item["device_id"].startswith("test-a") and item["device_id"].endswith("e-01")
+            )
+            for item in data["items"]
+        )
+        assert found is True
+    finally:
+        settings.ADMIN_SECRET = orig_secret
 
     # 4. Check log file exists
     assert TTS_AUDIT_LOG_PATH.exists()

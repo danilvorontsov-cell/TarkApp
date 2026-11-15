@@ -480,3 +480,144 @@ async def send_invoice_to_customer(
             f"Реквизиты и Viitenumber отображены на экране. После подтверждения банковского перевода ключ активации будет автоматически отправлен на указанный email."
         ),
     }
+
+
+def build_payment_confirmation_html(
+    invoice_number: str,
+    customer_email: str,
+    package_name: str,
+    backup_key: str,
+    duration_days: int,
+) -> str:
+    """Builds a styled HTML email for payment confirmation with backup license key."""
+    return f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; background-color: #12161A; color: #F8FAFC; border-radius: 16px; overflow: hidden; border: 1px solid #2C363F;">
+      <div style="background: linear-gradient(180deg, #66F6CF 0%, #42DCA3 100%); padding: 24px 28px; color: #064E3B;">
+        <h1 style="margin: 0; font-size: 24px; font-weight: 900;">TarkApp PRO</h1>
+        <p style="margin: 4px 0 0 0; font-size: 14px; font-weight: 700;">Оплата подтверждена • Счёт № {html.escape(invoice_number)}</p>
+      </div>
+      <div style="padding: 24px 28px;">
+        <p style="font-size: 15px; line-height: 1.5; color: #E2E8F0; margin-top: 0;">
+          Здравствуйте! Банковский перевод по счёту <b>{html.escape(invoice_number)}</b> успешно поступил.
+          Подписка <b>{html.escape(package_name)}</b> активирована на <b>{duration_days} дн.</b>!
+        </p>
+
+        <div style="background-color: #1E252B; border: 2px dashed #5FEDC5; border-radius: 12px; padding: 20px; margin: 24px 0; text-align: center;">
+          <p style="margin: 0 0 8px 0; font-size: 13px; color: #94A3B8; text-transform: uppercase; letter-spacing: 1px;">Ваш резервный ключ восстановления:</p>
+          <p style="margin: 0; font-size: 26px; font-weight: 900; color: #5FEDC5; font-family: monospace; letter-spacing: 2px;">{html.escape(backup_key)}</p>
+        </div>
+
+        <p style="font-size: 13px; color: #94A3B8; line-height: 1.6;">
+          💡 <b>Сохраните этот ключ!</b><br>
+          Если вы смените телефон, переустановите приложение или войдёте с другого устройства — просто введите этот ключ в меню профиля TarkApp, чтобы восстановить полный доступ к вашей подписке.
+        </p>
+
+        <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #2C363F; font-size: 12px; color: #64748B;">
+          Tark Systems OÜ • support@tarkapp.ee • Tallinn, Estonia
+        </div>
+      </div>
+    </div>
+    """
+
+
+def send_payment_confirmation_email_sync(
+    customer_email: str,
+    invoice_number: str,
+    backup_key: str,
+    package_name: str = "TarkApp PRO",
+    duration_days: int = 30,
+) -> bool:
+    """
+    Sends payment confirmation and backup license key to the customer.
+    Supports Resend API and SMTP transports. Safe fallback if transport is unconfigured.
+    """
+    clean_email = (customer_email or "").strip()
+    if not clean_email or "@" not in clean_email or clean_email == "GDPR_ANONYMIZED":
+        return False
+
+    subject = f"TarkApp PRO — Оплата получена! Ваш ключ восстановления: {backup_key}"
+    plain_body = (
+        f"Здравствуйте!\n\n"
+        f"Оплата по счёту {invoice_number} успешно подтверждена. Подписка {package_name} активна на {duration_days} дн.\n\n"
+        f"Ваш резервный ключ восстановления подписки:\n"
+        f"{backup_key}\n\n"
+        f"Сохраните этот ключ. Если вы смените телефон, введите его в приложении TarkApp для восстановления доступа.\n\n"
+        f"Служба поддержки: support@tarkapp.ee\n"
+        f"Tark Systems OÜ, Tallinn, Estonia"
+    )
+    html_body = build_payment_confirmation_html(
+        invoice_number=invoice_number,
+        customer_email=clean_email,
+        package_name=package_name,
+        backup_key=backup_key,
+        duration_days=duration_days,
+    )
+
+    # 1. Try Resend API if configured
+    if _is_configured_value(settings.RESEND_API_KEY):
+        try:
+            api_key = str(settings.RESEND_API_KEY).strip()
+            payload = {
+                "from": settings.RESEND_FROM or "TarkApp <onboarding@resend.dev>",
+                "to": [clean_email],
+                "subject": subject,
+                "html": html_body,
+            }
+            with httpx.Client(timeout=15.0) as client:
+                resp = client.post(
+                    "https://api.resend.com/emails",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                if resp.status_code in (200, 201):
+                    logger.info(f"[PAYMENT_CONFIRM] Sent backup key {backup_key} to {clean_email} via Resend.")
+                    return True
+                logger.error(f"[PAYMENT_CONFIRM] Resend error {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            logger.error(f"[PAYMENT_CONFIRM] Failed to send email via Resend: {e}")
+
+    # 2. Try SMTP if configured
+    if (
+        _is_configured_value(settings.SMTP_HOST)
+        and _is_configured_value(settings.SMTP_USER)
+        and _is_configured_value(settings.SMTP_PASSWORD)
+    ):
+        try:
+            msg = EmailMessage()
+            msg["Subject"] = subject
+            msg["From"] = settings.SMTP_FROM or settings.SMTP_USER
+            msg["To"] = clean_email
+            msg.set_content(plain_body)
+            msg.add_alternative(html_body, subtype="html")
+
+            host = str(settings.SMTP_HOST).strip()
+            port = int(settings.SMTP_PORT or 587)
+            user = str(settings.SMTP_USER).strip()
+            password = str(settings.SMTP_PASSWORD).strip()
+
+            if port == 465:
+                context = ssl.create_default_context()
+                with smtplib.SMTP_SSL(host, port, context=context, timeout=15) as server:
+                    server.login(user, password)
+                    server.send_message(msg)
+            else:
+                with smtplib.SMTP(host, port, timeout=15) as server:
+                    server.ehlo()
+                    if settings.SMTP_USE_TLS:
+                        context = ssl.create_default_context()
+                        server.starttls(context=context)
+                        server.ehlo()
+                    server.login(user, password)
+                    server.send_message(msg)
+            logger.info(f"[PAYMENT_CONFIRM] Sent backup key {backup_key} to {clean_email} via SMTP.")
+            return True
+        except Exception as e:
+            logger.error(f"[PAYMENT_CONFIRM] Failed to send email via SMTP: {e}")
+
+    logger.warning(
+        f"[PAYMENT_CONFIRM] Email transport not configured. Backup key {backup_key} for {clean_email} logged to server."
+    )
+    return False

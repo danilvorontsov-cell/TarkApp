@@ -68,10 +68,27 @@ except Exception:
 
 _TTS_STREAM_CACHE: "OrderedDict[str, bytes]" = OrderedDict()
 MAX_CACHE_ENTRIES = 500
+MAX_RAM_CACHE_BYTES = 50 * 1024 * 1024  # 50 MB hard RAM limit with volume-based LRU eviction
+_TTS_STREAM_CACHE_BYTES: int = 0
+_RAM_CACHE_LOCK = threading.Lock()
 MIN_VALID_AUDIO_BYTES = 800
 MAX_DISK_CACHE_FILES = 1200
 MAX_DISK_CACHE_BYTES = 100 * 1024 * 1024  # 100 MB
 AZURE_SYNTHESIS_TIMEOUT_SEC = 10.0
+
+
+def clear_tts_ram_cache() -> None:
+    """Resets in-memory TTS stream cache and byte counter (used in tests)."""
+    global _TTS_STREAM_CACHE_BYTES
+    with _RAM_CACHE_LOCK:
+        _TTS_STREAM_CACHE.clear()
+        _TTS_STREAM_CACHE_BYTES = 0
+
+
+def get_tts_ram_cache_bytes() -> int:
+    """Returns total byte size of currently cached in-memory audio buffers."""
+    global _TTS_STREAM_CACHE_BYTES
+    return _TTS_STREAM_CACHE_BYTES
 
 # Registry of active in-flight tasks for deduplication of simultaneous requests
 _IN_FLIGHT_TASKS: Dict[str, asyncio.Task[bytes]] = {}
@@ -99,20 +116,37 @@ def is_valid_mp3_buffer(data: Optional[bytes]) -> bool:
 
 
 def _store_in_memory_cache(cache: Dict[str, bytes], key: str, data: bytes) -> None:
-    if isinstance(cache, OrderedDict):
-        if key in cache:
-            cache.move_to_end(key)
+    """
+    Stores an audio buffer in the memory cache with volume-based LRU eviction
+    enforcing MAX_RAM_CACHE_BYTES (50 MB) and MAX_CACHE_ENTRIES (500).
+    """
+    global _TTS_STREAM_CACHE_BYTES
+    data_len = len(data) if data else 0
+    if data_len == 0 or not is_valid_mp3_buffer(data):
+        return
+
+    with _RAM_CACHE_LOCK:
+        if isinstance(cache, OrderedDict):
+            if key in cache:
+                old_len = len(cache[key])
+                _TTS_STREAM_CACHE_BYTES -= old_len
+                cache.move_to_end(key)
+                cache[key] = data
+                _TTS_STREAM_CACHE_BYTES += data_len
+                return
+
+            while cache and ((_TTS_STREAM_CACHE_BYTES + data_len > MAX_RAM_CACHE_BYTES) or (len(cache) >= MAX_CACHE_ENTRIES)):
+                _, evicted = cache.popitem(last=False)
+                _TTS_STREAM_CACHE_BYTES = max(0, _TTS_STREAM_CACHE_BYTES - len(evicted))
+
             cache[key] = data
-            return
-        while len(cache) >= MAX_CACHE_ENTRIES:
-            cache.popitem(last=False)
-        cache[key] = data
-    else:
-        if len(cache) >= MAX_CACHE_ENTRIES:
-            keys_to_remove = list(cache.keys())[: max(1, MAX_CACHE_ENTRIES // 5)]
-            for k in keys_to_remove:
-                cache.pop(k, None)
-        cache[key] = data
+            _TTS_STREAM_CACHE_BYTES += data_len
+        else:
+            if len(cache) >= MAX_CACHE_ENTRIES:
+                keys_to_remove = list(cache.keys())[: max(1, MAX_CACHE_ENTRIES // 5)]
+                for k in keys_to_remove:
+                    cache.pop(k, None)
+            cache[key] = data
 
 
 def _enforce_disk_cache_limits(cache_dir: Path) -> None:
@@ -659,7 +693,7 @@ def _get_speech_config(key: str, region: str) -> Any:
         if _SPEECH_CONFIG_SINGLETON is None or _SPEECH_CONFIG_KEY_REGION != (key, region):
             cfg = speechsdk.SpeechConfig(subscription=key, region=region)
             cfg.set_speech_synthesis_output_format(
-                speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3
+                speechsdk.SpeechSynthesisOutputFormat.Audio24Khz96KBitRateMonoMp3
             )
             _SPEECH_CONFIG_SINGLETON = cfg
             _SPEECH_CONFIG_KEY_REGION = (key, region)
@@ -699,6 +733,11 @@ def _format_accent_diagnostics(text: str) -> dict:
     }
 
 
+# In-memory counter for batching SQLite audit cleanup (runs DELETE once every 100 inserts)
+_TTS_AUDIT_INSERT_COUNT: int = 0
+_TTS_AUDIT_LOCK = threading.Lock()
+
+
 def log_tts_audit(
     raw_incoming_text: str,
     final_ssml: Optional[str] = None,
@@ -715,7 +754,10 @@ def log_tts_audit(
     """
     Персистентно логирует запрос озвучки:
     1. Запись структурированного JSON в logs/tts_audit.log + дубль в sys.stdout.
-    2. Асинхронная вставка в таблицу tts_audit_logs базы данных.
+    2. Асинхронная вставка в таблицу tts_audit_logs базы данных (только реальные синтезы и ошибки,
+       события RAM_HIT и DISK_HIT в SQLite не пишутся для экономии IOPS).
+    3. Маскирует device_id как f"{device_id[:6]}...{device_id[-4:]}".
+    4. Очистка старых записей запускается строго раз в 100 вставок через счётчик в памяти.
     Работает строго в try...finally/except, ни при каких условиях не роняя процесс синтеза.
     """
     try:
@@ -728,10 +770,18 @@ def log_tts_audit(
             or "et-EE" in ssml_str
         )
 
+        masked_device_id = None
+        if device_id:
+            clean_dev = str(device_id).strip()
+            if len(clean_dev) > 10:
+                masked_device_id = f"{clean_dev[:6]}...{clean_dev[-4:]}"
+            else:
+                masked_device_id = clean_dev
+
         audit_record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "request_id": f"tts_{uuid.uuid4().hex[:10]}",
-            "device_id": device_id,
+            "device_id": masked_device_id,
             "user_tier": user_tier,
             "grade": grade,
             "endpoint": endpoint,
@@ -751,13 +801,18 @@ def log_tts_audit(
         json_line = json.dumps(audit_record, ensure_ascii=False)
         tts_audit_logger.info(json_line)
 
-        # 2. Запись в базу данных
+        # 2. Не пишем в SQLite события RAM_HIT и DISK_HIT (пишем только реальные синтезы и ошибки)
+        is_cache_hit = cache_status in ("RAM_HIT", "DISK_HIT") and status != "ERROR"
+        if is_cache_hit:
+            return
+
         def _write_db():
+            global _TTS_AUDIT_INSERT_COUNT
             try:
                 with SessionLocal() as db_sess:
                     db_log = TTSAuditLog(
                         endpoint=endpoint,
-                        device_id=device_id,
+                        device_id=masked_device_id,
                         is_speech_text=is_speech_text,
                         incoming_text=raw_incoming_text,
                         final_ssml=final_ssml,
@@ -771,18 +826,24 @@ def log_tts_audit(
                     db_sess.add(db_log)
                     db_sess.commit()
 
-                    total_count = db_sess.query(TTSAuditLog).count()
-                    if total_count > 1050:
-                        oldest_ids = (
-                            db_sess.query(TTSAuditLog.id)
-                            .order_by(TTSAuditLog.id.asc())
-                            .limit(total_count - 1000)
-                            .all()
-                        )
-                        if oldest_ids:
-                            del_ids = [row[0] for row in oldest_ids]
-                            db_sess.query(TTSAuditLog).filter(TTSAuditLog.id.in_(del_ids)).delete(synchronize_session=False)
-                            db_sess.commit()
+                    # Очистку старых записей (DELETE) запускаем раз в 100 вставок через счётчик в памяти
+                    with _TTS_AUDIT_LOCK:
+                        _TTS_AUDIT_INSERT_COUNT += 1
+                        should_cleanup = (_TTS_AUDIT_INSERT_COUNT % 100 == 0)
+
+                    if should_cleanup:
+                        total_count = db_sess.query(TTSAuditLog).count()
+                        if total_count > 1050:
+                            oldest_ids = (
+                                db_sess.query(TTSAuditLog.id)
+                                .order_by(TTSAuditLog.id.asc())
+                                .limit(total_count - 1000)
+                                .all()
+                            )
+                            if oldest_ids:
+                                del_ids = [row[0] for row in oldest_ids]
+                                db_sess.query(TTSAuditLog).filter(TTSAuditLog.id.in_(del_ids)).delete(synchronize_session=False)
+                                db_sess.commit()
             except Exception as db_err:
                 logger.warning(f"Could not write TTSAuditLog to database: {db_err}")
 
@@ -840,6 +901,50 @@ def _synthesize_azure_ssml(ssml: str) -> bytes:
         raise RuntimeError(f"Azure Speech synthesis failed with reason: {result.reason}")
 
 
+def _decode_audio_sync(raw_audio: bytes, target_sample_rate: int = 24000) -> Optional[np.ndarray]:
+    """
+    Синхронно декодирует аудиобайты (MP3/WAV) в float32 PCM numpy array.
+    При несовпадении частоты дискретизации выполняет ресемплинг через scipy.signal.resample.
+    Вызывается строго через asyncio.to_thread, чтобы не блокировать Event Loop.
+    """
+    if not raw_audio or sf is None or np is None:
+        return None
+    try:
+        data, sr = sf.read(io.BytesIO(raw_audio))
+        if data is None or len(data) == 0:
+            return None
+        if len(data.shape) > 1 and data.shape[1] > 1:
+            data = np.mean(data, axis=1)
+        if sr != target_sample_rate:
+            import scipy.signal
+            num_samples = int(len(data) * target_sample_rate / sr)
+            data = scipy.signal.resample(data, num_samples)
+        return data.astype(np.float32)
+    except Exception as e:
+        logger.error(f"[TTS] _decode_audio_sync error: {e}")
+        return None
+
+
+def _encode_pcm_to_mp3_sync(audio_parts: List[np.ndarray], sample_rate: int = 24000) -> bytes:
+    """
+    Синхронно объединяет список numpy-массивов float32 и кодирует в MP3-буфер.
+    Вызывается строго через asyncio.to_thread, чтобы не блокировать Event Loop.
+    """
+    if not audio_parts or sf is None or np is None:
+        return b""
+    valid_parts = [p for p in audio_parts if p is not None and len(p) > 0]
+    if not valid_parts:
+        return b""
+    try:
+        combined = np.concatenate(valid_parts)
+        bio = io.BytesIO()
+        sf.write(bio, combined, sample_rate, format="MP3")
+        return bio.getvalue()
+    except Exception as e:
+        logger.error(f"[TTS] _encode_pcm_to_mp3_sync error: {e}")
+        return b""
+
+
 async def synthesize_estonian_audio_segment(
     text: str, voice: str = ESTONIAN_VOICE, sample_rate: int = 24000
 ) -> Optional[np.ndarray]:
@@ -873,13 +978,8 @@ async def synthesize_estonian_audio_segment(
                 asyncio.to_thread(_synthesize_azure_ssml, ssml),
                 timeout=AZURE_SYNTHESIS_TIMEOUT_SEC,
             )
-            if raw_audio and sf is not None:
-                data, sr = sf.read(io.BytesIO(raw_audio))
-                if sr != sample_rate:
-                    import scipy.signal
-                    num_samples = int(len(data) * sample_rate / sr)
-                    data = scipy.signal.resample(data, num_samples)
-                return data.astype(np.float32)
+            if raw_audio:
+                return await asyncio.to_thread(_decode_audio_sync, raw_audio, sample_rate)
         except Exception as az_err:
             logger.warning(f"[TTS] Azure synthesis for Estonian failed ({az_err}), falling back to edge-tts.")
 
@@ -893,12 +993,7 @@ async def synthesize_estonian_audio_segment(
                 if chunk["type"] == "audio":
                     raw_data += chunk["data"]
             if raw_data:
-                data, sr = sf.read(io.BytesIO(raw_data))
-                if sr != sample_rate:
-                    import scipy.signal
-                    num_samples = int(len(data) * sample_rate / sr)
-                    data = scipy.signal.resample(data, num_samples)
-                return data.astype(np.float32)
+                return await asyncio.to_thread(_decode_audio_sync, raw_data, sample_rate)
         except Exception as edge_err:
             logger.error(f"[TTS] edge-tts error for Estonian segment {repr(clean_text)}: {edge_err}", exc_info=True)
 
@@ -937,12 +1032,7 @@ def synthesize_russian_audio_segment(
             )
             raw_audio = _synthesize_azure_ssml(ssml)
             if raw_audio:
-                data, sr = sf.read(io.BytesIO(raw_audio))
-                if sr != sample_rate:
-                    import scipy.signal
-                    num_samples = int(len(data) * sample_rate / sr)
-                    data = scipy.signal.resample(data, num_samples)
-                return data.astype(np.float32)
+                return _decode_audio_sync(raw_audio, sample_rate)
         except Exception as az_err:
             logger.error(f"[TTS] Microsoft fallback error for RU: {az_err}")
 
@@ -954,15 +1044,18 @@ async def _synthesize_single_line_stitched(
     voice: str = DEFAULT_VOICE,
     is_speech_text: bool = False,
     sample_rate: int = 24000,
-) -> bytes:
-    """Синтезирует одну строку текста с микропаузами 180 мс между билингвальными сегментами."""
+) -> Optional[np.ndarray]:
+    """
+    Синтезирует одну строку текста с микропаузами 180 мс между билингвальными сегментами.
+    Возвращает сырой np.ndarray (float32) БЕЗ кодирования в MP3, устраняя двойное перекодирование.
+    """
     clean_text = text.strip()
     if not clean_text:
-        return b""
+        return None
 
     segments = parse_bilingual_segments(clean_text, is_speech_text=is_speech_text)
     if not segments:
-        return b""
+        return None
 
     audio_parts: List[np.ndarray] = []
     pause = np.zeros(int(0.18 * sample_rate), dtype=np.float32)
@@ -984,16 +1077,9 @@ async def _synthesize_single_line_stitched(
             audio_parts.append(part)
 
     if not audio_parts:
-        return b""
+        return None
 
-    combined = np.concatenate(audio_parts)
-
-    if sf is not None:
-        bio = io.BytesIO()
-        sf.write(bio, combined, sample_rate, format="MP3")
-        return bio.getvalue()
-
-    return b""
+    return np.concatenate(audio_parts)
 
 
 async def synthesize_bilingual_stitched_audio(
@@ -1005,9 +1091,9 @@ async def synthesize_bilingual_stitched_audio(
     """
     Билингвальная склейка (Bilingual Stitcher):
     1. Если текст состоит из нескольких шагов (разделитель \\n) — синтезирует каждый шаг
-       с паузой ровно 500 мс (тишиной) между шагами.
+       с паузой ровно 700 мс (тишиной) между шагами.
     2. Внутри каждого шага: русские сегменты -> Silero v5, эстонские -> Microsoft TTS (AnuNeural).
-    3. Результат кодируется в валидный MP3-буфер.
+    3. Результат кодируется в валидный MP3-буфер один раз в финале через _encode_pcm_to_mp3_sync в потоке.
     """
     clean_text = text.strip()
     if not clean_text:
@@ -1021,37 +1107,25 @@ async def synthesize_bilingual_stitched_audio(
         re.IGNORECASE
     )
     lines = [l.strip() for l in step_split_pat.split(clean_text) if l and l.strip()]
-    if len(lines) > 1:
-        step_audio_parts: List[np.ndarray] = []
-        step_pause = np.zeros(int(0.7 * sample_rate), dtype=np.float32)  # ровно 700 мс
-
-        for line in lines:
-            line_bytes = await _synthesize_single_line_stitched(
-                line, voice=voice, is_speech_text=is_speech_text, sample_rate=sample_rate
-            )
-            if line_bytes and sf is not None:
-                data, sr = sf.read(io.BytesIO(line_bytes))
-                if sr != sample_rate:
-                    import scipy.signal
-                    num_samples = int(len(data) * sample_rate / sr)
-                    data = scipy.signal.resample(data, num_samples)
-                if step_audio_parts:
-                    step_audio_parts.append(step_pause)
-                step_audio_parts.append(data.astype(np.float32))
-
-        if not step_audio_parts:
-            return b""
-
-        combined = np.concatenate(step_audio_parts)
-        if sf is not None:
-            bio = io.BytesIO()
-            sf.write(bio, combined, sample_rate, format="MP3")
-            return bio.getvalue()
+    if not lines:
         return b""
 
-    return await _synthesize_single_line_stitched(
-        clean_text, voice=voice, is_speech_text=is_speech_text, sample_rate=sample_rate
-    )
+    step_audio_parts: List[np.ndarray] = []
+    step_pause = np.zeros(int(0.7 * sample_rate), dtype=np.float32)  # ровно 700 мс
+
+    for line in lines:
+        line_pcm = await _synthesize_single_line_stitched(
+            line, voice=voice, is_speech_text=is_speech_text, sample_rate=sample_rate
+        )
+        if line_pcm is not None and len(line_pcm) > 0:
+            if step_audio_parts:
+                step_audio_parts.append(step_pause)
+            step_audio_parts.append(line_pcm)
+
+    if not step_audio_parts:
+        return b""
+
+    return await asyncio.to_thread(_encode_pcm_to_mp3_sync, step_audio_parts, sample_rate)
 
 
 async def synthesize_steps_audio(
@@ -1061,6 +1135,7 @@ async def synthesize_steps_audio(
 ) -> bytes:
     """
     Склейка составного аудио для шагов решения (аудиогид) с паузой ровно 700 мс (тишиной) между шагами.
+    Кодирование в MP3 выполняется один раз в финале через _encode_pcm_to_mp3_sync в потоке.
     """
     valid_steps = [s.strip() for s in steps if s and s.strip()]
     if not valid_steps:
@@ -1070,28 +1145,18 @@ async def synthesize_steps_audio(
     step_pause = np.zeros(int(0.7 * sample_rate), dtype=np.float32)  # ровно 700 мс
 
     for step in valid_steps:
-        step_bytes = await _synthesize_single_line_stitched(
+        step_pcm = await _synthesize_single_line_stitched(
             step, voice=voice, is_speech_text=True, sample_rate=sample_rate
         )
-        if step_bytes and sf is not None:
-            data, sr = sf.read(io.BytesIO(step_bytes))
-            if sr != sample_rate:
-                import scipy.signal
-                num_samples = int(len(data) * sample_rate / sr)
-                data = scipy.signal.resample(data, num_samples)
+        if step_pcm is not None and len(step_pcm) > 0:
             if step_audio_parts:
                 step_audio_parts.append(step_pause)
-            step_audio_parts.append(data.astype(np.float32))
+            step_audio_parts.append(step_pcm)
 
     if not step_audio_parts:
         return b""
 
-    combined = np.concatenate(step_audio_parts)
-    if sf is not None:
-        bio = io.BytesIO()
-        sf.write(bio, combined, sample_rate, format="MP3")
-        return bio.getvalue()
-    return b""
+    return await asyncio.to_thread(_encode_pcm_to_mp3_sync, step_audio_parts, sample_rate)
 
 
 async def get_or_synthesize_audio(

@@ -44,21 +44,29 @@ Base = declarative_base()
 def transaction(self: Session):
     """
     Context manager for atomic database operations with immediate commit and rollback.
+    For root transactions, executes 'BEGIN IMMEDIATE' immediately after entering
+    'with self._session.begin():' to prevent SQLITE_BUSY_SNAPSHOT when upgrading locks.
     Usage:
         with db.transaction():
             ...
     """
-    if self.in_transaction():
-        nested = self.begin_nested()
+    sess = getattr(self, "_session", self)
+    if sess.in_transaction():
+        nested = sess.begin_nested()
         try:
-            yield self
+            yield sess
             nested.commit()
         except Exception:
             nested.rollback()
             raise
     else:
-        with self.begin():
-            yield self
+        with sess.begin():
+            if settings.DATABASE_URL.startswith("sqlite"):
+                try:
+                    sess.execute(text("BEGIN IMMEDIATE"))
+                except Exception:
+                    pass
+            yield sess
 
 
 Session.transaction = transaction
@@ -108,6 +116,16 @@ def init_db():
             if "device_id" in col_names:
                 conn.execute(text("UPDATE devices SET max_free_reviews = 20 WHERE max_free_reviews IS NULL"))
                 conn.commit()
+
+            # Ensure invoices table has status column
+            inv_check = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='invoices'")
+            ).fetchone()
+            if inv_check:
+                inv_cols = [r[1] for r in conn.execute(text("PRAGMA table_info(invoices)")).fetchall()]
+                if "status" not in inv_cols:
+                    conn.execute(text("ALTER TABLE invoices ADD COLUMN status VARCHAR DEFAULT 'pending'"))
+                    conn.commit()
 
             # Schema migration and backfill for speech_text in lessons/analyses/history tables
             target_tables = ["lessons", "analyses", "lesson_sessions", "lesson_steps", "history"]

@@ -76,13 +76,13 @@ def sanitize_log_message(msg: str) -> str:
         return f"{prefix}{mask_device_id(dev)}"
 
     sanitized = re.sub(
-        r"(X-Device-ID[\'\":\s=]+)([a-zA-Z0-9_\-]{8,})",
+        r"(X-Device-ID[\'\":\s=]+)([a-zA-Z0-9_\-\.]{8,})",
         replace_device_header,
         sanitized,
         flags=re.IGNORECASE,
     )
     sanitized = re.sub(
-        r"(device_id[\'\":\s=]+[\'\"]?)([a-zA-Z0-9_\-]{8,})([\'\"]?)",
+        r"(device_id[\'\":\s=]+[\'\"]?)([a-zA-Z0-9_\-\.]{8,})([\'\"]?)",
         lambda m: f"{m.group(1)}{mask_device_id(m.group(2))}{m.group(3)}",
         sanitized,
         flags=re.IGNORECASE,

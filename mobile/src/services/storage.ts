@@ -10,7 +10,7 @@ import {
   isDefaultInterestsList,
 } from '../types';
 import { AudioQueueManager } from './audioQueueManager';
-import { clearAuthSession, deleteServerAccountData } from './api';
+import { clearAuthSession, clearAuthToken, deleteServerAccountData } from './api';
 
 const STORAGE_KEYS = {
   PROFILE: '@tarkapp_user_profile',
@@ -432,6 +432,9 @@ export const StorageService = {
       console.warn('[StorageService] Server-side GDPR deletion warning:', err);
     }
 
+    clearAuthToken();
+    clearAuthSession();
+
     memoryStore[STORAGE_KEYS.PROFILE] = JSON.stringify(DEFAULT_PROFILE);
     memoryStore[STORAGE_KEYS.VOCABULARY] = JSON.stringify([]);
     memoryStore[STORAGE_KEYS.HISTORY] = JSON.stringify([]);
@@ -440,7 +443,6 @@ export const StorageService = {
     for (const k of Object.keys(memoryLessonPayloads)) {
       delete memoryLessonPayloads[k];
     }
-    clearAuthSession();
 
     await Promise.allSettled([
       AsyncStorage.removeItem(STORAGE_KEYS.PROFILE),
@@ -491,6 +493,12 @@ export const StorageService = {
     try {
       await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
     } catch {}
+  },
+
+  async clearAuthToken(): Promise<void> {
+    clearAuthToken();
+    clearAuthSession();
+    await this.removeAuthToken();
   },
 
   async getFullLessonCard(card: SavedLessonCard): Promise<SavedLessonCard> {

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import SessionLocal
 from app.logger import error_logger
+from app.middleware.security import mask_device_id
 from app.services.license_service import generate_access_keys, get_keys_stats
 
 logger = logging.getLogger("tarkapp.telegram")
@@ -196,6 +197,59 @@ async def register_telegram_bot_commands() -> bool:
         return False
 
 
+def mask_email(email: Optional[str]) -> str:
+    """
+    Masks customer email for GDPR privacy:
+    ivan.petrov@gmail.com -> iv***@gmail.com
+    danil.zuravov@gmail.com -> da***@gmail.com
+    a@example.com -> a***@example.com
+    """
+    if not email or not isinstance(email, str):
+        return "Не указан"
+    clean = email.strip()
+    if not clean:
+        return "Не указан"
+    if "@" not in clean:
+        return f"{clean[:2]}***" if len(clean) >= 2 else "***"
+    local_part, domain = clean.split("@", 1)
+    if len(local_part) <= 2:
+        masked_local = f"{local_part[:1]}***"
+    else:
+        masked_local = f"{local_part[:2]}***"
+    return f"{masked_local}@{domain}"
+
+
+def build_telegram_invoice_message(
+    invoice_number: str,
+    viitenumber: str,
+    plan_title: str,
+    amount_eur: str,
+    customer_email: str,
+    device_id: str,
+) -> str:
+    """
+    Builds sanitized, PII-masked HTML message for new invoice alerts:
+    Masks customer_email (e.g. iv***@gmail.com) and device_id (e.g. abcd...1234).
+    """
+    clean_inv = html.escape(str(invoice_number or "").strip())
+    clean_viite = html.escape(str(viitenumber or "").strip())
+    clean_plan = html.escape(str(plan_title or "").strip())
+    clean_amount = html.escape(str(amount_eur or "").strip())
+    masked_email = mask_email(customer_email)
+    clean_email = html.escape(masked_email)
+    masked_dev = mask_device_id(device_id) if device_id else ""
+    clean_dev = html.escape(masked_dev or "Unknown")
+
+    return (
+        f"🧾 <b>Новый запрос счёта (Arve)</b>\n\n"
+        f"• <b>Номер инвойса:</b> <code>{clean_inv}</code>\n"
+        f"• <b>Тариф:</b> {clean_plan} ({clean_amount} €)\n"
+        f"• <b>Viitenumber для сверки:</b> <code>{clean_viite}</code>\n"
+        f"• <b>Email плательщика:</b> {clean_email}\n"
+        f"• <b>ID устройства:</b> <code>{clean_dev}</code>"
+    )
+
+
 async def send_telegram_invoice_notification(
     invoice_number: str,
     viitenumber: str,
@@ -211,8 +265,8 @@ async def send_telegram_invoice_notification(
     • Номер инвойса: INV-2026-XXXX
     • Тариф: Учебный год (71.90 €)
     • Viitenumber для сверки: XXXXXXX
-    • Email плательщика: user@example.com
-    • ID устройства: xxxxxxxx
+    • Email плательщика: iv***@gmail.com (masked)
+    • ID устройства: abcd...1234 (masked)
     """
     target_thread = (
         message_thread_id
@@ -220,20 +274,13 @@ async def send_telegram_invoice_notification(
         else (settings.TELEGRAM_TOPIC_INVOICES or settings.TELEGRAM_TOPIC_FEATURES)
     )
 
-    clean_inv = html.escape(str(invoice_number or "").strip())
-    clean_viite = html.escape(str(viitenumber or "").strip())
-    clean_plan = html.escape(str(plan_title or "").strip())
-    clean_amount = html.escape(str(amount_eur or "").strip())
-    clean_email = html.escape(str(customer_email or "").strip()) or "Не указан"
-    clean_dev = html.escape(str(device_id or "").strip()) or "Unknown"
-
-    text = (
-        f"🧾 <b>Новый запрос счёта (Arve)</b>\n\n"
-        f"• <b>Номер инвойса:</b> <code>{clean_inv}</code>\n"
-        f"• <b>Тариф:</b> {clean_plan} ({clean_amount} €)\n"
-        f"• <b>Viitenumber для сверки:</b> <code>{clean_viite}</code>\n"
-        f"• <b>Email плательщика:</b> {clean_email}\n"
-        f"• <b>ID устройства:</b> <code>{clean_dev}</code>"
+    text = build_telegram_invoice_message(
+        invoice_number=invoice_number,
+        viitenumber=viitenumber,
+        plan_title=plan_title,
+        amount_eur=amount_eur,
+        customer_email=customer_email,
+        device_id=device_id,
     )
 
     return await send_telegram_message(

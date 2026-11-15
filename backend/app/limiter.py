@@ -1,5 +1,6 @@
 import functools
 import inspect
+import ipaddress
 import logging
 from typing import Any, Callable, Optional
 from fastapi import Request
@@ -9,25 +10,43 @@ from app.config import settings
 logger = logging.getLogger("tarkapp.limiter")
 
 
+def _is_trusted_proxy(host: str) -> bool:
+    """
+    Checks if a host address belongs to a trusted proxy (loopback 127.0.0.1, ::1 or private RFC1918 subnet).
+    """
+    if not host or not isinstance(host, str):
+        return False
+    h = host.strip()
+    if h in ("127.0.0.1", "::1", "localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(h)
+        return ip.is_loopback or ip.is_private
+    except ValueError:
+        return False
+
+
 def get_remote_address(request: Request) -> str:
     """
-    Извлекает реальный IP-адрес пользователя с учетом доверенных заголовков Nginx:
-    1. Заголовок 'X-Real-IP'
-    2. Первый адрес из списка 'X-Forwarded-For'
-    3. Fallback к прямому request.client.host (или '127.0.0.1')
+    Извлекает реальный IP-адрес пользователя с защитой от спуфинга заголовков:
+    Доверяет заголовкам X-Real-IP и X-Forwarded-For ТОЛЬКО если прямой request.client.host
+    является loopback (127.0.0.1, ::1) или приватной подсетью (ipaddress.ip_address(host).is_private).
+    Иначе возвращает request.client.host (или '127.0.0.1', если client отсутствует).
     """
-    x_real_ip = request.headers.get("x-real-ip")
-    if x_real_ip and x_real_ip.strip():
-        return x_real_ip.strip().split(",")[0].strip()
+    client_host = request.client.host if request.client else None
+    if not client_host:
+        return "127.0.0.1"
 
-    x_forwarded_for = request.headers.get("x-forwarded-for")
-    if x_forwarded_for and x_forwarded_for.strip():
-        return x_forwarded_for.split(",")[0].strip()
+    if _is_trusted_proxy(client_host):
+        x_real_ip = request.headers.get("x-real-ip")
+        if x_real_ip and x_real_ip.strip():
+            return x_real_ip.strip().split(",")[0].strip()
 
-    if request.client and request.client.host:
-        return request.client.host
+        x_forwarded_for = request.headers.get("x-forwarded-for")
+        if x_forwarded_for and x_forwarded_for.strip():
+            return x_forwarded_for.split(",")[0].strip()
 
-    return "127.0.0.1"
+    return client_host
 
 
 def get_device_or_ip(request: Request) -> str:

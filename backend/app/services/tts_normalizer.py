@@ -15,6 +15,7 @@ import json
 import logging
 from pathlib import Path
 import re
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 # 0. КОНФИГУРАЦИОННЫЙ СЛОВАРЬ (tts_lexicon.json)
 # ==============================================================================
 
+_LEXICON_LOCK = threading.Lock()
 _LEXICON_DATA: Optional[Dict[str, Dict[str, str]]] = None
 _COMPILED_ESTONIAN_UNITS: Optional[List[Tuple[re.Pattern, str]]] = None
 _COMPILED_RUSSIAN_HOMOGRAPHS: Optional[List[Tuple[re.Pattern, str]]] = None
@@ -37,58 +39,63 @@ def get_tts_lexicon() -> Dict[str, Dict[str, str]]:
 def _load_tts_lexicon() -> Dict[str, Dict[str, str]]:
     """
     Загружает правила из tts_lexicon.json при старте и кэширует скомпилированные регулярки в памяти.
+    Защищен от гонок при многопоточной инициализации через _LEXICON_LOCK.
     """
     global _LEXICON_DATA, _COMPILED_ESTONIAN_UNITS, _COMPILED_RUSSIAN_HOMOGRAPHS, _COMPILED_BRAND_FALLBACKS
 
     if _LEXICON_DATA is not None:
         return _LEXICON_DATA
 
-    candidate_paths = [
-        Path(__file__).resolve().parent.parent / "config" / "tts_lexicon.json",
-        Path("backend/app/config/tts_lexicon.json"),
-        Path("app/config/tts_lexicon.json"),
-    ]
+    with _LEXICON_LOCK:
+        if _LEXICON_DATA is not None:
+            return _LEXICON_DATA
 
-    loaded_data: Dict[str, Any] = {}
-    for p in candidate_paths:
-        if p.exists() and p.is_file():
+        candidate_paths = [
+            Path(__file__).resolve().parent.parent / "config" / "tts_lexicon.json",
+            Path("backend/app/config/tts_lexicon.json"),
+            Path("app/config/tts_lexicon.json"),
+        ]
+
+        loaded_data: Dict[str, Any] = {}
+        for p in candidate_paths:
+            if p.exists() and p.is_file():
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        loaded_data = json.load(f)
+                    break
+                except Exception as e:
+                    logger.warning(f"Failed to read tts_lexicon.json from {p}: {e}")
+
+        _LEXICON_DATA = loaded_data or {}
+
+        # 1. Estonian Units
+        compiled_est: List[Tuple[re.Pattern, str]] = []
+        for pattern_str, repl in _LEXICON_DATA.get("estonian_units", {}).items():
             try:
-                with open(p, "r", encoding="utf-8") as f:
-                    loaded_data = json.load(f)
-                break
+                compiled_est.append((re.compile(pattern_str, re.IGNORECASE), repl))
             except Exception as e:
-                logger.warning(f"Failed to read tts_lexicon.json from {p}: {e}")
+                logger.warning(f"Failed to compile estonian unit regex '{pattern_str}': {e}")
+        _COMPILED_ESTONIAN_UNITS = compiled_est
 
-    _LEXICON_DATA = loaded_data or {}
+        # 2. Brand Fallbacks
+        compiled_brands: List[Tuple[re.Pattern, str]] = []
+        for pattern_str, repl in _LEXICON_DATA.get("brand_fallbacks", {}).items():
+            try:
+                compiled_brands.append((re.compile(pattern_str), repl))
+            except Exception as e:
+                logger.warning(f"Failed to compile brand fallback regex '{pattern_str}': {e}")
+        _COMPILED_BRAND_FALLBACKS = compiled_brands
 
-    # 1. Estonian Units
-    compiled_est: List[Tuple[re.Pattern, str]] = []
-    for pattern_str, repl in _LEXICON_DATA.get("estonian_units", {}).items():
-        try:
-            compiled_est.append((re.compile(pattern_str, re.IGNORECASE), repl))
-        except Exception as e:
-            logger.warning(f"Failed to compile estonian unit regex '{pattern_str}': {e}")
-    _COMPILED_ESTONIAN_UNITS = compiled_est
+        # 3. Russian Stress Homographs
+        compiled_homo: List[Tuple[re.Pattern, str]] = []
+        for pattern_str, repl in _LEXICON_DATA.get("russian_stress_homographs", {}).items():
+            try:
+                compiled_homo.append((re.compile(pattern_str, re.IGNORECASE), repl))
+            except Exception as e:
+                logger.warning(f"Failed to compile homograph regex '{pattern_str}': {e}")
+        _COMPILED_RUSSIAN_HOMOGRAPHS = compiled_homo
 
-    # 2. Brand Fallbacks
-    compiled_brands: List[Tuple[re.Pattern, str]] = []
-    for pattern_str, repl in _LEXICON_DATA.get("brand_fallbacks", {}).items():
-        try:
-            compiled_brands.append((re.compile(pattern_str), repl))
-        except Exception as e:
-            logger.warning(f"Failed to compile brand fallback regex '{pattern_str}': {e}")
-    _COMPILED_BRAND_FALLBACKS = compiled_brands
-
-    # 3. Russian Stress Homographs
-    compiled_homo: List[Tuple[re.Pattern, str]] = []
-    for pattern_str, repl in _LEXICON_DATA.get("russian_stress_homographs", {}).items():
-        try:
-            compiled_homo.append((re.compile(pattern_str, re.IGNORECASE), repl))
-        except Exception as e:
-            logger.warning(f"Failed to compile homograph regex '{pattern_str}': {e}")
-    _COMPILED_RUSSIAN_HOMOGRAPHS = compiled_homo
-
-    return _LEXICON_DATA
+        return _LEXICON_DATA
 
 
 def apply_phonetic_substitutions(text: str, is_estonian: bool = False) -> str:
@@ -2502,7 +2509,9 @@ def transliterate_latin_word(word: str) -> str:
 def transliterate_isolated_latin_words(text: str) -> str:
     """
     Транслитерирует одиночные латинские слова внутри русского текста,
-    исключая XML/HTML теги (<est>...</est>, <sub...>), эстонские диакритики и научные формулы.
+    исключая XML/HTML теги, парные блоки <est>...</est> / <et>...</et>,
+    эстонские диакритики и научные формулы.
+    Эстонские слова без диакритик внутри <est>...</est> сохраняются без транслитерации в кириллицу.
     """
     if not text:
         return ""
@@ -2513,7 +2522,16 @@ def transliterate_isolated_latin_words(text: str) -> str:
         protected_tokens.append(m.group(0))
         return f"__PROT_TAG_{idx}__"
 
-    t = re.sub(r'<[^>]+>', _mask_tag, text)
+    # 1. Целиком маскируем парные блоки <est>...</est> и <et>...</et> вместе с содержимым
+    t = re.sub(
+        r'<\s*(?:est|et)(?:\s+[^>]*)?>.*?<\s*/\s*(?:est|et)\s*>',
+        _mask_tag,
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    # 2. Маскируем оставшиеся одиночные теги (<sub...>, <speak>, <break> и т.д.)
+    t = re.sub(r'<[^>]+>', _mask_tag, t)
 
     def _repl_word(m: re.Match) -> str:
         token = m.group(0)

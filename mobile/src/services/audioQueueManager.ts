@@ -625,6 +625,30 @@ class AudioQueueManagerClass {
           return false;
         }
 
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.toLowerCase().includes('application/json')) {
+          const data = await response.json().catch(() => null);
+          if (data && data.audio_disabled === true) {
+            item.status = 'READY';
+            item.localUri = '';
+            if (this.currentDownloadingId === item.id) {
+              this.currentDownloadingId = null;
+            }
+            this.notify();
+            const readyCbs = [...item.onReadyCallbacks];
+            item.onReadyCallbacks = [];
+            item.onErrorCallbacks = [];
+            readyCbs.forEach((cb) => {
+              try {
+                cb('');
+              } catch (e) {
+                console.warn('Error in onReadyCallback for audio_disabled:', e);
+              }
+            });
+            return true;
+          }
+        }
+
         const blob = await response.blob();
         const base64Data = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -655,6 +679,34 @@ class AudioQueueManagerClass {
           deviceId ? { headers: { 'X-Device-ID': deviceId } } : undefined
         );
         httpStatus = result.status;
+
+        const contentType = (result.headers?.['content-type'] || result.headers?.['Content-Type'] || '').toLowerCase();
+        if (contentType.includes('application/json')) {
+          try {
+            const rawContent = await FileSystem.readAsStringAsync(targetFile);
+            const data = JSON.parse(rawContent);
+            if (data && data.audio_disabled === true) {
+              await FileSystem.deleteAsync(targetFile, { idempotent: true });
+              item.status = 'READY';
+              item.localUri = '';
+              if (this.currentDownloadingId === item.id) {
+                this.currentDownloadingId = null;
+              }
+              this.notify();
+              const readyCbs = [...item.onReadyCallbacks];
+              item.onReadyCallbacks = [];
+              item.onErrorCallbacks = [];
+              readyCbs.forEach((cb) => {
+                try {
+                  cb('');
+                } catch (e) {
+                  console.warn('Error in onReadyCallback for audio_disabled:', e);
+                }
+              });
+              return true;
+            }
+          } catch {}
+        }
 
         if (result.status !== 200) {
           console.warn(`[AudioQueue] Download GET failed for ${item.id}: HTTP ${result.status}`);
@@ -901,14 +953,23 @@ class AudioQueueManagerClass {
 
     let fallbackTriggered = false;
 
-    // Fast streaming fallback: If disk download hasn't finished in 3.5 seconds, start live stream directly
+    // Fast streaming fallback: If disk download hasn't finished in 8.0 seconds, start live stream directly
     const fallbackTimer = setTimeout(async () => {
+      // Не запускаем дублирующий запрос в playTts, если элемент с этим id уже активно скачивается в downloadItem
+      if (this.currentDownloadingId === id || item?.status === 'LOADING') {
+        console.log(`[AudioQueue] Item ${id} is actively downloading, skipping duplicate streaming request.`);
+        return;
+      }
+
       if (this.pendingUserPlayId === id && (!item?.localUri || item?.status !== 'READY')) {
         fallbackTriggered = true;
-        console.log(`[AudioQueue] Download taking >3.5s for ${id}, switching to direct streaming...`);
+        console.log(`[AudioQueue] Download taking >8s for ${id}, switching to direct streaming...`);
         this.currentlyPlayingId = id;
         this.pendingUserPlayId = null;
         this.notify();
+
+        const effectiveSpeech = (item as any)?.speech_text ?? (item as any)?.speechText ?? speechText;
+        const effectiveIsSpeech = (item as any)?.isSpeechText ?? Boolean(effectiveSpeech && effectiveSpeech.trim());
 
         try {
           await playTts(
@@ -943,8 +1004,8 @@ class AudioQueueManagerClass {
             item?.bilingual ?? bilingual,
             grade,
             tier,
-            speechText,
-            Boolean(speech_text && speech_text.trim())
+            effectiveSpeech,
+            effectiveIsSpeech
           );
         } catch (streamingErr) {
           this.currentlyPlayingId = null;
@@ -952,7 +1013,7 @@ class AudioQueueManagerClass {
           callbacks?.onError?.(streamingErr);
         }
       }
-    }, 3500);
+    }, 8000);
 
     // Register callback for when disk file becomes ready
     item.onReadyCallbacks.push(async (localUri: string) => {
@@ -961,6 +1022,16 @@ class AudioQueueManagerClass {
         return;
       }
       if (this.pendingUserPlayId !== id) {
+        return;
+      }
+      if (!localUri) {
+        // Audio disabled for this grade/tier
+        this.currentlyPlayingId = null;
+        this.pendingUserPlayId = null;
+        this.notify();
+        try {
+          callbacks?.onFinish?.();
+        } catch {}
         return;
       }
       this.currentlyPlayingId = id;
@@ -1014,6 +1085,9 @@ class AudioQueueManagerClass {
         this.pendingUserPlayId = null;
         this.notify();
 
+        const effectiveSpeech = (item as any)?.speech_text ?? (item as any)?.speechText ?? speechText;
+        const effectiveIsSpeech = (item as any)?.isSpeechText ?? Boolean(effectiveSpeech && effectiveSpeech.trim());
+
         try {
           await playTts(
             cleanText,
@@ -1046,7 +1120,9 @@ class AudioQueueManagerClass {
             baseUrl,
             item?.bilingual ?? bilingual,
             grade,
-            tier
+            tier,
+            effectiveSpeech,
+            effectiveIsSpeech
           );
         } catch (streamingErr) {
           this.currentlyPlayingId = null;

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.auth import (
     CurrentUser,
     get_current_user,
+    require_valid_bearer_token,
     sign_auth_token,
     sign_invoice_download_token,
     verify_invoice_download_token,
@@ -53,6 +54,20 @@ router = APIRouter(prefix="/api/v1/license", tags=["License"])
 PRIVATE_INVOICES_DIR = Path("data") / "private_invoices"
 INVOICE_NUMBER_RE = re.compile(r"^INV-\d{4}-\d{4,8}$")
 DEV_FALLBACK_DEVICE_ID = "dev-test-device-0001"
+
+
+def mask_activated_key(key: Optional[str]) -> Optional[str]:
+    """
+    Masks activated license key as TARK-****-XXXX (preserving only last 4 characters).
+    Prevents leakage of full activation keys via device_id inspection.
+    """
+    if not key or not isinstance(key, str):
+        return None
+    clean = key.strip()
+    if not clean:
+        return None
+    last4 = clean[-4:].upper()
+    return f"TARK-****-{last4}"
 
 
 async def verify_device_access(
@@ -125,8 +140,11 @@ def get_license_status(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"error": "DEVICE_ID_REQUIRED", "message": "Заголовок X-Device-ID обязателен"},
             )
-    status_data = license_service.check_device_access(device_id, db)
+    client_ip = get_remote_address(request)
+    status_data = license_service.check_device_access(device_id, db, client_ip=client_ip)
     has_key = bool(status_data.get("has_key", False))
+    raw_key = status_data.get("activated_key") if has_key else None
+    masked_key = mask_activated_key(raw_key) if has_key and raw_key else None
     signed_token = sign_auth_token(status_data["device_id"], (nickname or "Ученик")[:50])
     return LicenseStatusResponse(
         is_active=status_data["allowed"],
@@ -136,7 +154,7 @@ def get_license_status(
         days_left=status_data["days_left"],
         expires_at=status_data["expires_at"],
         device_id=status_data["device_id"],
-        activated_key=status_data["activated_key"] if has_key else None,
+        activated_key=masked_key,
         package_name=status_data.get("package_name") if has_key else None,
         auth_token=signed_token,
     )
@@ -164,7 +182,8 @@ def issue_auth_token(
                 detail={"error": "DEVICE_ID_REQUIRED", "message": "Заголовок X-Device-ID обязателен"},
             )
     valid_device_id = license_service.validate_device_id(device_id)
-    license_service.check_device_access(valid_device_id, db)
+    client_ip = get_remote_address(request)
+    license_service.check_device_access(valid_device_id, db, client_ip=client_ip)
     clean_nick = ((payload.nickname or "").strip() or "Ученик")[:50]
     token = sign_auth_token(valid_device_id, clean_nick)
     return AuthTokenResponse(auth_token=token, user_id=valid_device_id, nickname=clean_nick)
@@ -178,7 +197,7 @@ def issue_auth_token(
 def delete_device_account_data(
     request: Request,
     x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_valid_bearer_token),
     db: Session = Depends(get_db),
 ):
     device_id = license_service.validate_device_id(x_device_id)
@@ -597,6 +616,7 @@ def confirm_invoice(
             days_left=res["days_left"],
             expires_at=res["expires_at"],
             package_name=res.get("package_name"),
+            backup_key=res.get("backup_key"),
         )
     except ValueError as val_err:
         raise HTTPException(

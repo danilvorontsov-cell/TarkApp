@@ -3,7 +3,7 @@ import hmac
 import logging
 import urllib.parse
 from typing import Optional
-from fastapi import Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from pydantic import BaseModel
 
 from app.config import settings
@@ -73,22 +73,12 @@ def get_current_user(
 ) -> CurrentUser:
     """
     FastAPI AuthGuard Dependency.
-    Enforces that incoming requests to analysis/lesson endpoints carry a valid
-    HMAC-SHA256 signed authentication token.
-    Falls back gracefully to valid X-Device-ID or legacy deviceId:nickname tokens for native mobile clients.
-    Raises HTTP 401 Unauthorized only on missing, guest, or unauthenticated requests without valid device context.
+    Enforces that incoming requests carry a valid HMAC-SHA256 signed authentication token.
+    If the client explicitly provided an Authorization header, its HMAC signature must be valid;
+    an invalid or expired signature immediately raises HTTP 401 Unauthorized without falling back to X-Device-ID.
+    Gracefully falls back to valid X-Device-ID ONLY when Authorization is completely omitted.
     """
     clean_dev = x_device_id.strip() if isinstance(x_device_id, str) else ""
-    raw_token = None
-    if isinstance(authorization, str) and authorization.strip():
-        parts = authorization.strip().split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            raw_token = parts[1].strip()
-        elif len(parts) == 1 and parts[0].lower() != "bearer":
-            raw_token = parts[0].strip()
-
-    if not raw_token and isinstance(x_auth_token, str) and x_auth_token.strip():
-        raw_token = x_auth_token.strip()
 
     # Helper: auto-authenticate by device ID
     def _auth_by_device(uid: str, nick: str = "Ученик") -> CurrentUser:
@@ -97,53 +87,88 @@ def get_current_user(
         signed = sign_auth_token(clean_uid, clean_nick)
         return CurrentUser(user_id=clean_uid, nickname=clean_nick, token=signed)
 
-    # 1. Missing or guest token -> fallback to device ID
-    if not raw_token or raw_token.lower() in ("null", "undefined", "anonymous", "guest", "none", ""):
-        if clean_dev and clean_dev.lower() not in ("null", "undefined", "anonymous", "guest", "none", ""):
-            logger.info(f"[AUTH] Auto-authenticating native client via X-Device-ID ({clean_dev[:8]}...)")
-            return _auth_by_device(clean_dev)
-        logger.warning("[AUTH] Blocked unauthenticated scan attempt - missing or guest token.")
-        _raise_unauthorized()
-
-    # 2. Check for signed HMAC token: <payload>.<64-hex-sig>
-    payload_part, sep, provided_sig = raw_token.rpartition(".")
-    if sep and payload_part and len(provided_sig) == 64:
+    # Helper: validate signed HMAC token: <payload>.<64-hex-sig>
+    def _validate_hmac_token(token: str) -> Optional[CurrentUser]:
+        payload_part, sep, provided_sig = token.rpartition(".")
+        if not (sep and payload_part and len(provided_sig) == 64):
+            return None
         expected_sig = hmac.new(
             _get_hmac_secret(),
             payload_part.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
-
-        if hmac.compare_digest(provided_sig.lower(), expected_sig.lower()):
-            user_id = payload_part
-            nickname = "Ученик"
-            if ":" in payload_part:
-                uid_part, raw_nick = payload_part.split(":", 1)
-                user_id = uid_part.strip()
-                if raw_nick:
-                    try:
-                        nickname = urllib.parse.unquote(raw_nick) or "Ученик"
-                    except Exception:
-                        nickname = raw_nick
-
-            if user_id and user_id.lower() not in ("null", "undefined", "anonymous", "guest", "none"):
-                nickname = (nickname.strip() or "Ученик")[:MAX_NICKNAME_LEN]
-                return CurrentUser(user_id=user_id, nickname=nickname, token=raw_token)
-
-    # 3. Graceful fallback for legacy native tokens or re-signed server secrets
-    # ONLY IF client provides verified X-Device-ID header
-    if clean_dev and clean_dev.lower() not in ("null", "undefined", "anonymous", "guest", "none", ""):
-        fallback_nick = "Ученик"
-        legacy_candidate = payload_part if sep else raw_token
-        if ":" in legacy_candidate:
-            _, raw_nick = legacy_candidate.split(":", 1)
+        if not hmac.compare_digest(provided_sig.lower(), expected_sig.lower()):
+            return None
+        user_id = payload_part
+        nickname = "Ученик"
+        if ":" in payload_part:
+            uid_part, raw_nick = payload_part.split(":", 1)
+            user_id = uid_part.strip()
             if raw_nick:
                 try:
-                    fallback_nick = urllib.parse.unquote(raw_nick) or "Ученик"
+                    nickname = urllib.parse.unquote(raw_nick) or "Ученик"
                 except Exception:
-                    fallback_nick = raw_nick
-        logger.info(f"[AUTH] Accepted native mobile client device {clean_dev[:8]}... (upgrading to signed session)")
-        return _auth_by_device(clean_dev, fallback_nick)
+                    nickname = raw_nick
+        if not user_id or user_id.lower() in ("null", "undefined", "anonymous", "guest", "none"):
+            return None
+        nickname = (nickname.strip() or "Ученик")[:MAX_NICKNAME_LEN]
+        return CurrentUser(user_id=user_id, nickname=nickname, token=token)
 
-    logger.warning("[AUTH] Blocked unsigned or malformed auth token without valid device context.")
+    # 1. If client sent an Authorization header, it MUST be valid HMAC signed token.
+    # NO fallback to X-Device-ID is allowed if Authorization was provided.
+    has_auth_header = isinstance(authorization, str) and bool(authorization.strip())
+    if has_auth_header:
+        parts = authorization.strip().split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            raw_token = parts[1].strip()
+        elif len(parts) == 1 and parts[0].lower() != "bearer":
+            raw_token = parts[0].strip()
+        else:
+            logger.warning("[AUTH] Malformed Authorization header format.")
+            _raise_unauthorized()
+
+        if not raw_token or raw_token.lower() in ("null", "undefined", "anonymous", "guest", "none", ""):
+            logger.warning("[AUTH] Blocked unauthenticated attempt - empty/guest token in Authorization header.")
+            _raise_unauthorized()
+
+        user = _validate_hmac_token(raw_token)
+        if user is None:
+            logger.warning("[AUTH] Blocked invalid/expired HMAC signature in Authorization header (no device ID fallback).")
+            _raise_unauthorized()
+        return user
+
+    # 2. Check X-Auth-Token if provided
+    if isinstance(x_auth_token, str) and x_auth_token.strip():
+        raw_token = x_auth_token.strip()
+        user = _validate_hmac_token(raw_token)
+        if user is not None:
+            return user
+        logger.warning("[AUTH] Invalid X-Auth-Token provided.")
+        _raise_unauthorized()
+
+    # 3. Graceful fallback for native mobile clients sending only X-Device-ID (without Authorization header)
+    if clean_dev and clean_dev.lower() not in ("null", "undefined", "anonymous", "guest", "none", ""):
+        logger.info(f"[AUTH] Auto-authenticating native client via X-Device-ID ({clean_dev[:8]}...)")
+        return _auth_by_device(clean_dev)
+
+    logger.warning("[AUTH] Blocked unauthenticated request - missing both auth token and device context.")
     _raise_unauthorized()
+
+
+def require_valid_bearer_token(
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """
+    Strict AuthGuard for sensitive endpoints (e.g. DELETE /api/v1/license/device).
+    Requires a valid Bearer token in the Authorization header.
+    Rejects requests without Bearer token even if X-Device-ID is present.
+    """
+    if not authorization or not authorization.strip():
+        logger.warning("[AUTH] Missing Authorization Bearer header for protected endpoint.")
+        _raise_unauthorized()
+    parts = authorization.strip().split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        logger.warning("[AUTH] Authorization header is not a Bearer token.")
+        _raise_unauthorized()
+    return current_user

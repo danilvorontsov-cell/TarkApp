@@ -169,10 +169,13 @@ export const PhraseBuilder: React.FC<PhraseBuilderProps> = ({
           if (!p) return;
           const match = p.match(/^\[(.*?)\]$/);
           if (match) {
-            const expectedWord = match[1].trim();
+            const expected = match[1]
+              .replace(/\s*\([^)]*[а-яА-ЯёЁ][^)]*\)/g, '')
+              .trim();
+            if (!expected) return;
             const slotId = globalSlotCounter++;
-            slotsList.push({ slotId, expectedWord });
-            tokens.push({ type: 'slot', slotId, expectedWord });
+            slotsList.push({ slotId, expectedWord: expected });
+            tokens.push({ type: 'slot', slotId, expectedWord: expected });
           } else {
             tokens.push({ type: 'text', text: p });
           }

@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     APP_NAME: str = "TarkApp Backend"
-    APP_VERSION: str = "1.3.2"
+    APP_VERSION: str = "1.4.3"
     APP_ENV: str = "development"
     PORT: int = 8000
     HOST: str = "0.0.0.0"
@@ -100,6 +100,17 @@ class Settings(BaseSettings):
             self.GEMINI_MODEL = self.GEMINI_MODEL_NAME
         else:
             self.GEMINI_MODEL_NAME = self.GEMINI_MODEL
+        return self
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "Settings":
+        if (self.APP_ENV or "").strip().lower() == "production":
+            if (self.SECRET_KEY or "").strip() == "tarkapp-dev-hmac-secret-change-in-production":
+                raise RuntimeError(
+                    "CRITICAL SECURITY CONFIGURATION ERROR: "
+                    "Running in production with default development SECRET_KEY is strictly forbidden! "
+                    "Set a secure random SECRET_KEY in your production environment (.env)."
+                )
         return self
 
     @field_validator("CORS_ORIGINS", mode="before")

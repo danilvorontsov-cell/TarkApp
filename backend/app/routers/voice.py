@@ -2,7 +2,7 @@ import hashlib
 import inspect
 import logging
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Dict, Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -78,7 +78,7 @@ async def _call_synthesize_safely(
     )
 
 
-async def verify_voice_device_access(
+def verify_voice_device_access(
     device_id: Optional[str] = Query(default=None, description="ID устройства (для нативного аудио-стриминга)"),
     x_device_id: Optional[str] = Header(default=None, alias="X-Device-ID"),
     db: Session = Depends(get_db),
@@ -86,6 +86,7 @@ async def verify_voice_device_access(
     """
     Проверяет валидность устройства (через query-параметр device_id или заголовок X-Device-ID)
     и наличие активного триала / подписки в БД перед запуском платного синтеза Azure Neural TTS.
+    Синхронная функция: выполняется FastAPI в пуле потоков (Worker ThreadPool), не блокируя Event Loop.
     """
     resolved_id = (device_id or x_device_id or "").strip()
     if not resolved_id:
@@ -120,6 +121,47 @@ async def verify_voice_device_access(
             },
         )
     return check_res
+
+
+def check_tts_tier_policy(
+    clean_text: str,
+    lang: str,
+    bilingual: bool = False,
+    grade: Optional[int] = None,
+    tier: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Проверяет политику озвучки для возрастных звеньев (HIGH, GYMNASIUM / 7–12 классы):
+    - Чистый эстонский язык (lang='et', not bilingual) разрешён до 600 символов включительно.
+    - Чистый эстонский язык свыше 600 символов отключается.
+    - Русская озвучка (lang='ru') и билингвальный режим отключены для 7–12 классов.
+    Возвращает dict с {"audio_disabled": True, ...}, если озвучка заблокирована, или None, если разрешена.
+    """
+    resolved_tier = None
+    if tier:
+        try:
+            resolved_tier = AgeTier(tier.lower())
+        except ValueError:
+            pass
+    if not resolved_tier and grade:
+        resolved_tier = AgeTier.from_grade(grade)
+
+    if resolved_tier and not is_full_audio_enabled(resolved_tier):
+        is_pure_estonian = (lang.lower() == "et" and not bilingual and lang.lower() != "bilingual")
+        should_disable = False
+        if is_pure_estonian:
+            if len(clean_text) > 600:
+                should_disable = True
+        else:
+            should_disable = True
+
+        if should_disable:
+            return {
+                "audio_disabled": True,
+                "detail": "Озвучка русской и билингвальной речи отключена для 7–12 классов.",
+            }
+    return None
+
 
 
 @router.get(
@@ -178,23 +220,26 @@ async def text_to_speech(
     )
 
     # Проверка политики озвучки для старших звеньев (7-12 классы)
-    resolved_tier = tier or (AgeTier.from_grade(grade) if grade else None)
-    if resolved_tier and not is_full_audio_enabled(resolved_tier):
-        if lang.lower() == "ru" or bilingual or len(clean_text) > 80:
-            logger.info(
-                f"TTS disabled by tier policy for tier={resolved_tier}, grade={grade}. Returning audio_disabled: true."
-            )
-            return JSONResponse(
-                content={
-                    "audio_disabled": True,
-                    "detail": "Озвучка длинных блоков отключена для 7–12 классов.",
-                },
-                status_code=status.HTTP_200_OK,
-            )
+    policy_check = check_tts_tier_policy(
+        clean_text=clean_text,
+        lang=lang,
+        bilingual=bilingual,
+        grade=grade,
+        tier=tier,
+    )
+    if policy_check:
+        logger.info(
+            f"TTS disabled by tier policy for tier={tier}, grade={grade}. Returning audio_disabled: true."
+        )
+        return JSONResponse(
+            content=policy_check,
+            status_code=status.HTTP_200_OK,
+        )
 
     is_bilingual = bilingual or lang.lower() == "bilingual"
     voice = "bilingual" if is_bilingual else VOICE_MAP.get(lang.lower(), DEFAULT_VOICE)
-    tier_str = resolved_tier.value if resolved_tier else None
+    resolved_tier = tier or (AgeTier.from_grade(grade) if grade else None)
+    tier_str = resolved_tier.value if isinstance(resolved_tier, AgeTier) else (str(resolved_tier) if resolved_tier else None)
     dev_id = request.query_params.get("device_id") or request.headers.get("x-device-id")
 
     try:
@@ -216,14 +261,6 @@ async def text_to_speech(
                 detail="Не удалось синтезировать аудиопоток.",
             )
 
-        audio_hash = hashlib.sha256(f"{voice}:{clean_text.lower()}".encode("utf-8")).hexdigest()
-        file_path = AUDIO_STATIC_DIR / f"{audio_hash}.mp3"
-        try:
-            if not file_path.exists() or file_path.stat().st_size != len(audio_bytes):
-                file_path.write_bytes(audio_bytes)
-        except Exception as write_err:
-            logger.warning(f"Could not write static audio file: {write_err}")
-
         return Response(
             content=audio_bytes,
             media_type="audio/mpeg",
@@ -232,7 +269,6 @@ async def text_to_speech(
                 "Content-Length": str(len(audio_bytes)),
                 "Content-Disposition": 'inline; filename="tts.mp3"',
                 "Cache-Control": "public, max-age=604800, immutable",
-                "X-Static-Audio-URL": f"/static/audio/{audio_hash}.mp3",
             },
         )
     except HTTPException:
@@ -293,32 +329,27 @@ async def text_to_speech_post(
         f"lang={payload.lang}, bilingual={payload.bilingual}, grade={payload.grade}, tier={payload.tier}, is_speech_text={payload.is_speech_text}"
     )
 
-    resolved_tier = None
-    if payload.tier:
-        try:
-            resolved_tier = AgeTier(payload.tier.lower())
-        except ValueError:
-            pass
-    if not resolved_tier and payload.grade:
-        resolved_tier = AgeTier.from_grade(payload.grade)
-
     # Проверка политики озвучки для старших звеньев (7-12 классы)
-    if resolved_tier and not is_full_audio_enabled(resolved_tier):
-        if payload.lang.lower() == "ru" or payload.bilingual or len(clean_text) > 80:
-            logger.info(
-                f"TTS disabled by tier policy for tier={resolved_tier}, grade={payload.grade}. Returning audio_disabled: true."
-            )
-            return JSONResponse(
-                content={
-                    "audio_disabled": True,
-                    "detail": "Озвучка длинных блоков отключена для 7–12 классов.",
-                },
-                status_code=status.HTTP_200_OK,
-            )
+    policy_check = check_tts_tier_policy(
+        clean_text=clean_text,
+        lang=payload.lang,
+        bilingual=payload.bilingual,
+        grade=payload.grade,
+        tier=payload.tier,
+    )
+    if policy_check:
+        logger.info(
+            f"TTS disabled by tier policy for tier={payload.tier}, grade={payload.grade}. Returning audio_disabled: true."
+        )
+        return JSONResponse(
+            content=policy_check,
+            status_code=status.HTTP_200_OK,
+        )
 
     is_bilingual = payload.bilingual or payload.lang.lower() == "bilingual"
     voice = "bilingual" if is_bilingual else VOICE_MAP.get(payload.lang.lower(), DEFAULT_VOICE)
-    tier_str = resolved_tier.value if resolved_tier else payload.tier
+    resolved_tier = payload.tier or (AgeTier.from_grade(payload.grade).value if payload.grade else None)
+    tier_str = resolved_tier.value if isinstance(resolved_tier, AgeTier) else (str(resolved_tier) if resolved_tier else payload.tier)
     dev_id = getattr(payload, "device_id", None) or request.headers.get("x-device-id")
 
     try:
@@ -340,14 +371,6 @@ async def text_to_speech_post(
                 detail="Не удалось синтезировать аудиопоток.",
             )
 
-        audio_hash = hashlib.sha256(f"{voice}:{clean_text.lower()}".encode("utf-8")).hexdigest()
-        file_path = AUDIO_STATIC_DIR / f"{audio_hash}.mp3"
-        try:
-            if not file_path.exists() or file_path.stat().st_size != len(audio_bytes):
-                file_path.write_bytes(audio_bytes)
-        except Exception as write_err:
-            logger.warning(f"Could not write static audio file: {write_err}")
-
         return Response(
             content=audio_bytes,
             media_type="audio/mpeg",
@@ -356,7 +379,6 @@ async def text_to_speech_post(
                 "Content-Length": str(len(audio_bytes)),
                 "Content-Disposition": 'inline; filename="tts.mp3"',
                 "Cache-Control": "public, max-age=604800, immutable",
-                "X-Static-Audio-URL": f"/static/audio/{audio_hash}.mp3",
             },
         )
     except HTTPException:
@@ -420,14 +442,6 @@ async def speak_word(
                 detail="Не удалось озвучить слово.",
             )
 
-        audio_hash = hashlib.sha256(f"{voice}:{is_speech_text}:{clean_text.lower()}".encode("utf-8")).hexdigest()
-        file_path = AUDIO_STATIC_DIR / f"{audio_hash}.mp3"
-        try:
-            if not file_path.exists() or file_path.stat().st_size != len(audio_bytes):
-                file_path.write_bytes(audio_bytes)
-        except Exception as write_err:
-            logger.warning(f"Could not write static audio file: {write_err}")
-
         return Response(
             content=audio_bytes,
             media_type="audio/mpeg",
@@ -436,7 +450,6 @@ async def speak_word(
                 "Content-Length": str(len(audio_bytes)),
                 "Content-Disposition": 'inline; filename="speak.mp3"',
                 "Cache-Control": "public, max-age=604800, immutable",
-                "X-Static-Audio-URL": f"/static/audio/{audio_hash}.mp3",
             },
         )
     except HTTPException:

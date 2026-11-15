@@ -373,6 +373,120 @@ class LessonSpeechLayer(BaseModel):
     worked_example: Optional[str] = Field(default=None, description="Фонетически подготовленный текст примера решения")
 
 
+def normalize_est_tags(text: Optional[str]) -> str:
+    """
+    Нормализует эстонские теги разметки:
+    - Заменяет теги <et> / </et> на <est> / </est>.
+    - Автоматически закрывает незакрытый <est> в конце строки.
+    - Удаляет висящий закрывающий тег </est> без открывающего тега.
+    """
+    if text is None:
+        return ""
+    s = str(text)
+    if not s:
+        return ""
+
+    # 1. Заменяем теги <et> / </et> на <est> / </est>
+    s = re.sub(r'<\s*et(?:\s+[^>]*)?>', '<est>', s, flags=re.IGNORECASE)
+    s = re.sub(r'<\s*/\s*et\s*>', '</est>', s, flags=re.IGNORECASE)
+
+    # 2. Построчная обработка: закрытие незакрытого <est> в конце строки и удаление висящего </est>
+    lines = s.split('\n')
+    tag_pat = re.compile(r'(<\s*est(?:\s+[^>]*)?>|<\s*/\s*est\s*>)', re.IGNORECASE)
+    cleaned_lines = []
+
+    for line in lines:
+        parts = tag_pat.split(line)
+        res = []
+        is_open = False
+        for part in parts:
+            if tag_pat.fullmatch(part):
+                is_closing = bool(re.match(r'<\s*/', part))
+                if is_closing:
+                    if is_open:
+                        res.append('</est>')
+                        is_open = False
+                    # иначе висящий </est> пропускаем (удаляем)
+                else:
+                    if is_open:
+                        # Если уже открыт <est>, закрываем его перед открытием следующего
+                        res.append('</est>')
+                    res.append('<est>')
+                    is_open = True
+            else:
+                res.append(part)
+
+        if is_open:
+            # Автоматически закрываем незакрытый <est> в конце строки
+            res.append('</est>')
+
+        cleaned_lines.append("".join(res))
+
+    return '\n'.join(cleaned_lines)
+
+
+def _enforce_est_tags(text: Optional[str]) -> str:
+    """
+    Обеспечивает валидность тегов <est> и нормализует математические знаки и числа внутри тегов.
+    Сначала запускает normalize_est_tags для исправления <et>, незакрытых или висящих тегов.
+    """
+    normalized = normalize_est_tags(text)
+    if not normalized or "<est" not in normalized.lower():
+        return normalized
+
+    try:
+        from app.services.tts_normalizer import normalize_text_for_estonian_tts
+
+        def _repl_tag(m: re.Match) -> str:
+            inner = m.group(1).strip()
+            if re.search(r'[\d+\-*\/=·×]', inner):
+                norm = normalize_text_for_estonian_tts(
+                    inner, verbalize_math_signs=True, verbalize_numbers=True
+                )
+                return f"<est>{norm}</est>"
+            return m.group(0)
+
+        return re.sub(
+            r'<\s*est(?:\s+[^>]*)?>(.*?)<\s*/\s*est\s*>',
+            _repl_tag,
+            normalized,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    except Exception:
+        return normalized
+
+
+def sanitize_answer_template(template: Optional[str]) -> str:
+    """
+    Санитайзер для поля answer_template:
+    - Вырезает русские пояснения в круглых скобках внутри квадратных слотов (например, [liidetav (слагаемое)] -> [liidetav]).
+    - Удаляет пустые скобки [] и [ ].
+    - Очищает лишние пробелы.
+    """
+    if not template:
+        return ""
+    text = strip_combining_accents(str(template))
+
+    # 1. Внутри квадратных слотов [slot] вырезаем круглые скобки с русскими пояснениями
+    def _clean_slot(m: re.Match) -> str:
+        inner = m.group(1)
+        # Вырезаем любые скобки (пояснения) с русскими буквами внутри слота
+        cleaned_inner = re.sub(r'\s*\([^)]*[а-яА-ЯёЁ][^)]*\)\s*', ' ', inner).strip()
+        if not cleaned_inner:
+            return ""
+        return f"[{cleaned_inner}]"
+
+    text = re.sub(r'\[([^\]]*)\]', _clean_slot, text)
+
+    # 2. Удаляем пустые квадратные скобки []
+    text = re.sub(r'\[\s*\]', '', text)
+
+    # 3. Нормализуем пробелы
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+    text = re.sub(r'\s+([.,!?;:])', r'\1', text)
+    return text.strip()
+
+
 class GeminiPageAnalysisSchema(BaseModel):
     """
     Выходная JSON-схема для Gemini Structured Outputs (Display-слой и Speech-слой).
@@ -439,15 +553,22 @@ class GeminiPageAnalysisSchema(BaseModel):
         description="Флаг пригодности снимка: False, если фото не читаемое/размытое и выдан обучающий fallback"
     )
 
+    @field_validator("answer_template", mode="before")
+    @classmethod
+    def sanitize_schema_answer_template(cls, v: Any) -> str:
+        return sanitize_answer_template(v)
+
     @field_validator("task_title", "theme_explanation", "how_to_answer", "voice_prompt_script", mode="before")
     @classmethod
     def sanitize_schema_visual_strings(cls, v: Any) -> str:
-        return strip_combining_accents(str(v or ""))
+        return _enforce_est_tags(strip_combining_accents(str(v or "")))
 
     @field_validator("alternative_explanation", mode="before")
     @classmethod
     def sanitize_schema_alt_visual(cls, v: Any) -> Optional[str]:
-        return strip_combining_accents(v)
+        if v is None:
+            return None
+        return _enforce_est_tags(strip_combining_accents(v))
 
 
 def reconcile_worked_example_speech(ex_speech: str, raw_steps: List[str]) -> str:
@@ -536,6 +657,9 @@ class PageAnalysisResponse(GeminiPageAnalysisSchema):
     @classmethod
     def clean_page_analysis_steps(cls, data):
         if isinstance(data, dict):
+            if "answer_template" in data and data["answer_template"]:
+                data["answer_template"] = sanitize_answer_template(data["answer_template"])
+
             for key in ("steps", "guided_steps", "actions"):
                 if key in data and isinstance(data[key], list):
                     data[key] = [strip_combining_accents(str(s).strip()) for s in data[key] if s and str(s).strip()]
@@ -637,24 +761,11 @@ class PageAnalysisResponse(GeminiPageAnalysisSchema):
                 )
                 ex_speech = step_boundary.sub("\n", ex_speech)
 
-            def _normalize_speech_est_tags(s: Optional[str]) -> Optional[str]:
-                if not s or "<est" not in s.lower():
-                    return s
-                def _repl_tag(m: re.Match) -> str:
-                    inner = m.group(1).strip()
-                    if re.search(r'[\d+\-*\/=·×]', inner):
-                        norm = normalize_text_for_estonian_tts(
-                            inner, verbalize_math_signs=True, verbalize_numbers=True
-                        )
-                        return f"<est>{norm}</est>"
-                    return m.group(0)
-                return re.sub(r'<\s*est(?:\s+[^>]*)?>(.*?)<\s*/\s*est\s*>', _repl_tag, s, flags=re.IGNORECASE | re.DOTALL)
-
-            v_speech = _normalize_speech_est_tags(v_speech)
-            th_speech = _normalize_speech_est_tags(th_speech)
-            alt_speech = _normalize_speech_est_tags(alt_speech)
-            how_speech = _normalize_speech_est_tags(how_speech)
-            ex_speech = _normalize_speech_est_tags(ex_speech)
+            v_speech = _enforce_est_tags(v_speech)
+            th_speech = _enforce_est_tags(th_speech)
+            alt_speech = _enforce_est_tags(alt_speech) if alt_speech else None
+            how_speech = _enforce_est_tags(how_speech)
+            ex_speech = _enforce_est_tags(ex_speech)
 
             self.voice_prompt_script_speech = v_speech
             self.theme_explanation_speech = th_speech

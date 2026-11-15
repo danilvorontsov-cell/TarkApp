@@ -286,6 +286,11 @@ export function clearAuthSession(): void {
   cachedAuthToken = null;
 }
 
+export function clearAuthToken(): void {
+  setAuthToken(null);
+  clearAuthSession();
+}
+
 export function buildAuthToken(deviceId: string, nickname: string): string {
   const cleanDevice = (deviceId || '').trim();
   const cleanNick = ((nickname || '').trim() || 'Ученик').slice(0, 50);

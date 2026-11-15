@@ -49,6 +49,7 @@ class Invoice(Base):
     amount = Column(String, nullable=False)
     currency = Column(String, default="EUR", nullable=False)
     is_paid = Column(Boolean, default=False, nullable=False)
+    status = Column(String, default="pending", nullable=True)  # pending, paid, cancelled
     pdf_path = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     paid_at = Column(DateTime, nullable=True)
@@ -148,6 +149,7 @@ class InvoiceConfirmResponse(BaseModel):
     days_left: int
     expires_at: str
     package_name: Optional[str] = None
+    backup_key: Optional[str] = None
 
 
 class PlanItem(BaseModel):
