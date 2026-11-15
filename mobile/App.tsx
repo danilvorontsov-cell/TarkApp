@@ -2960,7 +2960,7 @@ function MainApp() {
           accessibilityRole="button"
         >
           <Text style={styles.saveProfileBtnText}>
-            {profile.nickname?.trim() ? '✓ Сохранить настройки' : '🔑 Сохранить имя и войти'}
+            {profile.nickname?.trim() ? '✓ Сохранить настройки' : '🚀 Начать обучение'}
           </Text>
         </TouchableOpacity>
 
@@ -2978,119 +2978,123 @@ function MainApp() {
       </View>
 
       {/* Subscription Status & License Key Card */}
-      <View style={[styles.card, isJunior ? styles.cardJunior : styles.cardSenior]}>
-        <Text style={[styles.cardTitle, isJunior && styles.cardTitleJunior]}>
-          🔑 Лицензия и подписка
-        </Text>
-
-        {/* Interactive Setting Row: Тариф и ключ доступа */}
-        <TouchableOpacity
-          style={styles.settingTariffRow}
-          onPress={() => setIsPaywallVisible(true)}
-          activeOpacity={0.75}
-          accessibilityRole="button"
-          accessibilityLabel="Тариф и ключ доступа"
-        >
-          <View style={styles.settingTariffIconWrap}>
-            <Text style={styles.settingTariffIcon}>{isPro ? '⭐' : '💳'}</Text>
-          </View>
-          <View style={styles.settingTariffContent}>
-            <Text style={styles.settingTariffTitle}>Тариф и ключ доступа</Text>
-            <Text style={styles.settingTariffSubtitle}>
-              {isPro
-                ? (subInfo.daysLeft ? `TarkApp PRO активен (${subInfo.daysLeft} дн.)` : 'TarkApp PRO активен')
-                : `Пробный: осталось ${subInfo.daysLeft} дн. • ${subInfo.reviewCounterText}`}
-            </Text>
-          </View>
-          <Text style={styles.settingTariffChevron}>›</Text>
-        </TouchableOpacity>
-
-        <Text style={styles.caption}>
-          Учёт доступа ведётся по уникальному номеру устройства без необходимости регистрации.
-        </Text>
-
-        <View style={styles.licenseStatusBox}>
-          <Text style={styles.licenseStatusLabel}>Статус подписки:</Text>
-          <Text
-            style={[
-              styles.licenseStatusValue,
-              licenseStatus && !licenseStatus.is_active && styles.licenseStatusExpired,
-            ]}
-          >
-            {isPro
-              ? `Активен пакет: ${subInfo.packageName || 'PRO'} (осталось ${subInfo.daysLeft} дн.)`
-              : `Бесплатный режим Free (${subInfo.reviewCounterText} разборов в сутки)`}
+      {Boolean(profile.nickname?.trim()) && (
+        <View style={[styles.card, isJunior ? styles.cardJunior : styles.cardSenior]}>
+          <Text style={[styles.cardTitle, isJunior && styles.cardTitleJunior]}>
+            🔑 Лицензия и подписка
           </Text>
-          {licenseStatus?.expires_at && (
-            <Text style={styles.licenseExpiryText}>
-              Действует до: {licenseStatus.expires_at.replace('T', ' ').replace('Z', ' UTC')}
+
+          {/* Interactive Setting Row: Тариф и ключ доступа */}
+          <TouchableOpacity
+            style={styles.settingTariffRow}
+            onPress={() => setIsPaywallVisible(true)}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="Тариф и ключ доступа"
+          >
+            <View style={styles.settingTariffIconWrap}>
+              <Text style={styles.settingTariffIcon}>{isPro ? '⭐' : '💳'}</Text>
+            </View>
+            <View style={styles.settingTariffContent}>
+              <Text style={styles.settingTariffTitle}>Тариф и ключ доступа</Text>
+              <Text style={styles.settingTariffSubtitle}>
+                {isPro
+                  ? (subInfo.daysLeft ? `TarkApp PRO активен (${subInfo.daysLeft} дн.)` : 'TarkApp PRO активен')
+                  : `Пробный: осталось ${subInfo.daysLeft} дн. • ${subInfo.reviewCounterText}`}
+              </Text>
+            </View>
+            <Text style={styles.settingTariffChevron}>›</Text>
+          </TouchableOpacity>
+
+          <Text style={styles.caption}>
+            Учёт доступа ведётся по уникальному номеру устройства без необходимости регистрации.
+          </Text>
+
+          <View style={styles.licenseStatusBox}>
+            <Text style={styles.licenseStatusLabel}>Статус подписки:</Text>
+            <Text
+              style={[
+                styles.licenseStatusValue,
+                licenseStatus && !licenseStatus.is_active && styles.licenseStatusExpired,
+              ]}
+            >
+              {isPro
+                ? `Активен пакет: ${subInfo.packageName || 'PRO'} (осталось ${subInfo.daysLeft} дн.)`
+                : `Бесплатный режим Free (${subInfo.reviewCounterText} разборов в сутки)`}
+            </Text>
+            {licenseStatus?.expires_at && (
+              <Text style={styles.licenseExpiryText}>
+                Действует до: {licenseStatus.expires_at.replace('T', ' ').replace('Z', ' UTC')}
+              </Text>
+            )}
+          </View>
+
+          {licenseStatus?.activated_key && (
+            <Text style={styles.licenseKeyInfo}>
+              Активирован ключ: <Text style={styles.bold}>{licenseStatus.activated_key}</Text>
             </Text>
           )}
-        </View>
 
-        {licenseStatus?.activated_key && (
-          <Text style={styles.licenseKeyInfo}>
-            Активирован ключ: <Text style={styles.bold}>{licenseStatus.activated_key}</Text>
-          </Text>
-        )}
-
-        <TouchableOpacity
-          style={styles.openPaywallBtn}
-          onPress={() => setIsPaywallVisible(true)}
-          activeOpacity={0.85}
-        >
-          <LinearGradient
-            colors={['#66F6CF', '#42DCA3']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 0, y: 1 }}
-            style={styles.openPaywallBtnGradient}
+          <TouchableOpacity
+            style={styles.openPaywallBtn}
+            onPress={() => setIsPaywallVisible(true)}
+            activeOpacity={0.85}
           >
-            <Text style={styles.openPaywallBtnText}>💎 Выбрать тариф / Оформить PRO</Text>
-          </LinearGradient>
-        </TouchableOpacity>
+            <LinearGradient
+              colors={['#66F6CF', '#42DCA3']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 0, y: 1 }}
+              style={styles.openPaywallBtnGradient}
+            >
+              <Text style={styles.openPaywallBtnText}>💎 Выбрать тариф / Оформить PRO</Text>
+            </LinearGradient>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.activateKeyBtn}
-          onPress={() => setIsKeyModalVisible(true)}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.activateKeyBtnText}>🔑 Ввести промокод / ключ доступа</Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={styles.activateKeyBtn}
+            onPress={() => setIsKeyModalVisible(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.activateKeyBtnText}>🔑 Ввести промокод / ключ доступа</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Storage and Data Maintenance */}
-      <View style={[styles.card, isJunior ? styles.cardJunior : styles.cardSenior]}>
-        <Text style={[styles.cardTitle, isJunior && styles.cardTitleJunior]}>
-          💾 Локальное хранилище
-        </Text>
-        <Text style={styles.storageStats}>
-          • Сохранено уроков в истории: <Text style={styles.bold}>{history.length}</Text>
-        </Text>
-        <Text style={styles.storageStats}>
-          • Терминов в личном словаре: <Text style={styles.bold}>{savedVocab.length}</Text>
-        </Text>
+      {Boolean(profile.nickname?.trim()) && (
+        <View style={[styles.card, isJunior ? styles.cardJunior : styles.cardSenior]}>
+          <Text style={[styles.cardTitle, isJunior && styles.cardTitleJunior]}>
+            💾 Локальное хранилище
+          </Text>
+          <Text style={styles.storageStats}>
+            • Сохранено уроков в истории: <Text style={styles.bold}>{history.length}</Text>
+          </Text>
+          <Text style={styles.storageStats}>
+            • Терминов в личном словаре: <Text style={styles.bold}>{savedVocab.length}</Text>
+          </Text>
 
-        <TouchableOpacity style={styles.clearDataBtn} onPress={handleClearAllData}>
-          <Text style={styles.clearDataBtnText}>🗑️ Очистить сохранённую историю и словарь</Text>
-        </TouchableOpacity>
+          <TouchableOpacity style={styles.clearDataBtn} onPress={handleClearAllData}>
+            <Text style={styles.clearDataBtnText}>🗑️ Очистить сохранённую историю и словарь</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.privacyPolicyBtn}
-          onPress={() => Linking.openURL('https://tarkapp.ee/privacy')}
-          activeOpacity={0.8}
-          accessibilityRole="link"
-        >
-          <Text style={styles.privacyPolicyBtnText}>🔒 Политика конфиденциальности (GDPR)</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.privacyPolicyBtn}
+            onPress={() => Linking.openURL('https://tarkapp.ee/privacy')}
+            activeOpacity={0.8}
+            accessibilityRole="link"
+          >
+            <Text style={styles.privacyPolicyBtnText}>🔒 Политика конфиденциальности (GDPR)</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.deleteAccountBtn}
-          onPress={handleDeleteAccountAndData}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.deleteAccountBtnText}>⚠️ Удалить профиль и все данные</Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={styles.deleteAccountBtn}
+            onPress={handleDeleteAccountAndData}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.deleteAccountBtnText}>⚠️ Удалить профиль и все данные</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 
@@ -3414,6 +3418,7 @@ function MainApp() {
         currentProfile={profile}
         onSaveProfile={handleSaveProfile}
         onOpenAvatarPicker={handleSelectAvatarSource}
+        isOnboarding={!Boolean(profile.nickname?.trim())}
       />
 
       {/* TarkApp Themed Modal Alert Host */}

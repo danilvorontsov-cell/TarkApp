@@ -44,14 +44,15 @@ Base = declarative_base()
 def transaction(self: Session):
     """
     Context manager for atomic database operations with immediate commit and rollback.
-    For root transactions, executes 'BEGIN IMMEDIATE' immediately after entering
-    'with self._session.begin():' to prevent SQLITE_BUSY_SNAPSHOT when upgrading locks.
+    For root transactions, closes any implicit autobegin read transaction from prior SELECTs
+    via sess.commit(), then executes 'BEGIN IMMEDIATE' immediately after entering
+    'with sess.begin():' to prevent SQLITE_BUSY_SNAPSHOT when upgrading locks.
     Usage:
         with db.transaction():
             ...
     """
     sess = getattr(self, "_session", self)
-    if sess.in_transaction():
+    if getattr(sess, "_in_custom_tx", False):
         nested = sess.begin_nested()
         try:
             yield sess
@@ -60,13 +61,19 @@ def transaction(self: Session):
             nested.rollback()
             raise
     else:
-        with sess.begin():
-            if settings.DATABASE_URL.startswith("sqlite"):
-                try:
-                    sess.execute(text("BEGIN IMMEDIATE"))
-                except Exception:
-                    pass
-            yield sess
+        if sess.in_transaction():
+            sess.commit()
+        sess._in_custom_tx = True
+        try:
+            with sess.begin():
+                if settings.DATABASE_URL.startswith("sqlite"):
+                    try:
+                        sess.execute(text("BEGIN IMMEDIATE"))
+                    except Exception:
+                        pass
+                yield sess
+        finally:
+            sess._in_custom_tx = False
 
 
 Session.transaction = transaction

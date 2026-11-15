@@ -14,6 +14,7 @@ import {
   Image,
   Linking,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   UserProfile,
   SchoolTier,
@@ -23,12 +24,13 @@ import {
   isDefaultInterestsList,
   PRIMARY_CHILDISH_INTERESTS,
   AGE_SUGGESTIONS,
+  getInterestsPlaceholder,
 } from '../types';
 import { StorageService } from '../services/storage';
 import { Theme, darkTheme } from '../theme/colors';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const MODAL_WIDTH = Math.min(SCREEN_WIDTH * 0.92, 400);
+const MODAL_WIDTH = Math.min(SCREEN_WIDTH * 0.92, 420);
 
 export const GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
@@ -38,6 +40,7 @@ interface ProfileSetupModalProps {
   currentProfile: UserProfile;
   onSaveProfile: (updated: UserProfile) => void;
   onOpenAvatarPicker?: () => void;
+  isOnboarding?: boolean;
 }
 
 export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
@@ -46,9 +49,15 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
   currentProfile,
   onSaveProfile,
   onOpenAvatarPicker,
+  isOnboarding: propIsOnboarding,
 }) => {
+  const insets = useSafeAreaInsets();
+  const isOnboarding = propIsOnboarding ?? !Boolean(currentProfile.nickname?.trim());
+
   const [name, setName] = useState(currentProfile.nickname || '');
   const [selectedGrade, setSelectedGrade] = useState(currentProfile.grade || 3);
+  const [interestsText, setInterestsText] = useState('');
+  const [hasCustomInterests, setHasCustomInterests] = useState(Boolean(currentProfile.hasCustomInterests));
   const wasVisibleRef = useRef(false);
 
   useEffect(() => {
@@ -56,41 +65,145 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
       if (!wasVisibleRef.current) {
         wasVisibleRef.current = true;
         StorageService.getProfileDraft().then((draft) => {
-          if (draft) {
-            if (draft.nickname !== undefined) setName(draft.nickname);
-            else setName(currentProfile.nickname || '');
+          let initialNick = currentProfile.nickname || '';
+          let initialGrade = currentProfile.grade || 3;
+          let initialCustom = Boolean(currentProfile.hasCustomInterests);
+          let initialInterests = currentProfile.interests || [];
 
+          if (draft) {
+            if (draft.nickname !== undefined) initialNick = draft.nickname;
             if (draft.grade !== undefined && draft.grade >= 1 && draft.grade <= 12) {
-              setSelectedGrade(draft.grade);
-            } else {
-              setSelectedGrade(currentProfile.grade || 3);
+              initialGrade = draft.grade;
             }
+            if (draft.hasCustomInterests !== undefined) {
+              initialCustom = Boolean(draft.hasCustomInterests);
+            }
+            if (draft.interests !== undefined && Array.isArray(draft.interests)) {
+              initialInterests = draft.interests;
+            }
+          }
+
+          setName(initialNick);
+          setSelectedGrade(initialGrade);
+          setHasCustomInterests(initialCustom);
+
+          if (initialInterests && initialInterests.length > 0) {
+            const cleaned = initialInterests.map((i) =>
+              typeof i === 'string' ? i.replace(/спотр/gi, 'спорт') : i
+            );
+            setInterestsText(cleaned.join(', '));
           } else {
-            setName(currentProfile.nickname || '');
-            setSelectedGrade(currentProfile.grade || 3);
+            const gradeMap = currentProfile.interestsByGrade || {};
+            const savedForGrade = gradeMap[initialGrade] || gradeMap[String(initialGrade) as any];
+            if (savedForGrade && Array.isArray(savedForGrade) && savedForGrade.length > 0) {
+              setInterestsText(savedForGrade.join(', '));
+            } else {
+              const tier = getTierFromGrade(initialGrade);
+              setInterestsText(getDefaultInterestsForTier(tier).join(', '));
+            }
           }
         });
       }
     } else {
       wasVisibleRef.current = false;
     }
-  }, [visible]);
+  }, [visible, currentProfile]);
 
+  const currentTier = getTierFromGrade(selectedGrade);
   const tierPolicy = getTierPolicy(selectedGrade);
   const tierBadgeLabel = tierPolicy.name.split(' (')[0];
+  const currentSuggestions = AGE_SUGGESTIONS[currentTier] || AGE_SUGGESTIONS.primary;
 
   const handleNameChange = (text: string) => {
     setName(text);
-    StorageService.saveProfileDraft({ nickname: text, grade: selectedGrade });
+    const parsed = interestsText.split(',').map((s) => s.trim()).filter(Boolean);
+    StorageService.saveProfileDraft({
+      nickname: text,
+      grade: selectedGrade,
+      interests: parsed,
+      hasCustomInterests,
+    });
   };
 
   const handleGradeChange = (g: number) => {
     setSelectedGrade(g);
-    StorageService.saveProfileDraft({ nickname: name, grade: g });
+    const newTier = getTierFromGrade(g);
+
+    let nextInterestsText = interestsText;
+    let nextInterestsList: string[];
+
+    if (!hasCustomInterests) {
+      const gradeMap = currentProfile.interestsByGrade || {};
+      const savedForGrade = gradeMap[g] || gradeMap[String(g) as any];
+      if (savedForGrade && Array.isArray(savedForGrade) && savedForGrade.length > 0) {
+        nextInterestsList = savedForGrade;
+      } else {
+        nextInterestsList = getDefaultInterestsForTier(newTier);
+      }
+      nextInterestsText = nextInterestsList.join(', ');
+      setInterestsText(nextInterestsText);
+    } else {
+      nextInterestsList = interestsText
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+
+    StorageService.saveProfileDraft({
+      nickname: name,
+      grade: g,
+      interests: nextInterestsList,
+      hasCustomInterests,
+    });
+  };
+
+  const handleInterestsChange = (text: string) => {
+    const corrected = text.replace(/спотр/gi, 'спорт');
+    setInterestsText(corrected);
+    setHasCustomInterests(true);
+    const items = corrected.split(',').map((s) => s.trim()).filter(Boolean);
+    StorageService.saveProfileDraft({
+      nickname: name,
+      grade: selectedGrade,
+      interests: items,
+      hasCustomInterests: true,
+    });
+  };
+
+  const handleAddSuggestion = (item: string) => {
+    const currentList = interestsText
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const itemLower = item.trim().toLowerCase();
+    const exists = currentList.some((s) => s.toLowerCase() === itemLower);
+
+    let updatedList: string[];
+    if (exists) {
+      updatedList = currentList.filter((s) => s.toLowerCase() !== itemLower);
+    } else {
+      updatedList = [...currentList, item.trim()];
+    }
+
+    const newText = updatedList.join(', ');
+    setInterestsText(newText);
+    setHasCustomInterests(true);
+    StorageService.saveProfileDraft({
+      nickname: name,
+      grade: selectedGrade,
+      interests: updatedList,
+      hasCustomInterests: true,
+    });
   };
 
   const handleAvatarPress = async () => {
-    await StorageService.saveProfileDraft({ nickname: name, grade: selectedGrade });
+    const parsed = interestsText.split(',').map((s) => s.trim()).filter(Boolean);
+    await StorageService.saveProfileDraft({
+      nickname: name,
+      grade: selectedGrade,
+      interests: parsed,
+      hasCustomInterests,
+    });
     onClose();
     setTimeout(() => {
       onOpenAvatarPicker?.();
@@ -106,29 +219,30 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
       ...(currentProfile.interestsByGrade || {}),
     };
 
-    const savedForGrade = gradeMap[selectedGrade] || gradeMap[String(selectedGrade) as any];
-    let newInterests: string[];
+    const parsedInterests = interestsText
+      .split(',')
+      .map((s) => s.trim().replace(/спотр/gi, 'спорт'))
+      .filter(Boolean);
+
+    let finalInterests: string[];
     let isCustom: boolean;
 
-    if (savedForGrade && Array.isArray(savedForGrade) && savedForGrade.length > 0) {
-      newInterests = savedForGrade;
-      isCustom = !isDefaultInterestsList(savedForGrade);
-    } else if (selectedGrade === currentProfile.grade && currentProfile.interests && currentProfile.interests.length > 0) {
-      newInterests = currentProfile.interests;
-      isCustom = Boolean(currentProfile.hasCustomInterests);
+    if (parsedInterests.length > 0) {
+      finalInterests = parsedInterests;
+      isCustom = hasCustomInterests && !isDefaultInterestsList(finalInterests);
     } else {
-      newInterests = getDefaultInterestsForTier(newTier);
+      finalInterests = getDefaultInterestsForTier(newTier);
       isCustom = false;
     }
 
-    gradeMap[selectedGrade] = newInterests;
+    gradeMap[selectedGrade] = finalInterests;
 
     const updated: UserProfile = {
       ...currentProfile,
       nickname: trimmed,
       grade: selectedGrade,
       tier: newTier,
-      interests: newInterests,
+      interests: finalInterests,
       hasCustomInterests: isCustom,
       interestsByGrade: gradeMap,
     };
@@ -141,7 +255,6 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
   };
 
   const handleDismiss = async () => {
-    // Dismissing without clicking Save must never overwrite or reset the existing profile
     await StorageService.clearProfileDraft();
     onClose();
   };
@@ -154,7 +267,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
       onRequestClose={handleDismiss}
       statusBarTranslucent
     >
-      <TouchableWithoutFeedback onPress={handleDismiss}>
+      <TouchableWithoutFeedback onPress={isOnboarding ? undefined : handleDismiss}>
         <View style={styles.backdrop}>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -162,14 +275,17 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
           >
             <TouchableWithoutFeedback>
               <View style={styles.card}>
-                {/* Close Cross */}
-                <TouchableOpacity
-                  style={styles.closeBtn}
-                  onPress={handleDismiss}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                  <Text style={styles.closeBtnText}>✕</Text>
-                </TouchableOpacity>
+                {/* Close Cross - hidden during onboarding */}
+                {!isOnboarding && (
+                  <TouchableOpacity
+                    style={styles.closeBtn}
+                    onPress={handleDismiss}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    accessibilityLabel="Закрыть"
+                  >
+                    <Text style={styles.closeBtnText}>✕</Text>
+                  </TouchableOpacity>
+                )}
 
                 <ScrollView
                   style={styles.scrollView}
@@ -196,10 +312,10 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
 
                   {/* Title & Subtitle */}
                   <Text style={styles.title}>
-                    {currentProfile.nickname?.trim() ? 'Профиль ученика' : 'Давай знакомиться!'}
+                    {isOnboarding ? 'Давай знакомиться!' : (currentProfile.nickname?.trim() ? 'Профиль ученика' : 'Давай знакомиться!')}
                   </Text>
                   <Text style={styles.subtitle}>
-                    Укажи имя и класс, чтобы TarkApp подстраивал объяснения под школьную программу
+                    Укажи имя, класс и интересы, чтобы TarkApp подстраивал объяснения и примеры под тебя
                   </Text>
 
                   {/* Name Input */}
@@ -253,22 +369,74 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                       })}
                     </View>
                   </View>
+
+                  {/* Interests & Age Suggestions */}
+                  <View style={styles.interestsSection}>
+                    <Text style={styles.inputLabel}>
+                      Увлечения и интересы (для понятных примеров):
+                    </Text>
+                    <TextInput
+                      style={[styles.textInput, styles.interestsInput]}
+                      value={interestsText}
+                      onChangeText={handleInterestsChange}
+                      placeholder={getInterestsPlaceholder(currentTier)}
+                      placeholderTextColor="#64748B"
+                      multiline
+                    />
+                    <Text style={styles.interestsHint}>
+                      💡 Тьютор объяснит грамматику и примеры через аналогии с любимыми играми и хобби!
+                    </Text>
+
+                    <Text style={styles.suggestionsTitle}>Быстрые подсказки по возрасту:</Text>
+                    <View style={styles.suggestionsGrid}>
+                      {currentSuggestions.map((item, idx) => {
+                        const currentList = interestsText
+                          .split(',')
+                          .map((s) => s.trim().toLowerCase())
+                          .filter(Boolean);
+                        const isSelected = currentList.includes(item.trim().toLowerCase());
+                        return (
+                          <TouchableOpacity
+                            key={idx}
+                            style={[
+                              styles.suggestionChip,
+                              isSelected && styles.suggestionChipSelected,
+                            ]}
+                            onPress={() => handleAddSuggestion(item)}
+                            activeOpacity={0.7}
+                          >
+                            <Text
+                              style={[
+                                styles.suggestionText,
+                                isSelected && styles.suggestionTextSelected,
+                              ]}
+                            >
+                              {isSelected ? '✓ ' : '+ '}
+                              {item}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
                 </ScrollView>
 
-                {/* Fixed Footer: Save & Continue Buttons */}
-                <View style={styles.modalFooter}>
+                {/* Fixed Sticky Footer: Save & Continue Buttons */}
+                <View style={[styles.modalFooter, { paddingBottom: Math.max(insets.bottom, 12) }]}>
                   <TouchableOpacity
                     style={styles.saveBtn}
                     onPress={handleSave}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.saveBtnText}>✓ Сохранить</Text>
+                    <Text style={styles.saveBtnText}>
+                      {isOnboarding ? '🚀 Начать обучение' : '✓ Сохранить'}
+                    </Text>
                   </TouchableOpacity>
 
-                  {!currentProfile.nickname?.trim() && (
+                  {isOnboarding && (
                     <TouchableOpacity
                       style={styles.skipBtn}
-                      onPress={handleDismiss}
+                      onPress={handleSave}
                       activeOpacity={0.7}
                     >
                       <Text style={styles.skipBtnText}>Продолжить как Ученик</Text>
@@ -309,7 +477,7 @@ const styles = StyleSheet.create({
   },
   card: {
     width: MODAL_WIDTH,
-    maxHeight: Math.min(SCREEN_HEIGHT * 0.9, 680),
+    maxHeight: Math.min(SCREEN_HEIGHT * 0.92, 740),
     minHeight: Math.min(SCREEN_HEIGHT * 0.7, 520),
     backgroundColor: '#161B20',
     borderRadius: 24,
@@ -344,7 +512,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     alignItems: 'center',
-    paddingBottom: 4,
+    paddingBottom: 8,
   },
   avatarCircle: {
     width: 64,
@@ -356,7 +524,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 2,
-    marginBottom: 10,
+    marginBottom: 8,
     position: 'relative',
     ...Theme.shadow.chip,
   },
@@ -398,12 +566,12 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     textAlign: 'center',
     lineHeight: 17,
-    marginBottom: 14,
+    marginBottom: 12,
     paddingHorizontal: 8,
   },
   inputSection: {
     width: '100%',
-    marginBottom: 14,
+    marginBottom: 12,
   },
   inputLabel: {
     fontSize: 12.5,
@@ -419,14 +587,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     marginTop: 6,
-    height: 46,
+    height: 44,
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 14.5,
     fontWeight: '600',
   },
   gradeSection: {
     width: '100%',
-    marginBottom: 14,
+    marginBottom: 12,
   },
   gradeHeaderRow: {
     width: '100%',
@@ -461,7 +629,7 @@ const styles = StyleSheet.create({
   },
   gradeChip: {
     width: '14.8%',
-    height: 42,
+    height: 40,
     borderRadius: 12,
     backgroundColor: '#202830',
     borderWidth: 1,
@@ -482,6 +650,59 @@ const styles = StyleSheet.create({
   gradeChipTextSelected: {
     color: '#064E3B',
     fontWeight: '900',
+  },
+  interestsSection: {
+    width: '100%',
+    marginBottom: 12,
+  },
+  interestsInput: {
+    minHeight: 52,
+    maxHeight: 76,
+    textAlignVertical: 'top',
+    paddingTop: 8,
+    fontSize: 13.5,
+    lineHeight: 18,
+  },
+  interestsHint: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 4,
+    lineHeight: 15,
+  },
+  suggestionsTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#94A3B8',
+    marginTop: 10,
+    marginBottom: 6,
+    alignSelf: 'flex-start',
+  },
+  suggestionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    width: '100%',
+  },
+  suggestionChip: {
+    backgroundColor: '#1E252B',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  suggestionChipSelected: {
+    backgroundColor: 'rgba(95, 237, 197, 0.15)',
+    borderColor: '#5FEDC5',
+  },
+  suggestionText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  suggestionTextSelected: {
+    color: '#5FEDC5',
+    fontWeight: '700',
   },
   modalFooter: {
     width: '100%',

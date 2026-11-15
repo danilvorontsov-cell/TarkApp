@@ -320,12 +320,12 @@ def check_device_access(device_id: str, db: Session, client_ip: Optional[str] = 
     }
 
 
-def verify_review_allowance(device_id: str, db: Session) -> Dict[str, Any]:
+def verify_review_allowance(device_id: str, db: Session, client_ip: Optional[str] = None) -> Dict[str, Any]:
     """
     Verifies if device is permitted to request a textbook page analysis.
     """
     clean_id = validate_device_id(device_id)
-    status_data = check_device_access(clean_id, db)
+    status_data = check_device_access(clean_id, db, client_ip=client_ip)
     _, max_reviews = _get_trial_policy()
 
     if not status_data["allowed"]:
@@ -591,24 +591,79 @@ def activate_key(device_id: str, key_code: str, db: Session) -> Dict[str, Any]:
     else:
         package_name = f"{duration} дн."
 
-    if key_obj.is_used and key_obj.used_by_device == device.device_id:
-        logger.info(f"[LICENSE] Key {clean_key} is already active for device {clean_dev_id}.")
-        device.has_active_access = True
-        device.activated_key = key_obj.key_code
-        db.commit()
-        db.refresh(device)
+    # Check if key was previously used by a device that was GDPR-deleted or detached
+    is_gdpr_detached = bool(
+        key_obj.is_used
+        and (
+            key_obj.used_by_device in ("DELETED_GDPR", "GDPR_ANONYMIZED")
+            or not db.query(Device).filter(Device.device_id == key_obj.used_by_device).first()
+        )
+    )
+
+    if key_obj.is_used and not is_gdpr_detached:
+        if key_obj.used_by_device == device.device_id:
+            logger.info(f"[LICENSE] Key {clean_key} is already active for device {clean_dev_id}.")
+            device.has_active_access = True
+            device.activated_key = key_obj.key_code
+            db.commit()
+            db.refresh(device)
+
+            delta = device.trial_expires_at - now
+            days_left = max(1, math.ceil(delta.total_seconds() / 86400))
+            expires_str = device.trial_expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            return {
+                "success": True,
+                "message": f"Ключ уже привязан к этому устройству! Доступ активен ({days_left} дн.).",
+                "is_active": True,
+                "has_key": True,
+                "free_reviews_left": device.free_reviews_left,
+                "max_free_reviews": max_reviews,
+                "days_left": days_left,
+                "expires_at": expires_str,
+                "package_name": package_name,
+            }
+        else:
+            logger.warning(
+                f"[LICENSE] Key {clean_key} already used by device '{key_obj.used_by_device}' (attempted by '{clean_dev_id}')"
+            )
+            raise ValueError("Этот ключ доступа уже был активирован ранее.")
+
+    # Re-binding of a GDPR-detached key to a new device on remaining paid days
+    if is_gdpr_detached:
+        used_at = key_obj.used_at or key_obj.created_at or now
+        key_duration = key_obj.duration_days or 30
+        remaining_days = max(1, (used_at + timedelta(days=key_duration) - now).days)
+        duration = remaining_days
+
+        with db.transaction():
+            if device.trial_expires_at > now:
+                device.trial_expires_at = device.trial_expires_at + timedelta(days=duration)
+            else:
+                device.trial_expires_at = now + timedelta(days=duration)
+
+            device.has_active_access = True
+            device.activated_key = key_obj.key_code
+
+            key_obj.used_by_device = device.device_id
+            key_obj.is_used = True
 
         delta = device.trial_expires_at - now
         days_left = max(1, math.ceil(delta.total_seconds() / 86400))
         expires_str = device.trial_expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
 
+        logger.info(
+            f"[LICENSE] Successfully restored GDPR-detached key {clean_key} (+{duration}d) for device {clean_dev_id}. "
+            f"New expiry: {expires_str}"
+        )
+
         return {
             "success": True,
-            "message": f"Ключ уже привязан к этому устройству! Доступ активен ({days_left} дн.).",
+            "message": f"Ключ успешно перенесён на новое устройство! Доступ продлен на {duration} дн.",
             "is_active": True,
             "has_key": True,
             "free_reviews_left": device.free_reviews_left,
-            "max_free_reviews": max_reviews,
+            "max_free_reviews": getattr(device, "max_free_reviews", max_reviews) or max_reviews,
             "days_left": days_left,
             "expires_at": expires_str,
             "package_name": package_name,
@@ -786,26 +841,30 @@ def confirm_invoice_payment(
     db.refresh(inv)
 
     device_id = (inv.device_id or "paid-device-000001").strip()
+    backup_key = generate_key_code("TARK")
+    resolved_plan_id = (inv.plan_id or "school_year").strip().lower()
+    key_duration = PLAN_DURATIONS.get(resolved_plan_id, 30)
+
     grant_res = grant_plan_access(
         device_id=device_id,
         plan_id=inv.plan_id,
         db=db,
-        reference_info=f"INVOICE:{inv.invoice_number}",
+        reference_info=backup_key,
     )
 
-    # Automatically generate backup access key TARK-XXXX-XXXX in access_keys table
-    backup_key = generate_key_code("TARK")
-    key_duration = grant_res.get("duration_days", 30)
+    # Automatically generate backup access key TARK-XXXX-XXXX bound to current device (idempotent)
     access_key_obj = AccessKey(
         key_code=backup_key,
-        duration_days=key_duration,
-        is_used=False,
+        duration_days=grant_res.get("duration_days", key_duration),
+        is_used=True,
+        used_by_device=device_id,
+        used_at=now,
         created_at=now,
     )
     db.add(access_key_obj)
     db.commit()
     logger.info(
-        f"[LICENSE] Generated backup restoration key {backup_key} for invoice {inv.invoice_number} ({key_duration} days)."
+        f"[LICENSE] Generated and bound backup key {backup_key} to device {device_id} for invoice {inv.invoice_number} ({key_duration} days)."
     )
 
     # Send backup key via email notification to customer_email

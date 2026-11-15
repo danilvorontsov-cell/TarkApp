@@ -73,14 +73,25 @@ def _load_stress_dict() -> Dict[str, Any]:
     brands_map: Dict[str, str] = _STRESS_DICT_DATA.get("brands", {})
     # Fallback defaults if dict missing or incomplete
     default_brands = {
-        "LEGO": "Л+его",
+        "Brawl Stars": "Бр+авл Ст+арс",
+        "BrawlStars": "Бр+авл Ст+арс",
+        "CS:GO": "Кэ-Эс Гоу",
+        "CS GO": "Кэ-Эс Гоу",
+        "CSGO": "Кэ-Эс Гоу",
+        "Valorant": "Валор+ант",
+        "TikTok": "Тикт+ок",
+        "Tik-Tok": "Тикт+ок",
         "Minecraft": "Майнкр+афт",
         "Roblox": "Р+облокс",
         "YouTube": "Ют+уб",
+        "LEGO": "Л+его",
+        "Lego": "Л+его",
+        "AI": "Эй-Ай",
         "Steve": "Ст+ив",
+        "gamer": "г+еймер",
     }
     all_brands = {**default_brands, **brands_map}
-    for b_key, b_repl in all_brands.items():
+    for b_key, b_repl in sorted(all_brands.items(), key=lambda x: len(x[0]), reverse=True):
         pat = re.compile(rf"\b{re.escape(b_key)}\b", re.IGNORECASE)
         compiled_brands.append((pat, b_repl))
     _COMPILED_BRANDS = compiled_brands

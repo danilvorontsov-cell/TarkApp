@@ -224,10 +224,11 @@ def test_confirm_invoice_payment_backup_key_and_email(test_db_session):
         backup_key = res["backup_key"]
         assert backup_key.startswith("TARK-")
 
-        # Verify backup key stored in access_keys table
+        # Verify backup key stored in access_keys table and bound to device (V3-02)
         key_record = db.query(AccessKey).filter(AccessKey.key_code == backup_key).first()
         assert key_record is not None
-        assert key_record.is_used is False
+        assert key_record.is_used is True
+        assert key_record.used_by_device == "test-buyer-device-uuid1234"
         assert key_record.duration_days == 270  # year plan
 
         # Verify email dispatch was called
@@ -266,4 +267,62 @@ def test_send_telegram_invoice_notification_pii_masked():
     assert "se***@gmail.com" in msg
     assert "secr...8877" in msg
     assert "INV-2026-7777" in msg
-    assert "202677771" in msg
+
+
+def test_backup_key_idempotency_and_gdpr_rebinding(test_db_session):
+    """
+    [V3-02] Verifies:
+    1. Re-entering backup key on the same device is idempotent and does not extend duration twice.
+    2. Entering key previously detached by GDPR allows re-binding to a new device for remaining days.
+    """
+    from datetime import datetime, timedelta
+    from app.services.license_service import activate_key, confirm_invoice_payment
+    from app.models.license import AccessKey, Device, Invoice
+    from unittest.mock import patch
+
+    db = test_db_session
+    now = datetime.utcnow()
+
+    inv = Invoice(
+        invoice_number="INV-2026-9999",
+        viitenumber="202699999",
+        device_id="device-original-12345",
+        customer_email="buyer@example.com",
+        plan_id="month",
+        amount="9.90",
+        currency="EUR",
+        is_paid=False,
+        status="pending",
+    )
+    db.add(inv)
+    db.commit()
+
+    with patch("app.services.email_service.send_payment_confirmation_email_sync"):
+        res = confirm_invoice_payment("INV-2026-9999", db)
+        backup_key = res["backup_key"]
+
+    dev1 = db.query(Device).filter(Device.device_id == "device-original-12345").first()
+    first_expiry = dev1.trial_expires_at
+
+    # 1. Re-activate backup_key on same device -> must be idempotent
+    res_reenter = activate_key("device-original-12345", backup_key, db)
+    assert res_reenter["success"] is True
+    assert "уже привязан" in res_reenter["message"]
+    db.refresh(dev1)
+    assert dev1.trial_expires_at == first_expiry
+
+    # 2. Simulate GDPR account deletion on original device (detach key to DELETED_GDPR)
+    key_obj = db.query(AccessKey).filter(AccessKey.key_code == backup_key).first()
+    key_obj.used_by_device = "DELETED_GDPR"
+    key_obj.used_at = now - timedelta(days=10)  # 10 days of 30 used
+    db.commit()
+
+    # Activate on new device -> must succeed with remaining ~20 days
+    res_new_dev = activate_key("device-new-67890", backup_key, db)
+    assert res_new_dev["success"] is True
+    assert "успешно перенесён" in res_new_dev["message"]
+    dev2 = db.query(Device).filter(Device.device_id == "device-new-67890").first()
+    assert dev2 is not None
+    assert dev2.has_active_access is True
+    db.refresh(key_obj)
+    assert key_obj.used_by_device == "device-new-67890"

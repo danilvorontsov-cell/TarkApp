@@ -71,6 +71,28 @@ def test_gaming_brands_transliteration():
     assert "Ют+уб" in result
 
 
+def test_all_nine_brand_presets_transliteration():
+    """
+    Проверка всех 9 брендовых пресетов транслитерации для Silero TTS:
+    Minecraft, LEGO, Roblox, Brawl Stars, CS:GO, Valorant, TikTok, YouTube, AI.
+    """
+    brands_test_cases = [
+        ("Я играю в Minecraft с друзьями.", "Майнкр+афт"),
+        ("Собираю конструктор LEGO каждый день.", "Л+его"),
+        ("Мы зашли в Roblox на сервер.", "Р+облокс"),
+        ("Открываю сундуки в Brawl Stars на перемене.", "Бр+авл Ст+арс"),
+        ("Тренирую аим в CS:GO перед турниром.", "Кэ-Эс Гоу"),
+        ("Выиграл раунд в Valorant с клатчем.", "Валор+ант"),
+        ("Смотрю тренды в TikTok перед сном.", "Тикт+ок"),
+        ("Обучающие видео на YouTube помогают учиться.", "Ют+уб"),
+        ("Современный AI решает сложные задачи.", "Эй-Ай"),
+    ]
+    for text, expected in brands_test_cases:
+        res = validate_and_fix_russian_tts(text)
+        assert expected in res, f"Expected '{expected}' in '{res}' for input '{text}'"
+
+
+
 def test_isolated_latin_words_transliterated():
     """
     Неизвестные латинские слова не должны вырезаться Silero, а транслитерироваться в кириллицу.

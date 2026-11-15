@@ -71,6 +71,7 @@ def mask_activated_key(key: Optional[str]) -> Optional[str]:
 
 
 async def verify_device_access(
+    request: Request,
     x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
     db: Session = Depends(get_db),
 ):
@@ -88,7 +89,8 @@ async def verify_device_access(
                 detail={"error": "TRIAL_EXPIRED", "message": "Заголовок X-Device-ID обязателен для проверки лицензии"},
             )
 
-    check_res = await anyio.to_thread.run_sync(license_service.check_device_access, device_id, db)
+    client_ip = get_remote_address(request)
+    check_res = await anyio.to_thread.run_sync(license_service.check_device_access, device_id, db, client_ip)
     if not check_res["allowed"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -98,6 +100,7 @@ async def verify_device_access(
 
 
 async def verify_review_access(
+    request: Request,
     x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
     db: Session = Depends(get_db),
 ):
@@ -115,7 +118,8 @@ async def verify_review_access(
                 detail={"error": "TRIAL_EXPIRED", "message": "Заголовок X-Device-ID обязателен для проверки лицензии"},
             )
 
-    return await anyio.to_thread.run_sync(license_service.verify_review_allowance, device_id, db)
+    client_ip = get_remote_address(request)
+    return await anyio.to_thread.run_sync(license_service.verify_review_allowance, device_id, db, client_ip)
 
 
 @router.get(
