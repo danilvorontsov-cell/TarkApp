@@ -20,7 +20,7 @@ from app.auth import (
 )
 from app.config import settings
 from app.database import get_db
-from app.limiter import safe_limit
+from app.limiter import safe_limit, get_remote_address
 from app.models.license import (
     AuthTokenRequest,
     AuthTokenResponse,
@@ -129,9 +129,10 @@ def get_license_status(
     request: Request,
     nickname: Optional[str] = Query(default=None, max_length=50),
     x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
+    current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> LicenseStatusResponse:
-    device_id = (x_device_id or "").strip()
+    device_id = current_user.user_id
     if not device_id:
         if settings.APP_ENV in ("development", "test"):
             device_id = DEV_FALLBACK_DEVICE_ID
@@ -145,7 +146,7 @@ def get_license_status(
     has_key = bool(status_data.get("has_key", False))
     raw_key = status_data.get("activated_key") if has_key else None
     masked_key = mask_activated_key(raw_key) if has_key and raw_key else None
-    signed_token = sign_auth_token(status_data["device_id"], (nickname or "Ученик")[:50])
+    signed_token = sign_auth_token(status_data["device_id"], (nickname or current_user.nickname or "Ученик")[:50])
     return LicenseStatusResponse(
         is_active=status_data["allowed"],
         has_key=has_key,
