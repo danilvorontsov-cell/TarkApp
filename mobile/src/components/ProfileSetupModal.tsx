@@ -59,13 +59,10 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
   // Dynamic responsive sizing adapting to any smartphone screen:
   const headerTopPadding = insets.top || (Platform.OS === 'android' ? 24 : 44);
   const visibleHeaderHeight = headerTopPadding + 54;
-  // Top: positioned right below the TarkApp header bar
-  const topOffset = visibleHeaderHeight + 4;
-  // Bottom: positioned closer to the bottom edge, respecting navigation bar insets
-  const bottomOffset = Math.max(insets.bottom, 10) + 8;
-  // Available height for the card between header and bottom navigation
-  const availableHeight = Math.max(windowHeight - topOffset - bottomOffset, 520);
-  // Responsive card width (leaving 12px margin on sides, max 460px on tablets)
+  const darkZoneHeight = windowHeight - visibleHeaderHeight;
+  const verticalMargin = Math.max(insets.bottom, 16);
+  // Keep the same generous window size, centered in the dark zone without bumping into the header
+  const cardHeight = Math.max(darkZoneHeight - verticalMargin * 2, 520);
   const cardWidth = Math.min(windowWidth - 24, 460);
 
   const scrollViewRef = useRef<any>(null);
@@ -161,7 +158,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
   };
 
   const handleContentSizeChange = (_contentWidth: number, contentHeight: number) => {
-    if (contentHeight <= availableHeight - 80) {
+    if (contentHeight <= cardHeight - 80) {
       setCanScrollDown(false);
     }
   };
@@ -368,7 +365,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
 
         {/* Header spacer: allows the authentic mint TarkApp header in App.tsx to shine through */}
         <View
-          style={{ height: topOffset, width: '100%', backgroundColor: 'transparent' }}
+          style={{ height: visibleHeaderHeight, width: '100%', backgroundColor: 'transparent' }}
           pointerEvents="none"
         />
 
@@ -382,8 +379,8 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                 styles.card,
                 {
                   width: cardWidth,
-                  height: availableHeight,
-                  maxHeight: availableHeight,
+                  height: cardHeight,
+                  maxHeight: cardHeight,
                 },
               ]}
             >
@@ -608,14 +605,14 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: 'rgba(5, 8, 11, 0.82)',
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
     paddingHorizontal: 12,
   },
   keyboardView: {
     width: '100%',
     flex: 1,
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
   },
   card: {
     width: MODAL_WIDTH,
