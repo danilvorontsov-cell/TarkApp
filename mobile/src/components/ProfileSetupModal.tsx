@@ -54,54 +54,76 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
   const insets = useSafeAreaInsets();
   const isOnboarding = propIsOnboarding ?? !Boolean(currentProfile.nickname?.trim());
 
+  const scrollViewRef = useRef<any>(null);
+  const wasVisibleRef = useRef(false);
+
   const [name, setName] = useState(currentProfile.nickname || '');
   const [selectedGrade, setSelectedGrade] = useState(currentProfile.grade || 3);
   const [interestsText, setInterestsText] = useState('');
   const [hasCustomInterests, setHasCustomInterests] = useState(Boolean(currentProfile.hasCustomInterests));
-  const wasVisibleRef = useRef(false);
+  const [interestsByGrade, setInterestsByGrade] = useState<Record<number, string[]>>(
+    currentProfile.interestsByGrade || {}
+  );
+  const [canScrollDown, setCanScrollDown] = useState(true);
 
   useEffect(() => {
     if (visible) {
       if (!wasVisibleRef.current) {
         wasVisibleRef.current = true;
+        setCanScrollDown(true);
+
         StorageService.getProfileDraft().then((draft) => {
           let initialNick = currentProfile.nickname || '';
           let initialGrade = currentProfile.grade || 3;
-          let initialCustom = Boolean(currentProfile.hasCustomInterests);
-          let initialInterests = currentProfile.interests || [];
+          let initialMap: Record<number, string[]> = {
+            ...(currentProfile.interestsByGrade || {}),
+          };
 
           if (draft) {
             if (draft.nickname !== undefined) initialNick = draft.nickname;
             if (draft.grade !== undefined && draft.grade >= 1 && draft.grade <= 12) {
               initialGrade = draft.grade;
             }
-            if (draft.hasCustomInterests !== undefined) {
-              initialCustom = Boolean(draft.hasCustomInterests);
-            }
-            if (draft.interests !== undefined && Array.isArray(draft.interests)) {
-              initialInterests = draft.interests;
+            if (draft.interestsByGrade && typeof draft.interestsByGrade === 'object') {
+              initialMap = { ...initialMap, ...draft.interestsByGrade };
             }
           }
 
           setName(initialNick);
           setSelectedGrade(initialGrade);
-          setHasCustomInterests(initialCustom);
 
-          if (initialInterests && initialInterests.length > 0) {
-            const cleaned = initialInterests.map((i) =>
+          // Resolve interests for initialGrade with strict grade-isolation
+          const stored = initialMap[initialGrade] || initialMap[String(initialGrade) as any];
+          let list: string[];
+          let isCustom: boolean;
+
+          if (stored && Array.isArray(stored) && stored.length > 0) {
+            list = stored.map((i) => (typeof i === 'string' ? i.replace(/спотр/gi, 'спорт') : i));
+            isCustom = !isDefaultInterestsList(list);
+          } else if (draft?.interests && Array.isArray(draft.interests) && draft.interests.length > 0) {
+            list = draft.interests.map((i) => (typeof i === 'string' ? i.replace(/спотр/gi, 'спорт') : i));
+            isCustom = !isDefaultInterestsList(list);
+            initialMap[initialGrade] = list;
+          } else if (
+            currentProfile.interests &&
+            currentProfile.interests.length > 0 &&
+            initialGrade === currentProfile.grade
+          ) {
+            list = currentProfile.interests.map((i) =>
               typeof i === 'string' ? i.replace(/спотр/gi, 'спорт') : i
             );
-            setInterestsText(cleaned.join(', '));
+            isCustom = Boolean(currentProfile.hasCustomInterests);
+            initialMap[initialGrade] = list;
           } else {
-            const gradeMap = currentProfile.interestsByGrade || {};
-            const savedForGrade = gradeMap[initialGrade] || gradeMap[String(initialGrade) as any];
-            if (savedForGrade && Array.isArray(savedForGrade) && savedForGrade.length > 0) {
-              setInterestsText(savedForGrade.join(', '));
-            } else {
-              const tier = getTierFromGrade(initialGrade);
-              setInterestsText(getDefaultInterestsForTier(tier).join(', '));
-            }
+            const tier = getTierFromGrade(initialGrade);
+            list = getDefaultInterestsForTier(tier);
+            isCustom = false;
+            initialMap[initialGrade] = list;
           }
+
+          setInterestsByGrade(initialMap);
+          setInterestsText(list.join(', '));
+          setHasCustomInterests(isCustom);
         });
       }
     } else {
@@ -114,66 +136,101 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
   const tierBadgeLabel = tierPolicy.name.split(' (')[0];
   const currentSuggestions = AGE_SUGGESTIONS[currentTier] || AGE_SUGGESTIONS.primary;
 
+  const handleScroll = (event: any) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const isCloseToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 24;
+    setCanScrollDown(!isCloseToBottom);
+  };
+
+  const handleScrollDown = () => {
+    scrollViewRef.current?.scrollToEnd({ animated: true });
+  };
+
   const handleNameChange = (text: string) => {
     setName(text);
-    const parsed = interestsText.split(',').map((s) => s.trim()).filter(Boolean);
+    const parsed = interestsText
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
     StorageService.saveProfileDraft({
       nickname: text,
       grade: selectedGrade,
       interests: parsed,
       hasCustomInterests,
+      interestsByGrade,
     });
   };
 
   const handleGradeChange = (g: number) => {
-    setSelectedGrade(g);
+    const oldGrade = selectedGrade;
     const newTier = getTierFromGrade(g);
 
-    let nextInterestsText = interestsText;
-    let nextInterestsList: string[];
+    // Save current active interests under oldGrade
+    const currentItems = interestsText
+      .split(',')
+      .map((s) => s.trim().replace(/спотр/gi, 'спорт'))
+      .filter(Boolean);
 
-    if (!hasCustomInterests) {
-      const gradeMap = currentProfile.interestsByGrade || {};
-      const savedForGrade = gradeMap[g] || gradeMap[String(g) as any];
-      if (savedForGrade && Array.isArray(savedForGrade) && savedForGrade.length > 0) {
-        nextInterestsList = savedForGrade;
-      } else {
-        nextInterestsList = getDefaultInterestsForTier(newTier);
-      }
-      nextInterestsText = nextInterestsList.join(', ');
-      setInterestsText(nextInterestsText);
+    const updatedMap: Record<number, string[]> = {
+      ...interestsByGrade,
+      [oldGrade]: currentItems,
+    };
+
+    // Load or initialize interests for new grade
+    const storedForNew = updatedMap[g] || updatedMap[String(g) as any];
+    let nextList: string[];
+    let nextIsCustom: boolean;
+
+    if (storedForNew && Array.isArray(storedForNew) && storedForNew.length > 0) {
+      nextList = storedForNew;
+      nextIsCustom = !isDefaultInterestsList(storedForNew);
     } else {
-      nextInterestsList = interestsText
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
+      nextList = getDefaultInterestsForTier(newTier);
+      nextIsCustom = false;
+      updatedMap[g] = nextList;
     }
+
+    const nextText = nextList.join(', ');
+    setSelectedGrade(g);
+    setInterestsByGrade(updatedMap);
+    setInterestsText(nextText);
+    setHasCustomInterests(nextIsCustom);
 
     StorageService.saveProfileDraft({
       nickname: name,
       grade: g,
-      interests: nextInterestsList,
-      hasCustomInterests,
+      interests: nextList,
+      hasCustomInterests: nextIsCustom,
+      interestsByGrade: updatedMap,
     });
   };
 
   const handleInterestsChange = (text: string) => {
     const corrected = text.replace(/спотр/gi, 'спорт');
     setInterestsText(corrected);
-    setHasCustomInterests(true);
     const items = corrected.split(',').map((s) => s.trim()).filter(Boolean);
+    const isCustom = !isDefaultInterestsList(items);
+    setHasCustomInterests(isCustom);
+
+    const updatedMap: Record<number, string[]> = {
+      ...interestsByGrade,
+      [selectedGrade]: items,
+    };
+    setInterestsByGrade(updatedMap);
+
     StorageService.saveProfileDraft({
       nickname: name,
       grade: selectedGrade,
       interests: items,
-      hasCustomInterests: true,
+      hasCustomInterests: isCustom,
+      interestsByGrade: updatedMap,
     });
   };
 
   const handleAddSuggestion = (item: string) => {
     const currentList = interestsText
       .split(',')
-      .map((s) => s.trim())
+      .map((s) => s.trim().replace(/спотр/gi, 'спорт'))
       .filter(Boolean);
     const itemLower = item.trim().toLowerCase();
     const exists = currentList.some((s) => s.toLowerCase() === itemLower);
@@ -187,22 +244,39 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
 
     const newText = updatedList.join(', ');
     setInterestsText(newText);
-    setHasCustomInterests(true);
+    const isCustom = !isDefaultInterestsList(updatedList);
+    setHasCustomInterests(isCustom);
+
+    const updatedMap: Record<number, string[]> = {
+      ...interestsByGrade,
+      [selectedGrade]: updatedList,
+    };
+    setInterestsByGrade(updatedMap);
+
     StorageService.saveProfileDraft({
       nickname: name,
       grade: selectedGrade,
       interests: updatedList,
-      hasCustomInterests: true,
+      hasCustomInterests: isCustom,
+      interestsByGrade: updatedMap,
     });
   };
 
   const handleAvatarPress = async () => {
-    const parsed = interestsText.split(',').map((s) => s.trim()).filter(Boolean);
+    const parsed = interestsText
+      .split(',')
+      .map((s) => s.trim().replace(/спотр/gi, 'спорт'))
+      .filter(Boolean);
+    const updatedMap: Record<number, string[]> = {
+      ...interestsByGrade,
+      [selectedGrade]: parsed,
+    };
     await StorageService.saveProfileDraft({
       nickname: name,
       grade: selectedGrade,
       interests: parsed,
-      hasCustomInterests,
+      hasCustomInterests: !isDefaultInterestsList(parsed),
+      interestsByGrade: updatedMap,
     });
     onClose();
     setTimeout(() => {
@@ -214,11 +288,6 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
     const trimmed = name.trim() || 'Ученик';
     const newTier = getTierFromGrade(selectedGrade);
 
-    // Retrieve interests for selectedGrade if previously stored
-    const gradeMap: Record<number, string[]> = {
-      ...(currentProfile.interestsByGrade || {}),
-    };
-
     const parsedInterests = interestsText
       .split(',')
       .map((s) => s.trim().replace(/спотр/gi, 'спорт'))
@@ -229,13 +298,16 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
 
     if (parsedInterests.length > 0) {
       finalInterests = parsedInterests;
-      isCustom = hasCustomInterests && !isDefaultInterestsList(finalInterests);
+      isCustom = !isDefaultInterestsList(finalInterests);
     } else {
       finalInterests = getDefaultInterestsForTier(newTier);
       isCustom = false;
     }
 
-    gradeMap[selectedGrade] = finalInterests;
+    const updatedMap: Record<number, string[]> = {
+      ...interestsByGrade,
+      [selectedGrade]: finalInterests,
+    };
 
     const updated: UserProfile = {
       ...currentProfile,
@@ -244,7 +316,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
       tier: newTier,
       interests: finalInterests,
       hasCustomInterests: isCustom,
-      interestsByGrade: gradeMap,
+      interestsByGrade: updatedMap,
     };
 
     await StorageService.clearProfileDraft();
@@ -267,196 +339,222 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
       onRequestClose={handleDismiss}
       statusBarTranslucent
     >
-      <TouchableWithoutFeedback onPress={isOnboarding ? undefined : handleDismiss}>
-        <View style={styles.backdrop}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.keyboardView}
-          >
-            <TouchableWithoutFeedback>
-              <View style={styles.card}>
-                {/* Close Cross - hidden during onboarding */}
-                {!isOnboarding && (
-                  <TouchableOpacity
-                    style={styles.closeBtn}
-                    onPress={handleDismiss}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    accessibilityLabel="Закрыть"
-                  >
-                    <Text style={styles.closeBtnText}>✕</Text>
-                  </TouchableOpacity>
+      <View style={styles.backdrop}>
+        {!isOnboarding && (
+          <TouchableWithoutFeedback onPress={handleDismiss}>
+            <View style={StyleSheet.absoluteFill} />
+          </TouchableWithoutFeedback>
+        )}
+
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.keyboardView}
+        >
+          <View style={styles.card}>
+            {/* Close Cross - hidden during onboarding */}
+            {!isOnboarding && (
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={handleDismiss}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Закрыть"
+              >
+                <Text style={styles.closeBtnText}>✕</Text>
+              </TouchableOpacity>
+            )}
+
+            <ScrollView
+              ref={scrollViewRef}
+              style={styles.scrollView}
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={true}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              nestedScrollEnabled={true}
+              bounces={false}
+              onScroll={handleScroll}
+              scrollEventThrottle={16}
+            >
+              {/* Avatar Circle */}
+              <TouchableOpacity
+                style={styles.avatarCircle}
+                onPress={handleAvatarPress}
+                activeOpacity={0.8}
+              >
+                {currentProfile.avatarUri ? (
+                  <Image source={{ uri: currentProfile.avatarUri }} style={styles.avatarImage} />
+                ) : (
+                  <Text style={styles.avatarEmoji}>🧑‍🎓</Text>
                 )}
+                <View style={styles.avatarBadge}>
+                  <Text style={styles.avatarBadgeText}>📷</Text>
+                </View>
+              </TouchableOpacity>
 
-                <ScrollView
-                  style={styles.scrollView}
-                  contentContainerStyle={styles.scrollContent}
-                  showsVerticalScrollIndicator={false}
-                  keyboardShouldPersistTaps="handled"
-                  bounces={false}
-                >
-                  {/* Avatar Circle */}
-                  <TouchableOpacity
-                    style={styles.avatarCircle}
-                    onPress={handleAvatarPress}
-                    activeOpacity={0.8}
-                  >
-                    {currentProfile.avatarUri ? (
-                      <Image source={{ uri: currentProfile.avatarUri }} style={styles.avatarImage} />
-                    ) : (
-                      <Text style={styles.avatarEmoji}>🧑‍🎓</Text>
-                    )}
-                    <View style={styles.avatarBadge}>
-                      <Text style={styles.avatarBadgeText}>📷</Text>
-                    </View>
-                  </TouchableOpacity>
+              {/* Title & Subtitle */}
+              <Text style={styles.title}>
+                {isOnboarding
+                  ? 'Давай знакомиться!'
+                  : currentProfile.nickname?.trim()
+                  ? 'Профиль ученика'
+                  : 'Давай знакомиться!'}
+              </Text>
+              <Text style={styles.subtitle}>
+                Укажи имя, класс и интересы, чтобы TarkApp подстраивал объяснения и примеры под тебя
+              </Text>
 
-                  {/* Title & Subtitle */}
-                  <Text style={styles.title}>
-                    {isOnboarding ? 'Давай знакомиться!' : (currentProfile.nickname?.trim() ? 'Профиль ученика' : 'Давай знакомиться!')}
+              {/* Name Input */}
+              <View style={styles.inputSection}>
+                <Text style={styles.inputLabel}>Имя или никнейм ученика</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={name}
+                  onChangeText={handleNameChange}
+                  placeholder="Например, Даниил или София"
+                  placeholderTextColor="#64748B"
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  maxLength={24}
+                />
+              </View>
+
+              {/* Grade Selector */}
+              <View style={styles.gradeSection}>
+                <View style={styles.gradeHeaderRow}>
+                  <Text style={styles.inputLabel}>
+                    Класс обучения: <Text style={styles.gradeHighlight}>{selectedGrade} класс</Text>
                   </Text>
-                  <Text style={styles.subtitle}>
-                    Укажи имя, класс и интересы, чтобы TarkApp подстраивал объяснения и примеры под тебя
-                  </Text>
-
-                  {/* Name Input */}
-                  <View style={styles.inputSection}>
-                    <Text style={styles.inputLabel}>Имя или никнейм ученика</Text>
-                    <TextInput
-                      style={styles.textInput}
-                      value={name}
-                      onChangeText={handleNameChange}
-                      placeholder="Например, Даниил или София"
-                      placeholderTextColor="#64748B"
-                      autoCapitalize="words"
-                      autoCorrect={false}
-                      maxLength={24}
-                    />
+                  <View style={styles.tierBadge}>
+                    <Text style={styles.tierBadgeText}>{tierBadgeLabel}</Text>
                   </View>
-
-                  {/* Grade Selector */}
-                  <View style={styles.gradeSection}>
-                    <View style={styles.gradeHeaderRow}>
-                      <Text style={styles.inputLabel}>
-                        Класс обучения: <Text style={styles.gradeHighlight}>{selectedGrade} класс</Text>
-                      </Text>
-                      <View style={styles.tierBadge}>
-                        <Text style={styles.tierBadgeText}>{tierBadgeLabel}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.gradeGrid}>
-                      {GRADES.map((g) => {
-                        const isSelected = selectedGrade === g;
-                        return (
-                          <TouchableOpacity
-                            key={g}
-                            style={[
-                              styles.gradeChip,
-                              isSelected && styles.gradeChipSelected,
-                            ]}
-                            onPress={() => handleGradeChange(g)}
-                            activeOpacity={0.7}
-                          >
-                            <Text
-                              style={[
-                                styles.gradeChipText,
-                                isSelected && styles.gradeChipTextSelected,
-                              ]}
-                            >
-                              {g}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  </View>
-
-                  {/* Interests & Age Suggestions */}
-                  <View style={styles.interestsSection}>
-                    <Text style={styles.inputLabel}>
-                      Увлечения и интересы (для понятных примеров):
-                    </Text>
-                    <TextInput
-                      style={[styles.textInput, styles.interestsInput]}
-                      value={interestsText}
-                      onChangeText={handleInterestsChange}
-                      placeholder={getInterestsPlaceholder(currentTier)}
-                      placeholderTextColor="#64748B"
-                      multiline
-                    />
-                    <Text style={styles.interestsHint}>
-                      💡 Тьютор объяснит грамматику и примеры через аналогии с любимыми играми и хобби!
-                    </Text>
-
-                    <Text style={styles.suggestionsTitle}>Быстрые подсказки по возрасту:</Text>
-                    <View style={styles.suggestionsGrid}>
-                      {currentSuggestions.map((item, idx) => {
-                        const currentList = interestsText
-                          .split(',')
-                          .map((s) => s.trim().toLowerCase())
-                          .filter(Boolean);
-                        const isSelected = currentList.includes(item.trim().toLowerCase());
-                        return (
-                          <TouchableOpacity
-                            key={idx}
-                            style={[
-                              styles.suggestionChip,
-                              isSelected && styles.suggestionChipSelected,
-                            ]}
-                            onPress={() => handleAddSuggestion(item)}
-                            activeOpacity={0.7}
-                          >
-                            <Text
-                              style={[
-                                styles.suggestionText,
-                                isSelected && styles.suggestionTextSelected,
-                              ]}
-                            >
-                              {isSelected ? '✓ ' : '+ '}
-                              {item}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  </View>
-                </ScrollView>
-
-                {/* Fixed Sticky Footer: Save & Continue Buttons */}
-                <View style={[styles.modalFooter, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-                  <TouchableOpacity
-                    style={styles.saveBtn}
-                    onPress={handleSave}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.saveBtnText}>
-                      {isOnboarding ? '🚀 Начать обучение' : '✓ Сохранить'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  {isOnboarding && (
-                    <TouchableOpacity
-                      style={styles.skipBtn}
-                      onPress={handleSave}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.skipBtnText}>Продолжить как Ученик</Text>
-                    </TouchableOpacity>
-                  )}
-
-                  <TouchableOpacity
-                    style={styles.privacyLinkBtn}
-                    onPress={() => Linking.openURL('https://tarkapp.ee/privacy')}
-                    activeOpacity={0.7}
-                    accessibilityRole="link"
-                  >
-                    <Text style={styles.privacyLinkText}>🔒 Политика конфиденциальности</Text>
-                  </TouchableOpacity>
+                </View>
+                <View style={styles.gradeGrid}>
+                  {GRADES.map((g) => {
+                    const isSelected = selectedGrade === g;
+                    return (
+                      <TouchableOpacity
+                        key={g}
+                        style={[
+                          styles.gradeChip,
+                          isSelected && styles.gradeChipSelected,
+                        ]}
+                        onPress={() => handleGradeChange(g)}
+                        activeOpacity={0.7}
+                      >
+                        <Text
+                          style={[
+                            styles.gradeChipText,
+                            isSelected && styles.gradeChipTextSelected,
+                          ]}
+                        >
+                          {g}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               </View>
-            </TouchableWithoutFeedback>
-          </KeyboardAvoidingView>
-        </View>
-      </TouchableWithoutFeedback>
+
+              {/* Interests & Age Suggestions */}
+              <View style={styles.interestsSection}>
+                <Text style={styles.inputLabel}>
+                  Увлечения и интересы (для понятных примеров):
+                </Text>
+                <TextInput
+                  style={[styles.textInput, styles.interestsInput]}
+                  value={interestsText}
+                  onChangeText={handleInterestsChange}
+                  placeholder="Впиши свои увлечения вручную через запятую..."
+                  placeholderTextColor="#64748B"
+                  multiline
+                  scrollEnabled={false}
+                />
+                <Text style={styles.interestsHint}>
+                  💡 Впиши свои увлечения вручную (через запятую) или выбери готовые плашки. Тьютор объяснит правила и примеры через аналогии с твоими любимыми играми и хобби!
+                </Text>
+
+                <Text style={styles.suggestionsTitle}>Быстрые подсказки по возрасту:</Text>
+                <View style={styles.suggestionsGrid}>
+                  {currentSuggestions.map((item, idx) => {
+                    const currentList = interestsText
+                      .split(',')
+                      .map((s) => s.trim().toLowerCase())
+                      .filter(Boolean);
+                    const isSelected = currentList.includes(item.trim().toLowerCase());
+                    return (
+                      <TouchableOpacity
+                        key={idx}
+                        style={[
+                          styles.suggestionChip,
+                          isSelected && styles.suggestionChipSelected,
+                        ]}
+                        onPress={() => handleAddSuggestion(item)}
+                        activeOpacity={0.7}
+                      >
+                        <Text
+                          style={[
+                            styles.suggestionText,
+                            isSelected && styles.suggestionTextSelected,
+                          ]}
+                        >
+                          {isSelected ? '✓ ' : '+ '}
+                          {item}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            </ScrollView>
+
+            {/* Fixed Sticky Footer: Save & Continue Buttons */}
+            <View style={[styles.modalFooter, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+              {/* Active Scroll Down Indicator Button */}
+              {canScrollDown && (
+                <TouchableOpacity
+                  style={styles.scrollDownBtn}
+                  onPress={handleScrollDown}
+                  activeOpacity={0.75}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Прокрутить список вниз к подсказкам"
+                >
+                  <Text style={styles.scrollDownIcon}>↓</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={styles.saveBtn}
+                onPress={handleSave}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.saveBtnText}>
+                  {isOnboarding ? '🚀 Начать обучение' : '✓ Сохранить'}
+                </Text>
+              </TouchableOpacity>
+
+              {isOnboarding && (
+                <TouchableOpacity
+                  style={styles.skipBtn}
+                  onPress={handleSave}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.skipBtnText}>Продолжить как Ученик</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={styles.privacyLinkBtn}
+                onPress={() => Linking.openURL('https://tarkapp.ee/privacy')}
+                activeOpacity={0.7}
+                accessibilityRole="link"
+              >
+                <Text style={styles.privacyLinkText}>🔒 Политика конфиденциальности</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 };
@@ -486,6 +584,7 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     paddingHorizontal: 20,
     paddingBottom: 16,
+    flexDirection: 'column',
     ...Theme.shadow.modal,
   },
   closeBtn: {
@@ -507,12 +606,11 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     width: '100%',
-    flexGrow: 0,
-    flexShrink: 1,
+    flex: 1,
   },
   scrollContent: {
     alignItems: 'center',
-    paddingBottom: 8,
+    paddingBottom: 32,
   },
   avatarCircle: {
     width: 64,
@@ -708,6 +806,28 @@ const styles = StyleSheet.create({
     width: '100%',
     paddingTop: 8,
     alignItems: 'center',
+    position: 'relative',
+  },
+  scrollDownBtn: {
+    position: 'absolute',
+    right: 4,
+    top: -38,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#202830',
+    borderWidth: 1,
+    borderColor: '#334155',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 20,
+    ...Theme.shadow.chip,
+  },
+  scrollDownIcon: {
+    color: '#94A3B8',
+    fontSize: 16,
+    fontWeight: '800',
+    marginTop: -2,
   },
   saveBtn: {
     width: '100%',

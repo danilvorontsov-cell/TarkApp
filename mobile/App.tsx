@@ -2912,7 +2912,7 @@ function MainApp() {
             style={[styles.textInput, styles.interestsInput, isJunior && styles.textInputJunior]}
             value={interestsText}
             onChangeText={handleInterestsChange}
-            placeholder="Впиши свои увлечения вручную через запятую..."
+            placeholder={getInterestsPlaceholder(profile.tier)}
             placeholderTextColor={Theme.colors.textMuted}
             multiline
           />
