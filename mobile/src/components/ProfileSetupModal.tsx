@@ -13,6 +13,7 @@ import {
   ScrollView,
   Image,
   Linking,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -52,7 +53,20 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
   isOnboarding: propIsOnboarding,
 }) => {
   const insets = useSafeAreaInsets();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isOnboarding = propIsOnboarding ?? !Boolean(currentProfile.nickname?.trim());
+
+  // Dynamic responsive sizing adapting to any smartphone screen:
+  const headerTopPadding = insets.top || (Platform.OS === 'android' ? 24 : 44);
+  const visibleHeaderHeight = headerTopPadding + 54;
+  // Top: positioned right below the TarkApp header bar
+  const topOffset = visibleHeaderHeight + 4;
+  // Bottom: positioned closer to the bottom edge, respecting navigation bar insets
+  const bottomOffset = Math.max(insets.bottom, 10) + 8;
+  // Available height for the card between header and bottom navigation
+  const availableHeight = Math.max(windowHeight - topOffset - bottomOffset, 520);
+  // Responsive card width (leaving 12px margin on sides, max 460px on tablets)
+  const cardWidth = Math.min(windowWidth - 24, 460);
 
   const scrollViewRef = useRef<any>(null);
   const wasVisibleRef = useRef(false);
@@ -144,6 +158,12 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
 
   const handleScrollDown = () => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
+  };
+
+  const handleContentSizeChange = (_contentWidth: number, contentHeight: number) => {
+    if (contentHeight <= availableHeight - 80) {
+      setCanScrollDown(false);
+    }
   };
 
   const handleNameChange = (text: string) => {
@@ -346,35 +366,52 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
           </TouchableWithoutFeedback>
         )}
 
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.keyboardView}
-        >
-          <View style={styles.card}>
-            {/* Close Cross - hidden during onboarding */}
-            {!isOnboarding && (
-              <TouchableOpacity
-                style={styles.closeBtn}
-                onPress={handleDismiss}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Закрыть"
-              >
-                <Text style={styles.closeBtnText}>✕</Text>
-              </TouchableOpacity>
-            )}
+        {/* Header spacer: allows the authentic mint TarkApp header in App.tsx to shine through */}
+        <View
+          style={{ height: topOffset, width: '100%', backgroundColor: 'transparent' }}
+          pointerEvents="none"
+        />
 
-            <ScrollView
-              ref={scrollViewRef}
-              style={styles.scrollView}
-              contentContainerStyle={styles.scrollContent}
-              showsVerticalScrollIndicator={true}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
-              nestedScrollEnabled={true}
-              bounces={false}
-              onScroll={handleScroll}
-              scrollEventThrottle={16}
+        <View style={styles.scrimContainer}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.keyboardView}
+          >
+            <View
+              style={[
+                styles.card,
+                {
+                  width: cardWidth,
+                  height: availableHeight,
+                  maxHeight: availableHeight,
+                },
+              ]}
             >
+              {/* Close Cross - hidden during onboarding */}
+              {!isOnboarding && (
+                <TouchableOpacity
+                  style={styles.closeBtn}
+                  onPress={handleDismiss}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  accessibilityLabel="Закрыть"
+                >
+                  <Text style={styles.closeBtnText}>✕</Text>
+                </TouchableOpacity>
+              )}
+
+              <ScrollView
+                ref={scrollViewRef}
+                style={styles.scrollView}
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={true}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                nestedScrollEnabled={true}
+                bounces={false}
+                onScroll={handleScroll}
+                scrollEventThrottle={16}
+                onContentSizeChange={handleContentSizeChange}
+              >
               {/* Avatar Circle */}
               <TouchableOpacity
                 style={styles.avatarCircle}
@@ -508,7 +545,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
             </ScrollView>
 
             {/* Fixed Sticky Footer: Save & Continue Buttons */}
-            <View style={[styles.modalFooter, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+            <View style={styles.modalFooter}>
               {/* Active Scroll Down Indicator Button */}
               {canScrollDown && (
                 <TouchableOpacity
@@ -555,23 +592,30 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
           </View>
         </KeyboardAvoidingView>
       </View>
-    </Modal>
+    </View>
+  </Modal>
   );
 };
 
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(5, 8, 11, 0.85)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 16,
+    backgroundColor: 'transparent',
     zIndex: 9990,
+  },
+  scrimContainer: {
+    flex: 1,
+    width: '100%',
+    backgroundColor: 'rgba(5, 8, 11, 0.82)',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingHorizontal: 12,
   },
   keyboardView: {
     width: '100%',
+    flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
   },
   card: {
     width: MODAL_WIDTH,
@@ -581,9 +625,9 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     borderColor: '#2D3844',
-    paddingTop: 18,
-    paddingHorizontal: 20,
-    paddingBottom: 16,
+    paddingTop: 16,
+    paddingHorizontal: 18,
+    paddingBottom: 8,
     flexDirection: 'column',
     ...Theme.shadow.modal,
   },
@@ -804,14 +848,15 @@ const styles = StyleSheet.create({
   },
   modalFooter: {
     width: '100%',
-    paddingTop: 8,
+    paddingTop: 6,
+    paddingBottom: 4,
     alignItems: 'center',
     position: 'relative',
   },
   scrollDownBtn: {
     position: 'absolute',
     right: 4,
-    top: -38,
+    top: -36,
     width: 32,
     height: 32,
     borderRadius: 16,

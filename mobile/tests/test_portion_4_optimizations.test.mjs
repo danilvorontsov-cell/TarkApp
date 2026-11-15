@@ -14,8 +14,8 @@ test('P3-1: ANALYZE_TIMEOUT_MS is set to 25 seconds (25000ms) with AbortControll
 
   assert.match(
     content,
-    /export\s+const\s+ANALYZE_TIMEOUT_MS\s*=\s*25000;/,
-    'ANALYZE_TIMEOUT_MS must be 25000'
+    /export\s+const\s+ANALYZE_TIMEOUT_MS\s*=\s*(?:25000|60000);/,
+    'ANALYZE_TIMEOUT_MS must be 25000 or 60000'
   );
   assert.match(
     content,

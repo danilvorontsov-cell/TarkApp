@@ -3132,99 +3132,107 @@ function MainApp() {
         end={{ x: 0, y: 1 }}
         style={[styles.headerBar, { paddingTop: headerTopPadding + 4 }]}
       >
-        <TouchableOpacity
-          style={styles.headerMenuBtn}
-          onPress={() => setIsDrawerOpen(true)}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="Открыть меню"
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-        >
-          <View style={styles.burgerIconBox} pointerEvents="none">
-            <View style={styles.burgerBar} />
-            <View style={styles.burgerBar} />
-            <View style={styles.burgerBar} />
-          </View>
-        </TouchableOpacity>
+        {Boolean(profile.nickname?.trim()) ? (
+          <TouchableOpacity
+            style={styles.headerMenuBtn}
+            onPress={() => setIsDrawerOpen(true)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Открыть меню"
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <View style={styles.burgerIconBox} pointerEvents="none">
+              <View style={styles.burgerBar} />
+              <View style={styles.burgerBar} />
+              <View style={styles.burgerBar} />
+            </View>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.headerMenuBtn} pointerEvents="none" />
+        )}
 
         <View style={styles.headerTitleCenter} pointerEvents="none">
           <BrandLogo height={24} tintColor={styles.burgerBar.backgroundColor} />
         </View>
 
         {/* Right Header Controls: PRO/Plan Badge & Profile */}
-        <View style={styles.headerRightGroup}>
-          <TouchableOpacity
-            style={[
-              styles.headerProBadge,
-              isPro && styles.headerProBadgeActive,
-            ]}
-            onPress={() => setIsPaywallVisible(true)}
-            accessibilityLabel={
-              isPro
-                ? `Подписка активна: ${licenseStatus?.package_name || 'PRO'}`
-                : 'Тариф: Free. Нажмите для выбора тарифа'
-            }
-            accessibilityRole="button"
-            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-            activeOpacity={0.8}
-          >
-            <Text
+        {Boolean(profile.nickname?.trim()) ? (
+          <View style={styles.headerRightGroup}>
+            <TouchableOpacity
               style={[
-                styles.headerProBadgeText,
-                isPro && styles.headerProBadgeTextActive,
+                styles.headerProBadge,
+                isPro && styles.headerProBadgeActive,
               ]}
-            >
-              {isPro
-                ? (licenseStatus?.package_name ? `👑 ${licenseStatus.package_name}` : '👑 PRO')
-                : 'Free'}
-            </Text>
-          </TouchableOpacity>
-
-          <View
-            style={[
-              styles.headerProfilePill,
-              !profile.nickname?.trim() && styles.headerProfilePillGuest,
-            ]}
-          >
-            <TouchableOpacity
-              onPress={handleSelectAvatarSource}
-              accessibilityLabel="Сменить аватарку"
-              accessibilityRole="button"
-              hitSlop={{ top: 8, bottom: 8, left: 6, right: 4 }}
-              activeOpacity={0.7}
-            >
-              {profile.avatarUri ? (
-                <Image source={{ uri: profile.avatarUri }} style={styles.headerProfileAvatar} />
-              ) : (
-                <Text style={styles.headerProfileEmoji}>
-                  {profile.nickname?.trim() ? '🧑‍🎓' : '👤'}
-                </Text>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setIsProfileSetupModalVisible(true)}
+              onPress={() => setIsPaywallVisible(true)}
               accessibilityLabel={
-                profile.nickname?.trim()
-                  ? `Профиль: ${profile.nickname.trim()}`
-                  : 'Войти в профиль'
+                isPro
+                  ? `Подписка активна: ${licenseStatus?.package_name || 'PRO'}`
+                  : 'Тариф: Free. Нажмите для выбора тарифа'
               }
               accessibilityRole="button"
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
-              activeOpacity={0.75}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+              activeOpacity={0.8}
             >
               <Text
                 style={[
-                  styles.headerProfileText,
-                  !profile.nickname?.trim() && styles.headerProfileTextGuest,
+                  styles.headerProBadgeText,
+                  isPro && styles.headerProBadgeTextActive,
                 ]}
-                numberOfLines={1}
               >
-                {profile.nickname?.trim() ? profile.nickname.trim() : 'Войти'}
+                {isPro
+                  ? (licenseStatus?.package_name ? `👑 ${licenseStatus.package_name}` : '👑 PRO')
+                  : 'Free'}
               </Text>
             </TouchableOpacity>
+
+            <View
+              style={[
+                styles.headerProfilePill,
+                !profile.nickname?.trim() && styles.headerProfilePillGuest,
+              ]}
+            >
+              <TouchableOpacity
+                onPress={handleSelectAvatarSource}
+                accessibilityLabel="Сменить аватарку"
+                accessibilityRole="button"
+                hitSlop={{ top: 8, bottom: 8, left: 6, right: 4 }}
+                activeOpacity={0.7}
+              >
+                {profile.avatarUri ? (
+                  <Image source={{ uri: profile.avatarUri }} style={styles.headerProfileAvatar} />
+                ) : (
+                  <Text style={styles.headerProfileEmoji}>
+                    {profile.nickname?.trim() ? '🧑‍🎓' : '👤'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setIsProfileSetupModalVisible(true)}
+                accessibilityLabel={
+                  profile.nickname?.trim()
+                    ? `Профиль: ${profile.nickname.trim()}`
+                    : 'Войти в профиль'
+                }
+                accessibilityRole="button"
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+                activeOpacity={0.75}
+              >
+                <Text
+                  style={[
+                    styles.headerProfileText,
+                    !profile.nickname?.trim() && styles.headerProfileTextGuest,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {profile.nickname?.trim() ? profile.nickname.trim() : 'Войти'}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
+        ) : (
+          <View style={styles.headerMenuBtn} pointerEvents="none" />
+        )}
 
         {/* Non-interactive concave arch cap at bottom of header */}
         <View pointerEvents="none" style={styles.headerConcaveArch} />
