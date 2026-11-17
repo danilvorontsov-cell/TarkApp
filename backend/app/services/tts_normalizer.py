@@ -994,16 +994,49 @@ def normalize_number_ranges(text: str) -> str:
 # 4. РИМСКИЕ И ПОРЯДКОВЫЕ ЧИСЛИТЕЛЬНЫЕ (Roman & Ordinals)
 # ==============================================================================
 
-ROMAN_TO_INT = {
-    "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5,
-    "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10,
-    "XI": 11, "XII": 12, "XIII": 13, "XIV": 14, "XV": 15,
-    "XVI": 16, "XVII": 17, "XVIII": 18, "XIX": 19, "XX": 20,
-    "XXI": 21, "XXII": 22, "XXIII": 23, "XXIV": 24, "XXV": 25,
-    "XXVI": 26, "XXVII": 27, "XXVIII": 28, "XXIX": 29, "XXX": 30,
-}
+ROMAN_REGEX = re.compile(r'^(M{0,3})(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$')
+ROMAN_VALS = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
 
-ORDINAL_FORMS: Dict[int, Tuple[str, str, str, str, str, str]] = {
+def roman_to_int(s: str) -> Optional[int]:
+    """Конвертирует строку римских цифр в целое число (напр. 'IV' -> 4, 'XXI' -> 21)."""
+    if not s or not re.match(r'^[IVXLCDM]+$', s):
+        return None
+    if not ROMAN_REGEX.match(s):
+        return None
+    total = 0
+    prev_val = 0
+    for char in reversed(s):
+        val = ROMAN_VALS.get(char, 0)
+        if val >= prev_val:
+            total += val
+        else:
+            total -= val
+        prev_val = val
+    return total
+
+def is_roman_token(s: str) -> bool:
+    """Проверяет, является ли отдельный токен валидной римской цифрой в верхнем регистре."""
+    s = s.strip()
+    if not s or not s.isupper():
+        return False
+    if not re.match(r'^[IVXLCDM]+$', s):
+        return False
+    return bool(ROMAN_REGEX.match(s))
+
+def is_pure_roman_or_math(text: str) -> bool:
+    """
+    Проверяет, состоит ли текст без кириллицы исключительно из римских цифр,
+    знаков препинания, скобок/кавычек и математических знаков (напр. 'IV', 'I, V, X', 'IV = 4', '«IV»').
+    """
+    if not text:
+        return False
+    cleaned = re.sub(r'[\d+\-*\/=·×÷<>.,;:!?()\[\]«»\"\'\s—–-]', ' ', text).strip()
+    if not cleaned:
+        return False
+    words = cleaned.split()
+    return all(is_roman_token(w) for w in words)
+
+RUSSIAN_ORDINALS_1_TO_100: Dict[int, Tuple[str, str, str, str, str, str]] = {
     1: ("первый", "первого", "первом", "первое", "первая", "первой"),
     2: ("второй", "второго", "втором", "второе", "вторая", "второй"),
     3: ("третий", "третьего", "третьем", "третье", "третья", "третьей"),
@@ -1024,127 +1057,221 @@ ORDINAL_FORMS: Dict[int, Tuple[str, str, str, str, str, str]] = {
     18: ("восемнадцатый", "восемнадцатого", "восемнадцатом", "восемнадцатое", "восемнадцатая", "восемнадцатой"),
     19: ("девятнадцатый", "девятнадцатого", "девятнадцатом", "девятнадцатое", "девятнадцатая", "девятнадцатой"),
     20: ("двадцатый", "двадцатого", "двадцатом", "двадцатое", "двадцатая", "двадцатой"),
-    21: ("двадцать первый", "двадцать первого", "двадцать первом", "двадцать первое", "двадцать первая", "двадцать первой"),
-    22: ("двадцать второй", "двадцать второго", "двадцать втором", "двадцать второе", "двадцать вторая", "двадцать второй"),
-    23: ("двадцать третий", "двадцать третьего", "двадцать третьем", "двадцать третье", "двадцать третья", "двадцать третьей"),
-    24: ("двадцать четвертый", "двадцать четвертого", "двадцать четвертом", "двадцать четвертое", "двадцать четвертая", "двадцать четвертой"),
-    25: ("двадцать пятый", "двадцать пятого", "двадцать пятом", "двадцать пятое", "двадцать пятая", "двадцать пятой"),
-    26: ("двадцать шестой", "двадцать шестого", "двадцать шестом", "двадцать шестое", "двадцать шестая", "двадцать шестой"),
-    27: ("двадцать седьмой", "двадцать седьмого", "двадцать седьмом", "двадцать седьмое", "двадцать седьмая", "двадцать седьмой"),
-    28: ("двадцать восьмой", "двадцать восьмого", "двадцать восьмом", "двадцать восьмое", "двадцать восьмая", "двадцать восьмой"),
-    29: ("двадцать девятый", "двадцать девятого", "двадцать девятом", "двадцать девятое", "двадцать девятая", "двадцать девятой"),
     30: ("тридцатый", "тридцатого", "тридцатом", "тридцатое", "тридцатая", "тридцатой"),
+    40: ("сороковой", "сорокового", "сороковом", "сороковое", "сороковая", "сороковой"),
+    50: ("пятидесятый", "пятидесятого", "пятидесятом", "пятидесятое", "пятидесятая", "пятидесятой"),
+    60: ("шестидесятый", "шестидесятого", "шестидесятом", "шестидесятое", "шестидесятая", "шестидесятой"),
+    70: ("семидесятый", "семидесятого", "семидесятом", "семидесятое", "семидесятая", "семидесятой"),
+    80: ("восьмидесятый", "восьмидесятого", "восьмидесятом", "восьмидесятое", "восьмидесятая", "восьмидесятой"),
+    90: ("девяностый", "девяностого", "девяностом", "девяностое", "девяностая", "девяностой"),
+    100: ("сотый", "сотого", "сотом", "сотое", "сотая", "сотой"),
+    500: ("пятисотый", "пятисотого", "пятисотом", "пятисотое", "пятисотая", "пятисотой"),
+    1000: ("тысячный", "тысячного", "тысячном", "тысячное", "тысячная", "тысячной"),
 }
 
-ROMAN_KEYS = sorted(ROMAN_TO_INT.keys(), key=lambda x: len(x), reverse=True)
+TENS_WORDS = {
+    20: "двадцать",
+    30: "тридцать",
+    40: "сорок",
+    50: "пятьдесят",
+    60: "шестьдесят",
+    70: "семьдесят",
+    80: "восемьдесят",
+    90: "девяносто",
+}
+
+RUSSIAN_CARDINALS = {
+    1: "один", 2: "два", 3: "три", 4: "четыре", 5: "пять",
+    6: "шесть", 7: "семь", 8: "восемь", 9: "девять", 10: "десять",
+    11: "одиннадцать", 12: "двенадцать", 13: "тринадцать", 14: "четырнадцать", 15: "пятнадцать",
+    16: "шестнадцать", 17: "семнадцать", 18: "восемнадцать", 19: "девятнадцать", 20: "двадцать",
+    30: "тридцать", 40: "сорок", 50: "пятьдесят", 60: "шестьдесят", 70: "семьдесят", 80: "восемьдесят", 90: "девяносто", 100: "сто"
+}
+
+def get_ordinal_forms(num: int) -> Tuple[str, ...]:
+    """Возвращает кортеж грамматических форм порядкового числительного (муж.им, муж.род, муж.пр, ср.им, жен.им, жен.пр)."""
+    if num in RUSSIAN_ORDINALS_1_TO_100:
+        return RUSSIAN_ORDINALS_1_TO_100[num]
+    tens = (num // 10) * 10
+    units = num % 10
+    if tens in TENS_WORDS and units in RUSSIAN_ORDINALS_1_TO_100:
+        prefix = TENS_WORDS[tens]
+        return tuple(f"{prefix} {form}" for form in RUSSIAN_ORDINALS_1_TO_100[units])
+    return ("число " + str(num),) * 6
+
+def get_cardinal(num: int) -> str:
+    """Возвращает количественное числительное для математических равенств (IV = 4 -> четыре = 4)."""
+    if num in RUSSIAN_CARDINALS:
+        return RUSSIAN_CARDINALS[num]
+    tens = (num // 10) * 10
+    units = num % 10
+    if tens in TENS_WORDS and units in RUSSIAN_CARDINALS:
+        return f"{TENS_WORDS[tens]} {RUSSIAN_CARDINALS[units]}"
+    return str(num)
+
+# Обратная совместимость для внешних импортов
+ROMAN_TO_INT = {r: roman_to_int(r) for r in [
+    "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
+    "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX",
+    "XXI", "XXII", "XXIII", "XXIV", "XXV", "XXVI", "XXVII", "XXVIII", "XXIX", "XXX"
+]}
+ORDINAL_FORMS = {n: get_ordinal_forms(n) for n in range(1, 31)}
+ROMAN_KEYS = sorted([k for k in ROMAN_TO_INT.keys() if k], key=lambda x: len(x), reverse=True)
 ROMAN_PATTERN = "|".join(ROMAN_KEYS)
 
 
 def normalize_roman_numerals(text: str) -> str:
-    """Конвертирует римские цифры в русском контексте в словесный русский эквивалент."""
+    """
+    Конвертирует римские цифры в русском контексте в словесный русский эквивалент.
+    - В математических равенствах (IV = 4) озвучивает как количественные числительные («четыре = 4»).
+    - В согласовании с существительными подбирает правильный род и падеж («римская цифра четвёртая», «задание четвёртое»).
+    - В остальных контекстах, изолированно и в списках (I, V, X) озвучивает как порядковые числительные («первый, пятый, десятый»).
+    """
     if not text:
         return ""
 
-    p_noun_first = re.compile(
-        r'(?i)\b(в|во)?\s*(глав[а-яё]*|класс[а-яё]*|том[а-яё]*)\s+(' + ROMAN_PATTERN + r')\b'
+    t = text
+    lexicon = _load_tts_lexicon().get("roman_numerals", {})
+
+    # 1. Математические равенства с римскими цифрами (напр. IV = 4, V = 5, IV = V - I)
+    def repl_eq(m):
+        full = m.group(0)
+        def _to_card(rm):
+            val = rm.group(1).upper()
+            num = roman_to_int(val)
+            if num:
+                return get_cardinal(num)
+            return val
+        return re.sub(r'\b([IVXLCDM]+)\b', _to_card, full)
+
+    t = re.sub(r'(?:[IVXLCDM\d\s+\-*\/÷·×]+=[IVXLCDM\d\s+\-*\/÷·×]+)', repl_eq, t)
+
+    # 2. Существительные женского рода (римская цифра, цифра, глава, часть, страница, строка)
+    p_fem = re.compile(
+        r'(?i)\b(римск(?:ая|ой|ую|ие|их|им)\s+цифр[а-яё]*|цифр[а-яё]*|глав[а-яё]*|част[а-яё]*|страниц[а-яё]*|строк[а-яё]*)\s+([«"“„]?)([IVXLCDM]+)([»"”]?)'
     )
-    def repl_noun_first(m):
-        prep = m.group(1) or ""
-        noun = m.group(2)
+    def repl_fem(m):
+        noun = m.group(1)
+        open_q = m.group(2) or ""
         roman = m.group(3).upper()
-        num = ROMAN_TO_INT.get(roman)
+        close_q = m.group(4) or ""
+        num = roman_to_int(roman)
         if not num:
             return m.group(0)
+        forms = get_ordinal_forms(num)
         noun_l = noun.lower()
-        if "глав" in noun_l:
-            form_idx = 4 if noun_l == "глава" else 5
-        elif "класс" in noun_l or "том" in noun_l:
-            form_idx = 2 if (prep or noun_l.endswith("е")) else (1 if noun_l.endswith("а") else 0)
+        if any(noun_l.endswith(e) for e in ['е', 'и', 'ой', 'ей']):
+            ord_word = forms[5]
         else:
-            form_idx = 0
-        w = ORDINAL_FORMS[num][form_idx]
-        if prep:
-            return f"{prep} {noun} {w}"
-        return f"{noun} {w}"
+            ord_word = forms[4]
+        return f"{noun} {open_q}{ord_word}{close_q}"
+    t = p_fem.sub(repl_fem, t)
 
-    t = p_noun_first.sub(repl_noun_first, text)
-
-    p_num_first = re.compile(
-        r'(?i)(?:(\bв|во|на|о|об|обо|к|ко|до|с|со|от|после|около)\s+)?'
-        r'\b(' + ROMAN_PATTERN + r')(?:-([а-яё]+))?\s*'
-        r'\b(век[а-яё]*|в\b\.?|тысячелети[а-яё]*|класс[а-яё]*|глав[а-яё]*|том[а-яё]*)'
+    # 3. Существительные среднего рода (задание, упражнение, правило, действие)
+    p_neut = re.compile(
+        r'(?i)\b(задани[а-яё]*|упражнени[а-яё]*|правил[а-яё]*|действи[а-яё]*)\s+([«"“„]?)([IVXLCDM]+)([»"”]?)'
     )
-    def repl_num_first(m):
+    def repl_neut(m):
+        noun = m.group(1)
+        open_q = m.group(2) or ""
+        roman = m.group(3).upper()
+        close_q = m.group(4) or ""
+        num = roman_to_int(roman)
+        if not num:
+            return m.group(0)
+        forms = get_ordinal_forms(num)
+        noun_l = noun.lower()
+        if noun_l.endswith('и') or noun_l.endswith('ем'):
+            ord_word = forms[2]
+        else:
+            ord_word = forms[3]
+        return f"{noun} {open_q}{ord_word}{close_q}"
+    t = p_neut.sub(repl_neut, t)
+
+    # 4. Существительные мужского рода (класс, том, шаг, пункт, раздел, урок)
+    p_masc = re.compile(
+        r'(?i)\b(в|во)?\s*(класс[а-яё]*|том[а-яё]*|шаг[а-яё]*|пункт[а-яё]*|раздел[а-яё]*|урок[а-яё]*)\s+([«"“„]?)([IVXLCDM]+)([»"”]?)'
+    )
+    def repl_masc(m):
+        prep = m.group(1) or ""
+        noun = m.group(2)
+        open_q = m.group(3) or ""
+        roman = m.group(4).upper()
+        close_q = m.group(5) or ""
+        num = roman_to_int(roman)
+        if not num:
+            return m.group(0)
+        forms = get_ordinal_forms(num)
+        noun_l = noun.lower()
+        if noun_l.endswith('е') or noun_l.endswith('ом'):
+            ord_word = forms[2]
+        elif noun_l.endswith('а'):
+            ord_word = forms[1]
+        else:
+            ord_word = forms[0]
+        if prep:
+            return f"{prep} {noun} {open_q}{ord_word}{close_q}"
+        return f"{noun} {open_q}{ord_word}{close_q}"
+    t = p_masc.sub(repl_masc, t)
+
+    # 5. Века и тысячелетия (XXI век, в XXI веке, до XX века)
+    p_cent = re.compile(
+        r'(?i)(?:(\bв|во|на|о|об|обо|к|ко|до|с|со|от|после|около)\s+)?\b([IVXLCDM]+)(?:-([а-яё]+))?\s*\b(век[а-яё]*|в\b\.?|тысячелети[а-яё]*|класс[а-яё]*)'
+    )
+    def repl_cent(m):
         prep = m.group(1) or ""
         roman = m.group(2).upper()
         suffix = (m.group(3) or "").lower()
         noun = m.group(4)
-        noun_l = noun.lower().rstrip(".")
-        num = ROMAN_TO_INT.get(roman)
+        num = roman_to_int(roman)
         if not num:
             return m.group(0)
-
+        forms = get_ordinal_forms(num)
         prep_l = prep.lower()
+        noun_l = noun.lower().rstrip(".")
         if noun_l in ("век", "века", "веке", "веку", "веком", "в", "вв"):
-            if prep_l in ("в", "во", "на", "о", "об", "обо") or noun_l == "веке" or suffix in ("м", "ом", "ем"):
-                form_idx = 2
+            if prep_l in ("в", "во", "на", "о", "об") or noun_l == "веке" or suffix in ("м", "ом", "ем"):
+                ord_word = forms[2]
                 actual_noun = "веке" if noun_l in ("в", "вв") else noun
             elif prep_l in ("до", "с", "со", "от", "после", "около") or noun_l in ("века", "вв") or suffix in ("го", "ого"):
-                form_idx = 1
+                ord_word = forms[1]
                 actual_noun = "века" if noun_l in ("в", "вв") else noun
-            elif prep_l in ("к", "ко") or noun_l == "веку" or suffix == "му":
-                form_idx = 2
-                actual_noun = noun
             else:
-                form_idx = 0
+                ord_word = forms[0]
                 actual_noun = "век" if noun_l in ("в", "вв") else noun
         elif "тысячелети" in noun_l:
             if prep_l in ("в", "во", "о", "об") or noun_l.endswith("и") or suffix in ("м", "ом", "ем"):
-                form_idx = 2
+                ord_word = forms[2]
             elif prep_l in ("до", "с", "со", "от", "после") or noun_l.endswith("я") or suffix in ("го", "ого"):
-                form_idx = 1
+                ord_word = forms[1]
             else:
-                form_idx = 3
+                ord_word = forms[3]
             actual_noun = noun
         elif "класс" in noun_l:
             if prep_l in ("в", "во") or noun_l.endswith("е") or suffix in ("м", "ом", "ем"):
-                form_idx = 2
+                ord_word = forms[2]
             elif noun_l.endswith("а") or suffix in ("го", "ого"):
-                form_idx = 1
+                ord_word = forms[1]
             else:
-                form_idx = 0
-            actual_noun = noun
-        elif "глав" in noun_l:
-            if noun_l == "глава" and suffix not in ("й", "ой"):
-                form_idx = 4
-            else:
-                form_idx = 5
-            actual_noun = noun
-        elif "том" in noun_l:
-            if prep_l in ("в", "во") or noun_l.endswith("е"):
-                form_idx = 2
-            elif noun_l.endswith("а"):
-                form_idx = 1
-            else:
-                form_idx = 0
+                ord_word = forms[0]
             actual_noun = noun
         else:
+            ord_word = forms[0]
             actual_noun = noun
-
-        w = ORDINAL_FORMS[num][form_idx]
         if prep:
-            return f"{prep} {w} {actual_noun}"
-        return f"{w} {actual_noun}"
+            return f"{prep} {ord_word} {actual_noun}"
+        return f"{ord_word} {actual_noun}"
+    t = p_cent.sub(repl_cent, t)
 
-    t = p_num_first.sub(repl_num_first, t)
-
-    p_standalone = re.compile(r'\b(' + ROMAN_PATTERN + r')-([а-яё]+)\b', re.IGNORECASE)
-    def repl_standalone(m):
+    # 6. Суффиксные формы: IV-й, IV-го, IV-м
+    p_standalone_suffix = re.compile(r'\b([IVXLCDM]+)-([а-яё]+)\b', re.IGNORECASE)
+    def repl_standalone_suffix(m):
         roman = m.group(1).upper()
         suffix = m.group(2).lower()
-        num = ROMAN_TO_INT.get(roman)
+        num = roman_to_int(roman)
         if not num:
             return m.group(0)
+        forms = get_ordinal_forms(num)
         if suffix in ("м", "ом", "ем"):
             form_idx = 2
         elif suffix in ("го", "ого"):
@@ -1155,9 +1282,21 @@ def normalize_roman_numerals(text: str) -> str:
             form_idx = 4
         else:
             form_idx = 0
-        return ORDINAL_FORMS[num][form_idx]
+        return forms[form_idx]
+    t = p_standalone_suffix.sub(repl_standalone_suffix, t)
 
-    t = p_standalone.sub(repl_standalone, t)
+    # 7. Изолированные римские цифры и перечисления (I, V, X; IV.; «IV»; (IV); IV)
+    def repl_standalone(m):
+        roman = m.group(1).upper()
+        num = roman_to_int(roman)
+        if not num:
+            return m.group(0)
+        if roman in lexicon:
+            return lexicon[roman]
+        forms = get_ordinal_forms(num)
+        return forms[0]
+
+    t = re.sub(r'\b([IVXLCDM]+)\b', repl_standalone, t)
     return t
 
 
@@ -1958,7 +2097,7 @@ def normalize_text_for_speech(text: str, is_russian_context: bool = True) -> str
     def mask_est_quote(match):
         q = match.group(0)
         inner = q[1:-1].strip()
-        if not re.search(r'[а-яА-ЯёЁ=+*]', inner):
+        if not re.search(r'[а-яА-ЯёЁ=+*]', inner) and not is_pure_roman_or_math(inner):
             idx = len(est_quotes)
             est_quotes.append(q)
             return f"ESTQUOTEPLACEHOLDER{idx}ESTQUOTE"
@@ -2092,6 +2231,10 @@ def auto_tag_estonian_phrases(text: str) -> str:
         if is_chemical_formula_or_acronym(phrase):
             return phrase
 
+        # Исключаем римские цифры и математику с ними (IV, XIV, I, V, X)
+        if is_pure_roman_or_math(phrase):
+            return phrase
+
         # Проверяем, не является ли вся фраза английскими брендами / клавишами
         if all(w.lower() in ENGLISH_BRAND_WORDS for w in words):
             return phrase
@@ -2142,10 +2285,14 @@ def prepare_speech_text(display_text: str, is_russian_context: bool = True) -> s
     if not is_russian_context:
         return normalize_text_for_estonian_tts(display_text)
     elif not has_cyrillic and has_latin:
-        # Если в тексте нет кириллицы, но есть латинские слова, проверяем не является ли он чисто английскими брендами
-        raw_words = re.sub(r'[^a-zA-Z0-9\s-]', '', display_text).split()
-        if not (raw_words and all(w.lower() in ENGLISH_BRAND_WORDS for w in raw_words)):
-            return normalize_text_for_estonian_tts(display_text)
+        if is_pure_roman_or_math(display_text):
+            # Текст состоит из римских цифр — направляем в русский речевой контур
+            pass
+        else:
+            # Если в тексте нет кириллицы, но есть латинские слова, проверяем не является ли он чисто английскими брендами
+            raw_words = re.sub(r'[^a-zA-Z0-9\s-]', '', display_text).split()
+            if not (raw_words and all(w.lower() in ENGLISH_BRAND_WORDS for w in raw_words)):
+                return normalize_text_for_estonian_tts(display_text)
 
     # ШАГ 1: Обнаружение и изоляция эстонских фрагментов
     t = auto_tag_estonian_phrases(display_text)
@@ -2189,6 +2336,7 @@ def prepare_speech_text(display_text: str, is_russian_context: bool = True) -> s
             and not re.search(r'[а-яА-ЯёЁ=+*÷·×<>°]|ESTTAGPLACEHOLDER|SSMLSUBTAGPLACEHOLDER', inner)
             and not is_chemical_formula_or_acronym(inner)
             and not all(w.lower() in ENGLISH_BRAND_WORDS for w in re.sub(r'[^a-zA-Z0-9\s-]', '', inner).split())
+            and not is_pure_roman_or_math(inner)
         ):
             idx = len(est_wrappers)
             est_wrappers.append(full)

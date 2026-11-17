@@ -69,6 +69,31 @@ def test_roman_numerals_normalization():
     assert "двадцать первом веке" in segments[0][0]
     assert "третьем тысячелетии" in segments[0][0]
 
+    # Проверка отдельных римских цифр и списков (не должны уходить в эстонский голос!)
+    assert parse_bilingual_segments("IV") == [("четвёртый", DEFAULT_VOICE)]
+    assert parse_bilingual_segments("XIV") == [("четырнадцатый", DEFAULT_VOICE)]
+    assert parse_bilingual_segments("«IV»") == [("«четвёртый»", DEFAULT_VOICE)]
+
+    seg_list = parse_bilingual_segments("Римские цифры: I, V, X")
+    assert len(seg_list) == 1
+    assert seg_list[0][1] == DEFAULT_VOICE
+    assert "первый, пятый, десятый" in seg_list[0][0]
+
+    seg_fem = parse_bilingual_segments("Римская цифра IV")
+    assert len(seg_fem) == 1
+    assert seg_fem[0][1] == DEFAULT_VOICE
+    assert ("четвёртая" in seg_fem[0][0] or "четвертая" in seg_fem[0][0])
+
+    seg_neut = parse_bilingual_segments("В задании IV выполни сложение.")
+    assert len(seg_neut) == 1
+    assert seg_neut[0][1] == DEFAULT_VOICE
+    assert ("четвёртом" in seg_neut[0][0] or "четвертом" in seg_neut[0][0])
+
+    seg_steps = parse_bilingual_segments("Шаг I: открой тетрадь. Шаг II: запиши число.")
+    assert len(seg_steps) == 1
+    assert seg_steps[0][1] == DEFAULT_VOICE
+    assert "Шаг первый" in seg_steps[0][0] and "Шаг второй" in seg_steps[0][0]
+
 
 def test_math_expressions_normalization():
     text = "Чему равен x, если x + y = 15?"

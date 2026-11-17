@@ -202,6 +202,8 @@ from app.services.tts_normalizer import (
     normalize_russian_fractions,
     normalize_russian_decimals,
     normalize_roman_numerals,
+    is_pure_roman_or_math,
+    is_roman_token,
     normalize_number_ranges,
     normalize_russian_ordinals_with_dot,
     normalize_russian_accents_and_yo,
@@ -344,7 +346,11 @@ def parse_bilingual_segments(
         text = normalize_text_for_speech(text, is_russian_context=True)
 
     # 1. Если во всём тексте нет кириллицы вообще — озвучиваем целиком эстонским диктором
+    # Исключение: чисто римские цифры (IV, XIV, I, V, X) озвучиваем русским голосом
     if not re.search(r'[а-яА-ЯёЁ]', text):
+        if is_pure_roman_or_math(text):
+            clean_ru = prepare_speech_text(text.strip(), is_russian_context=True)
+            return [(clean_ru or text.strip(), DEFAULT_VOICE)]
         clean_est = (
             text.strip()
             if (is_speech_text and not re.search(r'[\d+\-*\/=·×]', text))
@@ -383,15 +389,15 @@ def parse_bilingual_segments(
                 matches.append((m.start(), m.end(), clean, True))
         elif quote_val is not None:
             val = quote_val.strip()
-            if val and not _is_pure_english_brand_or_key(val) and not is_chemical_formula_or_acronym(val):
+            if val and not _is_pure_english_brand_or_key(val) and not is_chemical_formula_or_acronym(val) and not is_pure_roman_or_math(val):
                 matches.append((m.start(), m.end(), val, False))
         elif paren_val is not None:
             val = paren_val.strip()
-            if val and not _is_pure_english_brand_or_key(val) and not is_chemical_formula_or_acronym(val):
+            if val and not _is_pure_english_brand_or_key(val) and not is_chemical_formula_or_acronym(val) and not is_pure_roman_or_math(val):
                 matches.append((m.start(), m.end(), val, False))
         elif latin_val is not None:
             val = latin_val.strip()
-            if val and not _is_pure_english_brand_or_key(val) and not is_chemical_formula_or_acronym(val):
+            if val and not _is_pure_english_brand_or_key(val) and not is_chemical_formula_or_acronym(val) and not is_pure_roman_or_math(val):
                 matches.append((m.start(), m.end(), val, False))
 
     def _unmask_bilingual(s: str) -> str:
@@ -587,7 +593,8 @@ def build_ssml(
     has_cyrillic = bool(re.search(r'[а-яА-ЯёЁ]', raw_stripped))
 
     # Ветка 1: Чисто эстонский текст (без кириллицы) — единичная эстонская нормализация
-    if not has_cyrillic and (is_explicit_est_voice or not _is_pure_english_brand_or_key(raw_stripped)):
+    # Исключение: чисто римские цифры (IV, XIV, I, V, X) озвучиваем русским голосом ru-RU-SvetlanaNeural
+    if not has_cyrillic and not is_pure_roman_or_math(raw_stripped) and (is_explicit_est_voice or not _is_pure_english_brand_or_key(raw_stripped)):
         raw_est = re.sub(r'</?\s*est(?:\s+[^>]*)?>', '', raw_stripped, flags=re.IGNORECASE)
         if is_speech_text:
             norm_est = raw_est.strip()
