@@ -9,6 +9,8 @@ import {
   TouchableWithoutFeedback,
   PanResponder,
   Image,
+  Linking,
+  ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -232,7 +234,12 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
         </TouchableOpacity>
 
         {/* Navigation Sections */}
-        <View style={styles.menuList}>
+        <ScrollView
+          style={styles.menuList}
+          contentContainerStyle={styles.menuListContent}
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
           {menuItems.map((item) => {
             const isActive = activeTab === item.id;
             return (
@@ -294,7 +301,7 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
               </Text>
             </TouchableOpacity>
           ) : null}
-        </View>
+        </ScrollView>
 
 
         {/* Thin Divider Line */}
@@ -376,7 +383,23 @@ export const DrawerMenu: React.FC<DrawerMenuProps> = ({
           )}
 
           <View style={styles.versionContainer}>
-            <Text style={styles.versionText}>TarkApp • v1.4.2 • Tark Systems</Text>
+            <TouchableOpacity
+              onPress={() => {
+                Linking.openURL('https://tarkapp.ee').catch(() => {});
+              }}
+              activeOpacity={0.7}
+              style={styles.siteLinkTouchable}
+              accessibilityLabel="Инструкция и обзор на сайте tarkapp.ee"
+              accessibilityRole="link"
+            >
+              <Text style={styles.siteLinkText}>
+                📖 Инструкция и обзор: <Text style={styles.siteLinkHighlight}>tarkapp.ee</Text>
+              </Text>
+            </TouchableOpacity>
+
+            <Text style={styles.versionText} numberOfLines={1} adjustsFontSizeToFit>
+              TarkApp • v1.4.3 • Tark Systems
+            </Text>
           </View>
         </View>
       </Animated.View>
@@ -478,11 +501,13 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     backgroundColor: darkTheme.cardBackground,
+    zIndex: 2,
+    elevation: 3,
+  },
+  menuListContent: {
     paddingTop: 16,
     paddingBottom: 14,
     paddingHorizontal: 12,
-    zIndex: 2,
-    elevation: 3,
   },
   menuItem: {
     flexDirection: 'row',
@@ -551,15 +576,30 @@ const styles = StyleSheet.create({
   },
   drawerFooter: {
     paddingHorizontal: 12,
-    paddingTop: 8,
+    paddingTop: 4,
+    flexShrink: 0,
   },
   versionContainer: {
     paddingHorizontal: 14,
-    paddingTop: 10,
-    paddingBottom: 2,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  siteLinkTouchable: {
+    paddingVertical: 3,
+    marginBottom: 4,
+  },
+  siteLinkText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: darkTheme.textSecondary,
+  },
+  siteLinkHighlight: {
+    color: darkTheme.accent,
+    textDecorationLine: 'underline',
+    fontWeight: '700',
   },
   versionText: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: darkTheme.textMuted,
     fontWeight: '500',
   },
