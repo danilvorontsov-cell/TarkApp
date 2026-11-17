@@ -136,7 +136,7 @@ def get_license_status(
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> LicenseStatusResponse:
-    device_id = current_user.user_id
+    device_id = (x_device_id or "").strip() or current_user.user_id
     if not device_id:
         if settings.APP_ENV in ("development", "test"):
             device_id = DEV_FALLBACK_DEVICE_ID
@@ -154,7 +154,7 @@ def get_license_status(
     return LicenseStatusResponse(
         is_active=status_data["allowed"],
         has_key=has_key,
-        free_reviews_left=status_data.get("free_reviews_left", 20),
+        free_reviews_left=status_data.get("free_reviews_left", 0) if status_data["allowed"] else 0,
         max_free_reviews=status_data.get("max_free_reviews", 20),
         days_left=status_data["days_left"],
         expires_at=status_data["expires_at"],

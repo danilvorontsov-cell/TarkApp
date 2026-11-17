@@ -48,13 +48,14 @@ def test_expired_trial_blocked(setup_db):
     db = setup_db
     device_id = "test-device-expired-1"
 
-    # Pre-create expired device
+    # Pre-create expired device with stale reviews count
     past_date = datetime.utcnow() - timedelta(days=2)
     dev = Device(
         device_id=device_id,
         first_seen_at=datetime.utcnow() - timedelta(days=16),
         trial_expires_at=past_date,
         has_active_access=False,
+        free_reviews_left=19,
     )
     db.add(dev)
     db.commit()
@@ -63,6 +64,14 @@ def test_expired_trial_blocked(setup_db):
     assert res["allowed"] is False
     assert res["is_active"] is False
     assert res["days_left"] == 0
+    assert res["free_reviews_left"] == 0
+
+    # Ensure status endpoint also returns 0 free reviews for expired trial
+    status_resp = client.get("/api/v1/license/status", headers={"X-Device-ID": device_id})
+    assert status_resp.status_code == 200
+    status_data = status_resp.json()
+    assert status_data["is_active"] is False
+    assert status_data["free_reviews_left"] == 0
 
 
 def test_endpoint_status_returns_trial_info(setup_db):
@@ -121,13 +130,24 @@ def test_activate_key_success(setup_db):
 def test_activate_already_used_key_rejected(setup_db):
     db = setup_db
     device_id = "test-device-activate-2"
+    other_device_id = "test-device-other-1"
     key_code = "TEST-USED-KEY"
+
+    # Pre-create other device that currently holds the key
+    other_dev = Device(
+        device_id=other_device_id,
+        first_seen_at=datetime.utcnow() - timedelta(days=5),
+        trial_expires_at=datetime.utcnow() + timedelta(days=25),
+        has_active_access=True,
+        activated_key=key_code,
+    )
+    db.add(other_dev)
 
     key_obj = AccessKey(
         key_code=key_code,
         duration_days=30,
         is_used=True,
-        used_by_device="another-device",
+        used_by_device=other_device_id,
     )
     db.add(key_obj)
     db.commit()

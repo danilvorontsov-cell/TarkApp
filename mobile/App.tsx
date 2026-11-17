@@ -1072,7 +1072,11 @@ function MainApp() {
     if (!checkAuthGate()) return;
     // Check if free review allowance ran out (only for new lessons; appending to active session is free)
     if (mode !== 'append' && !isPro && subInfo.remainingReviews <= 0) {
-      setModalBlockReason('reviews_limit_reached');
+      setModalBlockReason(
+        subInfo.daysLeft <= 0 || licenseStatus?.is_active === false
+          ? 'trial_expired'
+          : 'reviews_limit_reached'
+      );
       setIsPaywallVisible(true);
       return;
     }
@@ -1133,7 +1137,11 @@ function MainApp() {
     if (!checkAuthGate()) return;
     // Check if free review allowance ran out (only for new lessons; appending to active session is free)
     if (mode !== 'append' && !isPro && subInfo.remainingReviews <= 0) {
-      setModalBlockReason('reviews_limit_reached');
+      setModalBlockReason(
+        subInfo.daysLeft <= 0 || licenseStatus?.is_active === false
+          ? 'trial_expired'
+          : 'reviews_limit_reached'
+      );
       setIsPaywallVisible(true);
       return;
     }
@@ -1810,7 +1818,9 @@ function MainApp() {
                     subInfo.remainingReviews === 0 && styles.reviewLimitBadgeTextExhausted,
                   ]}
                 >
-                  🎁 Бесплатных разборов: {subInfo.reviewCounterText}
+                  {!isPro && !subInfo.hasKey && (subInfo.daysLeft <= 0 || licenseStatus?.is_active === false)
+                    ? `🔒 Пробный период истёк (0/${subInfo.maxReviews})`
+                    : `🎁 Бесплатных разборов: ${subInfo.reviewCounterText}`}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -3000,6 +3010,8 @@ function MainApp() {
               <Text style={styles.settingTariffSubtitle}>
                 {isPro
                   ? (subInfo.daysLeft ? `TarkApp PRO активен (${subInfo.daysLeft} дн.)` : 'TarkApp PRO активен')
+                  : (!isPro && !subInfo.hasKey && (subInfo.daysLeft <= 0 || licenseStatus?.is_active === false))
+                  ? `Пробный период истёк • 0/${subInfo.maxReviews}`
                   : `Пробный: осталось ${subInfo.daysLeft} дн. • ${subInfo.reviewCounterText}`}
               </Text>
             </View>
@@ -3020,6 +3032,8 @@ function MainApp() {
             >
               {isPro
                 ? `Активен пакет: ${subInfo.packageName || 'PRO'} (осталось ${subInfo.daysLeft} дн.)`
+                : (!isPro && !subInfo.hasKey && (subInfo.daysLeft <= 0 || licenseStatus?.is_active === false))
+                ? `Пробный период завершён (0/${subInfo.maxReviews} разборов)`
                 : `Бесплатный режим Free (${subInfo.reviewCounterText} разборов в сутки)`}
             </Text>
             {licenseStatus?.expires_at && (

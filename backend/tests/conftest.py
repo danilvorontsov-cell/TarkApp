@@ -92,9 +92,9 @@ def mock_gemini_service():
 def default_auth_override():
     """Provides a default authenticated CurrentUser for all endpoints using get_current_user."""
     app.dependency_overrides[get_current_user] = lambda: CurrentUser(
-        user_id="test-user-id",
+        user_id="test-user-device-01",
         nickname="Ученик",
-        token="test-user-id:Ученик",
+        token="test-user-device-01:Ученик",
     )
     yield
     app.dependency_overrides.pop(get_current_user, None)

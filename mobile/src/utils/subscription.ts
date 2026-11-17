@@ -90,19 +90,31 @@ export function getSubscriptionInfo(status?: LicenseStatus | null): Subscription
 
   // Dynamic server denominator with 20 fallback
   const maxReviews = status?.max_free_reviews ?? DEFAULT_MAX_FREE_REVIEWS;
-  const remainingReviews = Math.max(
-    0,
-    status?.free_reviews_left ?? DEFAULT_MAX_FREE_REVIEWS
-  );
-
+  const isTrialActive = Boolean(status?.is_active ?? true);
   const daysLeft = status?.days_left ?? DEFAULT_TRIAL_DAYS;
 
+  // An unpaid user whose trial expired (is_active === false or daysLeft <= 0) has 0 free reviews
+  const isExpired =
+    !isPro &&
+    !hasKey &&
+    status !== null &&
+    status !== undefined &&
+    (!isTrialActive || daysLeft <= 0);
+
+  const remainingReviews = isExpired
+    ? 0
+    : Math.max(0, status?.free_reviews_left ?? DEFAULT_MAX_FREE_REVIEWS);
+
   const reviewCounterText = `${remainingReviews}/${maxReviews}`;
-  const fullReviewText = `${remainingReviews} из ${maxReviews} на сегодня`;
+  const fullReviewText = isExpired
+    ? 'Пробный период завершён'
+    : `${remainingReviews} из ${maxReviews} на сегодня`;
 
   let statusLabel = 'Бесплатный режим';
   if (isPro) {
     statusLabel = packageName ? `TarkApp PRO (${packageName})` : 'TarkApp PRO активен';
+  } else if (isExpired) {
+    statusLabel = 'Пробный период истёк';
   }
 
   return {

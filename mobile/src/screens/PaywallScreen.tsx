@@ -284,16 +284,22 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({
 
                 <View style={styles.freeCurrentBadge}>
                   <Text style={styles.freeCurrentBadgeText}>
-                    {hasPro ? 'БАЗОВЫЙ' : 'ТЕКУЩИЙ ТАРИФ'}
+                    {hasPro ? 'БАЗОВЫЙ' : remainingFreeScans === 0 ? 'ИСТЁК' : 'ТЕКУЩИЙ ТАРИФ'}
                   </Text>
                 </View>
               </View>
 
               <View style={styles.freeCounterBox}>
                 <Text style={styles.freeCounterText}>
-                  🎁 Осталось разборов:{' '}
-                  <Text style={styles.freeCounterHighlight}>{remainingFreeScans}</Text> из{' '}
-                  <Text style={styles.freeCounterHighlight}>{totalFreeScans}</Text>
+                  {remainingFreeScans === 0 ? (
+                    '🔒 Пробный период завершён'
+                  ) : (
+                    <>
+                      🎁 Осталось разборов:{' '}
+                      <Text style={styles.freeCounterHighlight}>{remainingFreeScans}</Text> из{' '}
+                      <Text style={styles.freeCounterHighlight}>{totalFreeScans}</Text>
+                    </>
+                  )}
                 </Text>
               </View>
 

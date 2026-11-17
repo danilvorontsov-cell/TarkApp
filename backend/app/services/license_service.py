@@ -82,7 +82,7 @@ def validate_device_id(device_id: Optional[str]) -> str:
     """
     clean_id = (device_id or "").strip()
     if not DEVICE_ID_REGEX.match(clean_id):
-        logger.warning(f"[LICENSE] Rejected invalid X-Device-ID format (len={len(clean_id)}).")
+        logger.warning(f"[LICENSE] Rejected invalid X-Device-ID format (len={len(clean_id)}): '{clean_id}'.")
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
             detail={
@@ -264,9 +264,16 @@ def check_device_access(device_id: str, db: Session, client_ip: Optional[str] = 
                 db.commit()
                 db.refresh(device)
         else:
-            # Если срок триала истек (trial_expires_at < now): сброс не производить.
+            # Если срок триала истек (trial_expires_at < now):
+            # сброс суточной квоты не производить, обнулять остаток бесплатных разборов
+            dirty = False
             if device_max_reviews is None or device_max_reviews != daily_limit:
                 device.max_free_reviews = daily_limit
+                dirty = True
+            if device.free_reviews_left is not None and device.free_reviews_left != 0:
+                device.free_reviews_left = 0
+                dirty = True
+            if dirty:
                 db.commit()
                 db.refresh(device)
 
@@ -306,11 +313,13 @@ def check_device_access(device_id: str, db: Session, client_ip: Optional[str] = 
             else:
                 package_name = "PRO"
 
+    effective_free_reviews = (device.free_reviews_left or 0) if is_allowed else 0
+
     return {
         "allowed": is_allowed,
         "is_active": is_allowed,
         "has_key": has_key,
-        "free_reviews_left": device.free_reviews_left,
+        "free_reviews_left": effective_free_reviews,
         "max_free_reviews": getattr(device, "max_free_reviews", daily_limit) or daily_limit,
         "days_left": days_left,
         "expires_at": device.trial_expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if device.trial_expires_at else "",
